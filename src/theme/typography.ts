@@ -1,9 +1,11 @@
 export const Typography = {
-  h1: 34,
-  h2: 28,
-  h3: 22,
-
+  hero: 34,
+  h1: 28,
+  h2: 22,
+  h3: 18,
   body: 16,
-  small: 14,
-  caption: 12,
+  caption: 13,
+  small: 11,
 };
+
+export default Typography;

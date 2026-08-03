@@ -47,7 +47,7 @@ export default function AppInput({
         <TextInput
           style={styles.input}
           placeholder={placeholder}
-          placeholderTextColor="#94A3B8"
+          placeholderTextColor={Colors.textSecondary}
           value={value}
           onChangeText={onChangeText}
           secureTextEntry={hidden}
@@ -78,7 +78,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     fontSize: 14,
     fontWeight: "600",
-    color: Colors.text,
+    color: Colors.textPrimary,
   },
 
   inputContainer: {
@@ -87,7 +87,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: Radius.lg,
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surface,
     paddingHorizontal: 16,
     height: 58,
   },
@@ -99,6 +99,6 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 16,
-    color: Colors.text,
+    color: Colors.textPrimary,
   },
 });
