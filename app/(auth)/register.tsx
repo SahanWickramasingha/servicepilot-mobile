@@ -1,5 +1,5 @@
 import { View, Text } from "react-native";
-
+// TODO: Implement actual registration logic with authentication service
 export default function RegisterScreen() {
   return (
     <View

@@ -27,6 +27,7 @@ export default function LoginScreen() {
     router.replace("/(tabs)");
   };
 
+  // TODO: Implement actual login logic with authentication service
   return (
   <Screen>
     <Container>
