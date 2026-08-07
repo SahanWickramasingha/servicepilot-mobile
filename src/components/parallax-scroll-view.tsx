@@ -6,7 +6,7 @@ import Animated, {
     useAnimatedStyle,
     useScrollOffset,
 } from "react-native-reanimated";
-
+// A reusable parallax scroll view component that provides a header image with a parallax effect and a content area for children components
 import { ThemedView } from "@/components/themed-view";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useThemeColor } from "@/hooks/use-theme-color";

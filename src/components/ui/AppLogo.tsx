@@ -1,5 +1,5 @@
 import { View, Text } from "react-native";
-
+// A reusable component that displays the app logo and name
 export default function AppLogo() {
   return (
     <View

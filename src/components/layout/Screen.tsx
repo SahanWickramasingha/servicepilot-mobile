@@ -12,6 +12,7 @@ interface ScreenProps {
   backgroundColor?: string;
 }
 
+// A reusable screen component that provides a safe area and background color
 export default function Screen({
   children,
   backgroundColor = Colors.background,
@@ -30,7 +31,7 @@ export default function Screen({
     </SafeAreaView>
   );
 }
-
+// Styles for the Screen component
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
