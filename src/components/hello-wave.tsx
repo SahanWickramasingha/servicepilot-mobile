@@ -1,5 +1,5 @@
 import Animated from 'react-native-reanimated';
-
+// Component for displaying a waving hand emoji with animation
 export function HelloWave() {
   return (
     <Animated.Text
