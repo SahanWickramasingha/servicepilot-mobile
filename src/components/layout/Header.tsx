@@ -11,7 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/src/theme/colors";
 import { Typography } from "@/src/theme/typography";
 import { Spacing } from "@/src/theme/spacing";
-
+// Component for displaying a header with optional back button, title, subtitle, and right component
 interface HeaderProps {
   title: string;
   subtitle?: string;
