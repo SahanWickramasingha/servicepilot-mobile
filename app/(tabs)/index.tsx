@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet } from "react-native";
 
+// HomeScreen component
 export default function HomeScreen() {
   return (
     <View style={styles.container}>

@@ -22,6 +22,7 @@ import {
   View,
 } from "react-native";
 
+
 export default function ProfileScreen() {
   const handleLogout = () => {
     // Firebase logout will be connected later.
