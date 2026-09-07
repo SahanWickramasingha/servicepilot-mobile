@@ -1,18 +1,17 @@
+import { router } from "expo-router";
 import { useEffect } from "react";
 import {
   ActivityIndicator,
+  Image,
   StatusBar,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { router } from "expo-router";
-import { Wrench } from "lucide-react-native";
 
 export default function SplashScreen() {
   useEffect(() => {
     const timer = setTimeout(() => {
-      // Next phase: onboarding screen
       router.replace("/onboarding");
     }, 2500);
 
@@ -32,23 +31,24 @@ export default function SplashScreen() {
 
       {/* Main Content */}
       <View style={styles.content}>
-        {/* ServicePilot Logo */}
+        {/* Official ServicePilot Logo */}
         <View style={styles.logoWrapper}>
-          <View style={styles.logoOuter}>
-            <View style={styles.logoInner}>
-              <Wrench
-                size={42}
-                color="#FFFFFF"
-                strokeWidth={2.8}
-              />
-            </View>
-          </View>
+          <Image
+            source={require("../../assets/images/servicepilot-logo.png")}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
         </View>
 
         {/* Brand */}
         <View style={styles.brandRow}>
-          <Text style={styles.brandWhite}>SERVICE</Text>
-          <Text style={styles.brandBlue}>PILOT</Text>
+          <Text style={styles.brandWhite}>
+            SERVICE
+          </Text>
+
+          <Text style={styles.brandBlue}>
+            PILOT
+          </Text>
         </View>
 
         <Text style={styles.subtitle}>
@@ -66,16 +66,75 @@ export default function SplashScreen() {
 
       {/* Bottom decorative city */}
       <View style={styles.cityContainer}>
-        <View style={[styles.building, { height: 40 }]} />
-        <View style={[styles.building, { height: 60 }]} />
-        <View style={[styles.building, { height: 32 }]} />
-        <View style={[styles.building, { height: 75 }]} />
-        <View style={[styles.building, { height: 48 }]} />
-        <View style={[styles.building, { height: 88 }]} />
-        <View style={[styles.building, { height: 55 }]} />
-        <View style={[styles.building, { height: 68 }]} />
-        <View style={[styles.building, { height: 38 }]} />
-        <View style={[styles.building, { height: 58 }]} />
+        <View
+          style={[
+            styles.building,
+            { height: 40 },
+          ]}
+        />
+
+        <View
+          style={[
+            styles.building,
+            { height: 60 },
+          ]}
+        />
+
+        <View
+          style={[
+            styles.building,
+            { height: 32 },
+          ]}
+        />
+
+        <View
+          style={[
+            styles.building,
+            { height: 75 },
+          ]}
+        />
+
+        <View
+          style={[
+            styles.building,
+            { height: 48 },
+          ]}
+        />
+
+        <View
+          style={[
+            styles.building,
+            { height: 88 },
+          ]}
+        />
+
+        <View
+          style={[
+            styles.building,
+            { height: 55 },
+          ]}
+        />
+
+        <View
+          style={[
+            styles.building,
+            { height: 68 },
+          ]}
+        />
+
+        <View
+          style={[
+            styles.building,
+            { height: 38 },
+          ]}
+        />
+
+        <View
+          style={[
+            styles.building,
+            { height: 58 },
+          ]}
+        />
       </View>
 
       <Text style={styles.versionText}>
@@ -106,7 +165,8 @@ const styles = StyleSheet.create({
     width: 300,
     height: 300,
     borderRadius: 150,
-    backgroundColor: "rgba(37, 99, 235, 0.08)",
+    backgroundColor:
+      "rgba(37, 99, 235, 0.08)",
     top: -140,
     right: -120,
   },
@@ -116,46 +176,42 @@ const styles = StyleSheet.create({
     width: 360,
     height: 360,
     borderRadius: 180,
-    backgroundColor: "rgba(37, 99, 235, 0.06)",
+    backgroundColor:
+      "rgba(37, 99, 235, 0.06)",
     bottom: -210,
     left: -150,
   },
 
   logoWrapper: {
-    width: 104,
-    height: 104,
+    width: 116,
+    height: 116,
     borderRadius: 30,
-    backgroundColor: "rgba(37, 99, 235, 0.12)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 26,
-  },
 
-  logoOuter: {
-    width: 82,
-    height: 82,
-    borderRadius: 24,
-    backgroundColor: "#1D4ED8",
+    backgroundColor:
+      "rgba(37, 99, 235, 0.10)",
+
     justifyContent: "center",
     alignItems: "center",
-    transform: [{ rotate: "-8deg" }],
+
+    marginBottom: 26,
+
     shadowColor: "#2563EB",
+
     shadowOffset: {
       width: 0,
       height: 10,
     },
-    shadowOpacity: 0.35,
+
+    shadowOpacity: 0.28,
     shadowRadius: 20,
-    elevation: 14,
+
+    elevation: 12,
   },
 
-  logoInner: {
-    width: 64,
-    height: 64,
-    borderRadius: 19,
-    backgroundColor: "#2563EB",
-    justifyContent: "center",
-    alignItems: "center",
+  logoImage: {
+    width: 94,
+    height: 94,
+    borderRadius: 24,
   },
 
   brandRow: {
@@ -198,17 +254,22 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
+
     height: 120,
+
     flexDirection: "row",
     justifyContent: "space-around",
     alignItems: "flex-end",
+
     opacity: 0.16,
+
     paddingHorizontal: 8,
   },
 
   building: {
     width: "8%",
     backgroundColor: "#2563EB",
+
     borderTopLeftRadius: 3,
     borderTopRightRadius: 3,
   },
@@ -216,9 +277,12 @@ const styles = StyleSheet.create({
   versionText: {
     position: "absolute",
     bottom: 24,
+
     color: "#64748B",
+
     fontSize: 11,
     letterSpacing: 0.7,
+
     zIndex: 5,
   },
 });
