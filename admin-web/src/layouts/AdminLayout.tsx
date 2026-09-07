@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import servicePilotLogo from "../assets/images/servicepilot-logo.png";
 
 const navigation = [
   {
@@ -76,10 +77,7 @@ export default function AdminLayout() {
   return (
     <div className="admin-shell">
       {mobileOpen && (
-        <div
-          className="sidebar-overlay"
-          onClick={() => setMobileOpen(false)}
-        />
+        <div className="sidebar-overlay" onClick={() => setMobileOpen(false)} />
       )}
 
       <aside
@@ -88,18 +86,20 @@ export default function AdminLayout() {
         }`}
       >
         {/* Brand */}
-        <div className="brand-area">
-          <div className="brand-logo">
-            <Wrench size={22} />
-          </div>
-
-          {!collapsed && (
-            <div>
-              <div className="brand-name">ServicePilot</div>
-              <div className="brand-subtitle">Admin Portal</div>
-            </div>
-          )}
+        <div className="brand-logo">
+          <img
+            src={servicePilotLogo}
+            alt="ServicePilot"
+            className="brand-logo-image"
+          />
         </div>
+
+        {!collapsed && (
+          <div>
+            <div className="brand-name">ServicePilot</div>
+            <div className="brand-subtitle">Admin Portal</div>
+          </div>
+        )}
 
         {/* Navigation */}
         <nav className="sidebar-nav">
@@ -141,11 +141,7 @@ export default function AdminLayout() {
       </aside>
 
       {/* Main */}
-      <div
-        className={`admin-main ${
-          collapsed ? "sidebar-collapsed" : ""
-        }`}
-      >
+      <div className={`admin-main ${collapsed ? "sidebar-collapsed" : ""}`}>
         {/* Topbar */}
         <header className="topbar">
           <button
@@ -169,9 +165,7 @@ export default function AdminLayout() {
             </button>
 
             <div className="admin-profile">
-              <div className="admin-avatar">
-                SA
-              </div>
+              <div className="admin-avatar">SA</div>
 
               <div className="admin-info">
                 <strong>System Admin</strong>

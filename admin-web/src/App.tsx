@@ -6,6 +6,11 @@ import ServiceRequests from "./pages/ServiceRequests";
 import Technicians from "./pages/Technicians";
 import Customers from "./pages/Customers";
 import Services from "./pages/Services";
+import Schedule from "./pages/Schedule";
+import LiveMap from "./pages/LiveMap";
+import Notifications from "./pages/Notifications";
+import Reports from "./pages/Reports";
+import Settings from "./pages/Settings";
 
 export default function App() {
   return (
@@ -20,9 +25,9 @@ export default function App() {
 />
 
           <Route
-            path="/schedule"
-            element={<PlaceholderPage title="Schedule Management" />}
-          />
+  path="/schedule"
+  element={<Schedule />}
+/>
 
           <Route
   path="/technicians"
@@ -39,24 +44,20 @@ export default function App() {
 />
 
           <Route
-            path="/live-map"
-            element={<PlaceholderPage title="Live Technician Map" />}
-          />
+  path="/live-map"
+  element={<LiveMap />}
+/>
 
           <Route
-            path="/notifications"
-            element={<PlaceholderPage title="Notifications" />}
-          />
+  path="/notifications"
+  element={<Notifications />}
+/>
 
           <Route
-            path="/reports"
-            element={<PlaceholderPage title="Reports & Analytics" />}
-          />
-
-          <Route
-            path="/settings"
-            element={<PlaceholderPage title="System Settings" />}
-          />
+  path="/reports"
+  element={<Reports />}
+/>
+<Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>
     </BrowserRouter>

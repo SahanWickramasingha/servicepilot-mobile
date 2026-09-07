@@ -7,6 +7,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  Image,
   TextInput,
   TouchableOpacity,
   View,
@@ -74,11 +75,11 @@ export default function LoginScreen() {
       >
         {/* Brand */}
         <View style={styles.brandArea}>
-          <View style={styles.logoOuter}>
-            <View style={styles.logoInner}>
-              <Text style={styles.logoSymbol}>S</Text>
-            </View>
-          </View>
+          <Image
+            source={require("../../assets/images/servicepilot-logo.png")}
+            style={styles.brandLogo}
+            resizeMode="contain"
+          />
 
           <View style={styles.brandRow}>
             <Text style={styles.brandWhite}>SERVICE</Text>
@@ -281,31 +282,11 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
 
-  logoOuter: {
-    width: 72,
-    height: 72,
-    borderRadius: 22,
-    backgroundColor: "rgba(37, 99, 235, 0.15)",
-    alignItems: "center",
-    justifyContent: "center",
+  brandLogo: {
+    width: 78,
+    height: 78,
+    borderRadius: 20,
     marginBottom: 16,
-  },
-
-  logoInner: {
-    width: 56,
-    height: 56,
-    borderRadius: 17,
-    backgroundColor: "#2563EB",
-    alignItems: "center",
-    justifyContent: "center",
-    transform: [{ rotate: "-8deg" }],
-  },
-
-  logoSymbol: {
-    color: "#FFFFFF",
-    fontSize: 27,
-    fontWeight: "900",
-    transform: [{ rotate: "8deg" }],
   },
 
   brandRow: {
