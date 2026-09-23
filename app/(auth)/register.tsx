@@ -10,6 +10,7 @@ import {
 } from "lucide-react-native";
 import { useState } from "react";
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -20,6 +21,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+
+import { registerUser } from "@/src/services/auth.service";
+import { createUserProfile } from "@/src/services/user.service";
 
 type UserRole = "customer" | "technician" | "dispatcher" | "admin";
 
@@ -39,41 +43,150 @@ export default function RegisterScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [acceptTerms, setAcceptTerms] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const getRoleLabel = () => {
     switch (selectedRole) {
       case "customer":
         return "Customer";
+
       case "technician":
         return "Technician";
+
       case "dispatcher":
         return "Dispatcher";
+
       case "admin":
         return "Super Admin";
+
       default:
         return null;
     }
   };
 
-  const handleRegister = () => {
-    /*
-      Firebase Authentication will be connected later.
+  const handleRegister = async () => {
+    const cleanFullName = fullName.trim();
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = phone.trim();
+    const cleanAddress = address.trim();
 
-      Future process:
-      1. Validate form
-      2. Create Firebase user
-      3. Create Firestore user profile
-      4. Send email verification
-      5. Navigate to verify-email screen
-    */
+    if (!cleanFullName) {
+      Alert.alert("Missing Information", "Please enter your full name.");
+      return;
+    }
 
-    router.push({
-      pathname: "/verify-email" as never,
-      params: {
-        email,
+    if (!cleanEmail) {
+      Alert.alert("Missing Information", "Please enter your email address.");
+      return;
+    }
+
+    if (!cleanPhone) {
+      Alert.alert("Missing Information", "Please enter your phone number.");
+      return;
+    }
+
+    if (!cleanAddress) {
+      Alert.alert("Missing Information", "Please enter your address.");
+      return;
+    }
+
+    if (password.length < 6) {
+      Alert.alert(
+        "Weak Password",
+        "Your password must contain at least 6 characters."
+      );
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      Alert.alert(
+        "Password Mismatch",
+        "Password and confirm password do not match."
+      );
+      return;
+    }
+
+    if (!acceptTerms) {
+      Alert.alert(
+        "Terms Required",
+        "Please accept the Terms & Conditions and Privacy Policy."
+      );
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      // 1. Create Firebase Authentication account
+      const credential = await registerUser(cleanEmail, password);
+
+      // 2. Save additional user profile data in Firestore
+      await createUserProfile({
+        uid: credential.user.uid,
+        fullName: cleanFullName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        address: cleanAddress,
         role: selectedRole ?? "customer",
-      },
-    });
+      });
+
+      // 3. Continue to email verification screen
+      router.replace({
+        pathname: "/verify-email" as never,
+        params: {
+          email: cleanEmail,
+          role: selectedRole ?? "customer",
+        },
+      });
+    } catch (error: any) {
+      console.error("Registration error:", error);
+
+      switch (error?.code) {
+        case "auth/email-already-in-use":
+          Alert.alert(
+            "Account Already Exists",
+            "This email address is already registered."
+          );
+          break;
+
+        case "auth/invalid-email":
+          Alert.alert(
+            "Invalid Email",
+            "Please enter a valid email address."
+          );
+          break;
+
+        case "auth/weak-password":
+          Alert.alert(
+            "Weak Password",
+            "Please choose a stronger password."
+          );
+          break;
+
+        case "auth/network-request-failed":
+          Alert.alert(
+            "Network Error",
+            "Please check your internet connection and try again."
+          );
+          break;
+
+        case "permission-denied":
+          Alert.alert(
+            "Permission Error",
+            "Your account was created, but the profile could not be saved."
+          );
+          break;
+
+        default:
+          Alert.alert(
+            "Registration Failed",
+            error?.message ??
+              "Unable to create your account. Please try again."
+          );
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -81,7 +194,10 @@ export default function RegisterScreen() {
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <StatusBar barStyle="light-content" backgroundColor="#06101D" />
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor="#06101D"
+      />
 
       <View style={styles.glowTop} />
       <View style={styles.glowBottom} />
@@ -104,7 +220,9 @@ export default function RegisterScreen() {
             <Text style={styles.brandBlue}>PILOT</Text>
           </View>
 
-          <Text style={styles.brandSubtitle}>Field Service Management</Text>
+          <Text style={styles.brandSubtitle}>
+            Field Service Management
+          </Text>
         </View>
 
         {/* Selected Role */}
@@ -112,10 +230,13 @@ export default function RegisterScreen() {
           <TouchableOpacity
             style={styles.roleBadge}
             onPress={() => router.push("/role-selection")}
+            disabled={loading}
           >
             <View style={styles.roleIndicator} />
 
-            <Text style={styles.roleText}>Registering as {getRoleLabel()}</Text>
+            <Text style={styles.roleText}>
+              Registering as {getRoleLabel()}
+            </Text>
 
             <Text style={styles.changeRole}>Change</Text>
           </TouchableOpacity>
@@ -125,7 +246,9 @@ export default function RegisterScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>Create Account</Text>
 
-          <Text style={styles.subtitle}>Enter your details to get started</Text>
+          <Text style={styles.subtitle}>
+            Enter your details to get started
+          </Text>
         </View>
 
         {/* Full Name */}
@@ -141,6 +264,7 @@ export default function RegisterScreen() {
               placeholder="Enter your full name"
               placeholderTextColor="#64748B"
               style={styles.input}
+              editable={!loading}
             />
           </View>
         </View>
@@ -161,6 +285,7 @@ export default function RegisterScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               style={styles.input}
+              editable={!loading}
             />
           </View>
         </View>
@@ -179,6 +304,7 @@ export default function RegisterScreen() {
               placeholderTextColor="#64748B"
               keyboardType="phone-pad"
               style={styles.input}
+              editable={!loading}
             />
           </View>
         </View>
@@ -196,6 +322,7 @@ export default function RegisterScreen() {
               placeholder="Enter your address"
               placeholderTextColor="#64748B"
               style={styles.input}
+              editable={!loading}
             />
           </View>
         </View>
@@ -214,11 +341,16 @@ export default function RegisterScreen() {
               placeholderTextColor="#64748B"
               secureTextEntry={!showPassword}
               style={styles.input}
+              editable={!loading}
+              autoCapitalize="none"
             />
 
             <TouchableOpacity
               style={styles.eyeButton}
-              onPress={() => setShowPassword((current) => !current)}
+              onPress={() =>
+                setShowPassword((current) => !current)
+              }
+              disabled={loading}
             >
               {showPassword ? (
                 <Eye size={20} color="#94A3B8" />
@@ -243,11 +375,16 @@ export default function RegisterScreen() {
               placeholderTextColor="#64748B"
               secureTextEntry={!showConfirmPassword}
               style={styles.input}
+              editable={!loading}
+              autoCapitalize="none"
             />
 
             <TouchableOpacity
               style={styles.eyeButton}
-              onPress={() => setShowConfirmPassword((current) => !current)}
+              onPress={() =>
+                setShowConfirmPassword((current) => !current)
+              }
+              disabled={loading}
             >
               {showConfirmPassword ? (
                 <Eye size={20} color="#94A3B8" />
@@ -261,17 +398,32 @@ export default function RegisterScreen() {
         {/* Terms */}
         <TouchableOpacity
           style={styles.termsRow}
-          onPress={() => setAcceptTerms((current) => !current)}
+          onPress={() =>
+            setAcceptTerms((current) => !current)
+          }
           activeOpacity={0.8}
+          disabled={loading}
         >
-          <View style={[styles.checkbox, acceptTerms && styles.checkboxActive]}>
-            {acceptTerms && <Text style={styles.checkMark}>✓</Text>}
+          <View
+            style={[
+              styles.checkbox,
+              acceptTerms && styles.checkboxActive,
+            ]}
+          >
+            {acceptTerms && (
+              <Text style={styles.checkMark}>✓</Text>
+            )}
           </View>
 
           <Text style={styles.termsText}>
             I agree to the{" "}
-            <Text style={styles.linkText}>Terms & Conditions</Text> and{" "}
-            <Text style={styles.linkText}>Privacy Policy</Text>
+            <Text style={styles.linkText}>
+              Terms & Conditions
+            </Text>{" "}
+            and{" "}
+            <Text style={styles.linkText}>
+              Privacy Policy
+            </Text>
           </Text>
         </TouchableOpacity>
 
@@ -279,28 +431,40 @@ export default function RegisterScreen() {
         <TouchableOpacity
           style={[
             styles.registerButton,
-            !acceptTerms && styles.registerButtonDisabled,
+            (!acceptTerms || loading) &&
+              styles.registerButtonDisabled,
           ]}
           activeOpacity={0.85}
-          disabled={!acceptTerms}
+          disabled={!acceptTerms || loading}
           onPress={handleRegister}
         >
-          <Text style={styles.registerButtonText}>Create Account</Text>
+          <Text style={styles.registerButtonText}>
+            {loading
+              ? "Creating Account..."
+              : "Create Account"}
+          </Text>
         </TouchableOpacity>
 
         {/* Login */}
         <View style={styles.loginRow}>
-          <Text style={styles.loginQuestion}>Already have an account?</Text>
+          <Text style={styles.loginQuestion}>
+            Already have an account?
+          </Text>
 
           <TouchableOpacity
+            disabled={loading}
             onPress={() =>
               router.push({
                 pathname: "/login",
-                params: selectedRole ? { role: selectedRole } : undefined,
+                params: selectedRole
+                  ? { role: selectedRole }
+                  : undefined,
               })
             }
           >
-            <Text style={styles.loginText}>Login</Text>
+            <Text style={styles.loginText}>
+              Login
+            </Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

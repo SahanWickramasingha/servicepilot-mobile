@@ -34,7 +34,7 @@ export default function SplashScreen() {
         {/* Official ServicePilot Logo */}
         <View style={styles.logoWrapper}>
           <Image
-            source={require("../../assets/images/servicepilot-logo.png")}
+            source={require("../assets/images/servicepilot-logo.png")}
             style={styles.logoImage}
             resizeMode="contain"
           />
