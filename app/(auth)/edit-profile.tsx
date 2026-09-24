@@ -1,6 +1,7 @@
 import { router } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -13,7 +14,6 @@ import {
 } from "react-native";
 import {
   ArrowLeft,
-  Camera,
   Mail,
   MapPin,
   Phone,
@@ -21,27 +21,96 @@ import {
   UserRound,
 } from "lucide-react-native";
 
+import { auth } from "@/src/firebase/config";
+import {
+  getUserProfile,
+  updateUserProfileSafe,
+} from "@/src/services/user.service";
+import { ProtectedRoute } from "@/src/components/auth/ProtectedRoute";
+
 export default function EditProfileScreen() {
-  const [fullName, setFullName] = useState("Sahan Wickramasingha");
-  const [email, setEmail] = useState("sahan@example.com");
-  const [phone, setPhone] = useState("+94 71 234 5678");
-  const [address, setAddress] = useState("Kandy, Sri Lanka");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const handleSave = () => {
-    /*
-      Firebase profile update will be added later.
+  useEffect(() => {
+    const currentUser = auth.currentUser;
 
-      Future:
-      1. Validate fields
-      2. Upload profile photo if changed
-      3. Update Firestore user profile
-      4. Show success message
-    */
+    if (!currentUser) {
+      setErrorMessage("Please sign in again.");
+      setLoading(false);
+      return;
+    }
 
-    router.back();
+    getUserProfile(currentUser.uid)
+      .then((profile) => {
+        if (!profile) {
+          setErrorMessage("Profile not found.");
+          return;
+        }
+
+        setFullName(profile.fullName ?? "");
+        setEmail(profile.email ?? currentUser.email ?? "");
+        setPhone(profile.phone ?? "");
+        setAddress(profile.address ?? "");
+      })
+      .catch((error) => {
+        console.error("Edit profile load error:", error);
+        setErrorMessage("Unable to load profile.");
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    const currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      setErrorMessage("Please sign in again.");
+      return;
+    }
+
+    if (!fullName.trim() || !phone.trim() || !address.trim()) {
+      setErrorMessage(
+        "Full name, phone, and address are required."
+      );
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setErrorMessage("");
+      await updateUserProfileSafe(currentUser.uid, {
+        fullName,
+        phone,
+        address,
+      });
+      router.back();
+    } catch (error: any) {
+      console.error("Edit profile save error:", error);
+      setErrorMessage(
+        error?.message || "Unable to update profile."
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
+  if (loading) {
+    return (
+      <ProtectedRoute allowedRoles={["customer"]}>
+      <View style={styles.centerScreen}>
+        <ActivityIndicator color="#3B82F6" />
+      </View>
+      </ProtectedRoute>
+    );
+  }
+
   return (
+    <ProtectedRoute allowedRoles={["customer"]}>
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -56,7 +125,6 @@ export default function EditProfileScreen() {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.content}
       >
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
@@ -65,194 +133,156 @@ export default function EditProfileScreen() {
           >
             <ArrowLeft size={20} color="#FFFFFF" />
           </TouchableOpacity>
-
           <View style={styles.headerText}>
-            <Text style={styles.title}>
-              Edit Profile
-            </Text>
-
+            <Text style={styles.title}>Edit Profile</Text>
             <Text style={styles.subtitle}>
-              Update your personal information
+              Update safe account fields
             </Text>
           </View>
         </View>
 
-        {/* Avatar */}
-        <View style={styles.avatarSection}>
-          <View style={styles.avatarOuter}>
-            <View style={styles.avatar}>
-              <UserRound
-                size={48}
-                color="#FFFFFF"
-                strokeWidth={1.8}
-              />
-            </View>
-
-            <TouchableOpacity
-              style={styles.cameraButton}
-              activeOpacity={0.8}
-            >
-              <Camera
-                size={16}
-                color="#FFFFFF"
-              />
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.name}>
-            {fullName || "Your Name"}
-          </Text>
-
-          <TouchableOpacity activeOpacity={0.8}>
-            <Text style={styles.changePhotoText}>
-              Change Profile Photo
+        {!!errorMessage && (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorText}>
+              {errorMessage}
             </Text>
-          </TouchableOpacity>
-        </View>
+          </View>
+        )}
 
-        {/* Form */}
         <View style={styles.formCard}>
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>
-              Full Name
-            </Text>
+          <Field
+            icon={<UserRound size={20} color="#64748B" />}
+            label="Full Name"
+            value={fullName}
+            onChangeText={setFullName}
+            placeholder="Enter your full name"
+          />
 
-            <View style={styles.inputContainer}>
-              <UserRound
-                size={20}
-                color="#64748B"
-              />
+          <Field
+            icon={<Mail size={20} color="#64748B" />}
+            label="Email Address"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="Email"
+            editable={false}
+          />
 
-              <TextInput
-                value={fullName}
-                onChangeText={setFullName}
-                placeholder="Enter your full name"
-                placeholderTextColor="#64748B"
-                style={styles.input}
-              />
-            </View>
-          </View>
+          <Field
+            icon={<Phone size={20} color="#64748B" />}
+            label="Phone Number"
+            value={phone}
+            onChangeText={setPhone}
+            placeholder="Enter your phone number"
+            keyboardType="phone-pad"
+          />
 
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>
-              Email Address
-            </Text>
-
-            <View style={styles.inputContainer}>
-              <Mail
-                size={20}
-                color="#64748B"
-              />
-
-              <TextInput
-                value={email}
-                onChangeText={setEmail}
-                placeholder="Enter your email"
-                placeholderTextColor="#64748B"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={styles.input}
-              />
-            </View>
-          </View>
-
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>
-              Phone Number
-            </Text>
-
-            <View style={styles.inputContainer}>
-              <Phone
-                size={20}
-                color="#64748B"
-              />
-
-              <TextInput
-                value={phone}
-                onChangeText={setPhone}
-                placeholder="Enter your phone number"
-                placeholderTextColor="#64748B"
-                keyboardType="phone-pad"
-                style={styles.input}
-              />
-            </View>
-          </View>
-
-          <View style={styles.fieldGroupLast}>
-            <Text style={styles.label}>
-              Address
-            </Text>
-
-            <View style={styles.addressContainer}>
-              <MapPin
-                size={20}
-                color="#64748B"
-                style={styles.addressIcon}
-              />
-
-              <TextInput
-                value={address}
-                onChangeText={setAddress}
-                placeholder="Enter your address"
-                placeholderTextColor="#64748B"
-                multiline
-                textAlignVertical="top"
-                style={styles.addressInput}
-              />
-            </View>
+          <Text style={styles.label}>Address</Text>
+          <View style={styles.addressContainer}>
+            <MapPin
+              size={20}
+              color="#64748B"
+              style={styles.addressIcon}
+            />
+            <TextInput
+              value={address}
+              onChangeText={setAddress}
+              placeholder="Enter your address"
+              placeholderTextColor="#64748B"
+              multiline
+              textAlignVertical="top"
+              style={styles.addressInput}
+            />
           </View>
         </View>
 
-        {/* Save */}
         <TouchableOpacity
-          style={styles.saveButton}
+          style={[
+            styles.saveButton,
+            saving && styles.saveButtonDisabled,
+          ]}
           activeOpacity={0.85}
           onPress={handleSave}
+          disabled={saving}
         >
-          <Save size={19} color="#FFFFFF" />
-
-          <Text style={styles.saveButtonText}>
-            Save Changes
-          </Text>
-        </TouchableOpacity>
-
-        {/* Cancel */}
-        <TouchableOpacity
-          style={styles.cancelButton}
-          activeOpacity={0.8}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.cancelText}>
-            Cancel
-          </Text>
+          {saving ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <>
+              <Save size={19} color="#FFFFFF" />
+              <Text style={styles.saveButtonText}>
+                Save Changes
+              </Text>
+            </>
+          )}
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
+    </ProtectedRoute>
+  );
+}
+
+function Field({
+  icon,
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  editable = true,
+  keyboardType,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+  editable?: boolean;
+  keyboardType?: "default" | "phone-pad";
+}) {
+  return (
+    <View style={styles.fieldGroup}>
+      <Text style={styles.label}>{label}</Text>
+      <View
+        style={[
+          styles.inputContainer,
+          !editable && styles.inputDisabled,
+        ]}
+      >
+        {icon}
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor="#64748B"
+          style={styles.input}
+          editable={editable}
+          keyboardType={keyboardType}
+        />
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: "#06101D" },
+  centerScreen: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#06101D",
   },
-
   content: {
     width: "100%",
     maxWidth: 520,
     alignSelf: "center",
     paddingHorizontal: 20,
     paddingTop: 55,
-    paddingBottom: 50,
+    paddingBottom: 80,
   },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 30,
+    marginBottom: 24,
   },
-
   backButton: {
     width: 44,
     height: 44,
@@ -264,71 +294,30 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 14,
   },
-
-  headerText: {
-    flex: 1,
-  },
-
+  headerText: { flex: 1 },
   title: {
     color: "#FFFFFF",
     fontSize: 25,
     fontWeight: "800",
   },
-
   subtitle: {
     color: "#64748B",
     fontSize: 12,
     marginTop: 4,
   },
-
-  avatarSection: {
-    alignItems: "center",
-    marginBottom: 30,
+  errorCard: {
+    backgroundColor: "rgba(239,68,68,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.22)",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
   },
-
-  avatarOuter: {
-    position: "relative",
-  },
-
-  avatar: {
-    width: 105,
-    height: 105,
-    borderRadius: 53,
-    backgroundColor: "#2563EB",
-    borderWidth: 4,
-    borderColor: "rgba(59,130,246,0.20)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  cameraButton: {
-    position: "absolute",
-    bottom: 1,
-    right: -2,
-    width: 35,
-    height: 35,
-    borderRadius: 18,
-    backgroundColor: "#3B82F6",
-    borderWidth: 3,
-    borderColor: "#06101D",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  name: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "700",
-    marginTop: 13,
-  },
-
-  changePhotoText: {
-    color: "#3B82F6",
+  errorText: {
+    color: "#FCA5A5",
     fontSize: 12,
-    fontWeight: "600",
-    marginTop: 7,
+    textAlign: "center",
   },
-
   formCard: {
     backgroundColor: "#0D1B2A",
     borderWidth: 1,
@@ -338,22 +327,13 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     marginBottom: 24,
   },
-
-  fieldGroup: {
-    marginBottom: 19,
-  },
-
-  fieldGroupLast: {
-    marginBottom: 0,
-  },
-
+  fieldGroup: { marginBottom: 19 },
   label: {
     color: "#F8FAFC",
     fontSize: 13,
     fontWeight: "600",
     marginBottom: 8,
   },
-
   inputContainer: {
     height: 55,
     borderRadius: 12,
@@ -364,7 +344,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 15,
   },
-
+  inputDisabled: { opacity: 0.58 },
   input: {
     flex: 1,
     color: "#FFFFFF",
@@ -372,7 +352,6 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     height: "100%",
   },
-
   addressContainer: {
     minHeight: 95,
     borderRadius: 12,
@@ -384,11 +363,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     paddingTop: 16,
   },
-
-  addressIcon: {
-    marginTop: 1,
-  },
-
+  addressIcon: { marginTop: 1 },
   addressInput: {
     flex: 1,
     color: "#FFFFFF",
@@ -396,7 +371,6 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     minHeight: 65,
   },
-
   saveButton: {
     height: 56,
     borderRadius: 12,
@@ -405,32 +379,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 9,
-    shadowColor: "#2563EB",
-    shadowOffset: {
-      width: 0,
-      height: 8,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 5,
   },
-
+  saveButtonDisabled: { opacity: 0.6 },
   saveButtonText: {
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "700",
-  },
-
-  cancelButton: {
-    height: 50,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 8,
-  },
-
-  cancelText: {
-    color: "#94A3B8",
-    fontSize: 14,
-    fontWeight: "600",
   },
 });

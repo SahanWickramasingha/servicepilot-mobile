@@ -1,13 +1,14 @@
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   ChevronRight,
-  Clock3,
   CircleAlert,
+  Clock3,
   Wrench,
 } from "lucide-react-native";
 import {
+  ActivityIndicator,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -16,94 +17,115 @@ import {
   View,
 } from "react-native";
 
-type RequestStatus =
-  | "pending"
-  | "assigned"
+import {
+  getPriorityColor,
+  getPriorityLabel,
+  getRequestStatusColor,
+  getRequestStatusLabel,
+  RequestStatus,
+} from "@/src/constants/serviceRequests";
+import { auth } from "@/src/firebase/config";
+import {
+  formatRequestDate,
+  ServiceRequest,
+  subscribeToCustomerRequests,
+} from "@/src/services/request.service";
+
+type FilterType =
+  | "all"
+  | "requested"
+  | "accepted"
+  | "rejected"
   | "in_progress"
   | "completed"
   | "cancelled";
 
-type FilterType =
-  | "all"
-  | "pending"
-  | "assigned"
-  | "in_progress"
-  | "completed";
-
-type RequestItem = {
-  id: string;
-  service: string;
-  date: string;
-  time: string;
-  priority: "Low" | "Medium" | "High" | "Emergency";
-  status: RequestStatus;
-};
-
-const requestData: RequestItem[] = [
-  {
-    id: "REQ-2026-0012",
-    service: "AC Repair",
-    date: "20 May 2026",
-    time: "10:00 AM",
-    priority: "High",
-    status: "in_progress",
-  },
-  {
-    id: "REQ-2026-0011",
-    service: "Washing Machine Repair",
-    date: "19 May 2026",
-    time: "02:30 PM",
-    priority: "Medium",
-    status: "assigned",
-  },
-  {
-    id: "REQ-2026-0010",
-    service: "Electrical Installation",
-    date: "18 May 2026",
-    time: "10:00 AM",
-    priority: "Low",
-    status: "completed",
-  },
-  {
-    id: "REQ-2026-0009",
-    service: "Plumbing Service",
-    date: "16 May 2026",
-    time: "08:30 AM",
-    priority: "Emergency",
-    status: "cancelled",
-  },
-  {
-    id: "REQ-2026-0008",
-    service: "Refrigerator Repair",
-    date: "22 May 2026",
-    time: "11:30 AM",
-    priority: "Medium",
-    status: "pending",
-  },
-];
-
 export default function BookingsScreen() {
   const [selectedFilter, setSelectedFilter] =
     useState<FilterType>("all");
+  const [requests, setRequests] = useState<
+    ServiceRequest[]
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    const currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      setErrorMessage("Please sign in again.");
+      setLoading(false);
+      return;
+    }
+
+    const unsubscribe = subscribeToCustomerRequests(
+      currentUser.uid,
+      (items) => {
+        setRequests(items);
+        setLoading(false);
+      },
+      (error) => {
+        console.error(
+          "Requests subscription error:",
+          error
+        );
+        setErrorMessage(
+          "Unable to load your service requests."
+        );
+        setLoading(false);
+      }
+    );
+
+    return unsubscribe;
+  }, []);
 
   const filteredRequests = useMemo(() => {
     if (selectedFilter === "all") {
-      return requestData;
+      return requests;
     }
 
-    return requestData.filter(
+    if (selectedFilter === "requested") {
+      return requests.filter((request) =>
+        ["requested", "pending"].includes(request.status)
+      );
+    }
+
+    if (selectedFilter === "accepted") {
+      return requests.filter((request) =>
+        ["accepted", "assigned"].includes(request.status)
+      );
+    }
+
+    return requests.filter(
       (request) => request.status === selectedFilter
     );
-  }, [selectedFilter]);
+  }, [requests, selectedFilter]);
 
-  const handleOpenRequest = (request: RequestItem) => {
-    router.push({
-      pathname: "/request-details",
-      params: {
-        id: request.id,
-      },
-    });
-  };
+  const counts = useMemo(() => {
+    return {
+      pending: requests.filter(
+        (item) =>
+          item.status === "requested" ||
+          item.status === "pending"
+      ).length,
+      active: requests.filter((item) =>
+        ["accepted", "assigned", "in_progress"].includes(
+          item.status
+        )
+      ).length,
+      completed: requests.filter(
+        (item) => item.status === "completed"
+      ).length,
+    };
+  }, [requests]);
+
+  if (loading) {
+    return (
+      <View style={styles.centerScreen}>
+        <ActivityIndicator color="#3B82F6" />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -116,13 +138,9 @@ export default function BookingsScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
-        {/* Header */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.title}>
-              My Requests
-            </Text>
-
+          <View style={styles.headerText}>
+            <Text style={styles.title}>My Requests</Text>
             <Text style={styles.subtitle}>
               Track and manage your service requests
             </Text>
@@ -133,110 +151,91 @@ export default function BookingsScreen() {
             activeOpacity={0.85}
             onPress={() => router.push("/create-request")}
           >
-            <Text style={styles.newButtonText}>
-              + New
-            </Text>
+            <Text style={styles.newButtonText}>+ New</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Summary */}
+        {!!errorMessage && (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorText}>
+              {errorMessage}
+            </Text>
+          </View>
+        )}
+
         <View style={styles.summaryRow}>
           <SummaryCard
             label="Pending"
-            value="1"
+            value={String(counts.pending)}
             color="#F59E0B"
           />
-
-          <SummaryCard
-            label="Assigned"
-            value="1"
-            color="#3B82F6"
-          />
-
           <SummaryCard
             label="Active"
-            value="1"
+            value={String(counts.active)}
+            color="#3B82F6"
+          />
+          <SummaryCard
+            label="Completed"
+            value={String(counts.completed)}
             color="#22C55E"
           />
         </View>
 
-        {/* Filters */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterContainer}
         >
-          <FilterButton
-            label="All"
-            active={selectedFilter === "all"}
-            onPress={() => setSelectedFilter("all")}
-          />
-
-          <FilterButton
-            label="Pending"
-            active={selectedFilter === "pending"}
-            onPress={() => setSelectedFilter("pending")}
-          />
-
-          <FilterButton
-            label="Assigned"
-            active={selectedFilter === "assigned"}
-            onPress={() => setSelectedFilter("assigned")}
-          />
-
-          <FilterButton
-            label="In Progress"
-            active={selectedFilter === "in_progress"}
-            onPress={() => setSelectedFilter("in_progress")}
-          />
-
-          <FilterButton
-            label="Completed"
-            active={selectedFilter === "completed"}
-            onPress={() => setSelectedFilter("completed")}
-          />
+          {[
+            ["all", "All"],
+            ["requested", "Requested"],
+            ["accepted", "Accepted"],
+            ["in_progress", "In Progress"],
+            ["completed", "Completed"],
+            ["cancelled", "Cancelled"],
+            ["rejected", "Rejected"],
+          ].map(([value, label]) => (
+            <FilterButton
+              key={value}
+              label={label}
+              active={selectedFilter === value}
+              onPress={() =>
+                setSelectedFilter(value as FilterType)
+              }
+            />
+          ))}
         </ScrollView>
 
-        {/* Section Header */}
         <View style={styles.listHeader}>
           <Text style={styles.sectionTitle}>
             Service Requests
           </Text>
-
           <Text style={styles.resultCount}>
             {filteredRequests.length} request
             {filteredRequests.length !== 1 ? "s" : ""}
           </Text>
         </View>
 
-        {/* Requests */}
         {filteredRequests.length > 0 ? (
           <View style={styles.requestList}>
             {filteredRequests.map((request) => (
               <RequestCard
                 key={request.id}
                 request={request}
-                onPress={() => handleOpenRequest(request)}
               />
             ))}
           </View>
         ) : (
           <View style={styles.emptyCard}>
             <View style={styles.emptyIcon}>
-              <Wrench
-                size={35}
-                color="#64748B"
-              />
+              <Wrench size={35} color="#64748B" />
             </View>
-
             <Text style={styles.emptyTitle}>
               No Requests Found
             </Text>
-
             <Text style={styles.emptyText}>
-              There are no service requests in this category.
+              No service requests match this filter.
             </Text>
-
             <TouchableOpacity
               style={styles.emptyButton}
               onPress={() => router.push("/create-request")}
@@ -263,18 +262,10 @@ function SummaryCard({
 }) {
   return (
     <View style={styles.summaryCard}>
-      <Text
-        style={[
-          styles.summaryValue,
-          { color },
-        ]}
-      >
+      <Text style={[styles.summaryValue, { color }]}>
         {value}
       </Text>
-
-      <Text style={styles.summaryLabel}>
-        {label}
-      </Text>
+      <Text style={styles.summaryLabel}>{label}</Text>
     </View>
   );
 }
@@ -311,70 +302,49 @@ function FilterButton({
 
 function RequestCard({
   request,
-  onPress,
 }: {
-  request: RequestItem;
-  onPress: () => void;
+  request: ServiceRequest;
 }) {
-  const status = getStatusConfig(request.status);
+  const statusColor = getRequestStatusColor(request.status);
   const priorityColor = getPriorityColor(request.priority);
+  const icon = getRequestIcon(request.status);
 
   return (
     <TouchableOpacity
       style={styles.requestCard}
       activeOpacity={0.8}
-      onPress={onPress}
+      onPress={() =>
+        router.push({
+          pathname: "/request-details",
+          params: { id: request.id },
+        })
+      }
     >
       <View style={styles.requestTopRow}>
-        <View style={styles.serviceIcon}>
-          {request.status === "completed" ? (
-            <CheckCircle2
-              size={23}
-              color="#22C55E"
-            />
-          ) : request.status === "cancelled" ? (
-            <CircleAlert
-              size={23}
-              color="#EF4444"
-            />
-          ) : (
-            <Wrench
-              size={23}
-              color="#60A5FA"
-            />
-          )}
-        </View>
-
+        <View style={styles.serviceIcon}>{icon}</View>
         <View style={styles.requestContent}>
           <Text style={styles.serviceName}>
-            {request.service}
+            {request.title}
           </Text>
-
           <Text style={styles.requestId}>
-            {request.id}
+            {request.serviceCategory}
           </Text>
         </View>
-
-        <ChevronRight
-          size={20}
-          color="#475569"
-        />
+        <ChevronRight size={20} color="#475569" />
       </View>
 
       <View style={styles.divider} />
 
       <View style={styles.requestInfoRow}>
         <View style={styles.dateRow}>
-          <Clock3
-            size={15}
-            color="#64748B"
-          />
-
+          <Clock3 size={15} color="#64748B" />
           <Text style={styles.dateText}>
-            {request.date} • {request.time}
+            {request.preferredDate}
+            {request.preferredTime
+              ? ` • ${request.preferredTime}`
+              : ""}
           </Text>
         </View>
-
         <View
           style={[
             styles.priorityBadge,
@@ -390,7 +360,7 @@ function RequestCard({
               { color: priorityColor },
             ]}
           >
-            {request.priority}
+            {getPriorityLabel(request.priority)}
           </Text>
         </View>
       </View>
@@ -400,88 +370,62 @@ function RequestCard({
           style={[
             styles.statusBadge,
             {
-              backgroundColor: `${status.color}15`,
-              borderColor: `${status.color}40`,
+              backgroundColor: `${statusColor}15`,
+              borderColor: `${statusColor}40`,
             },
           ]}
         >
           <View
             style={[
               styles.statusDot,
-              { backgroundColor: status.color },
+              { backgroundColor: statusColor },
             ]}
           />
-
           <Text
             style={[
               styles.statusText,
-              { color: status.color },
+              { color: statusColor },
             ]}
           >
-            {status.label}
+            {getRequestStatusLabel(request.status)}
           </Text>
         </View>
+        <Text style={styles.createdText}>
+          Created {formatRequestDate(request.createdAt)}
+        </Text>
       </View>
+
+      <Text style={styles.technicianText}>
+        {request.assignedTechnicianName
+          ? `Technician: ${request.assignedTechnicianName}`
+          : request.technicianName
+            ? `Technician: ${request.technicianName}`
+            : "Technician unavailable"}
+      </Text>
     </TouchableOpacity>
   );
 }
 
-function getStatusConfig(status: RequestStatus) {
-  switch (status) {
-    case "pending":
-      return {
-        label: "Pending",
-        color: "#F59E0B",
-      };
-
-    case "assigned":
-      return {
-        label: "Assigned",
-        color: "#3B82F6",
-      };
-
-    case "in_progress":
-      return {
-        label: "In Progress",
-        color: "#22C55E",
-      };
-
-    case "completed":
-      return {
-        label: "Completed",
-        color: "#22C55E",
-      };
-
-    case "cancelled":
-      return {
-        label: "Cancelled",
-        color: "#EF4444",
-      };
+function getRequestIcon(status: RequestStatus) {
+  if (status === "completed") {
+    return <CheckCircle2 size={23} color="#22C55E" />;
   }
-}
 
-function getPriorityColor(priority: RequestItem["priority"]) {
-  switch (priority) {
-    case "Low":
-      return "#22C55E";
-
-    case "Medium":
-      return "#F59E0B";
-
-    case "High":
-      return "#F97316";
-
-    case "Emergency":
-      return "#EF4444";
+  if (status === "cancelled") {
+    return <CircleAlert size={23} color="#EF4444" />;
   }
+
+  return <Wrench size={23} color="#60A5FA" />;
 }
 
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: "#06101D" },
+  centerScreen: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#06101D",
   },
-
   content: {
     width: "100%",
     maxWidth: 520,
@@ -490,26 +434,24 @@ const styles = StyleSheet.create({
     paddingTop: 56,
     paddingBottom: 120,
   },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 22,
+    gap: 12,
   },
-
+  headerText: { flex: 1 },
   title: {
     color: "#FFFFFF",
     fontSize: 27,
     fontWeight: "800",
   },
-
   subtitle: {
     color: "#64748B",
     fontSize: 12,
     marginTop: 5,
   },
-
   newButton: {
     minWidth: 72,
     height: 42,
@@ -519,19 +461,29 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 12,
   },
-
   newButtonText: {
     color: "#FFFFFF",
     fontSize: 12,
     fontWeight: "700",
   },
-
+  errorCard: {
+    backgroundColor: "rgba(239,68,68,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.22)",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  errorText: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    textAlign: "center",
+  },
   summaryRow: {
     flexDirection: "row",
     gap: 9,
     marginBottom: 24,
   },
-
   summaryCard: {
     flex: 1,
     minHeight: 82,
@@ -542,23 +494,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
-  summaryValue: {
-    fontSize: 22,
-    fontWeight: "800",
-  },
-
+  summaryValue: { fontSize: 22, fontWeight: "800" },
   summaryLabel: {
     color: "#94A3B8",
     fontSize: 10,
     marginTop: 4,
   },
-
-  filterContainer: {
-    gap: 8,
-    paddingBottom: 24,
-  },
-
+  filterContainer: { gap: 8, paddingBottom: 24 },
   filterButton: {
     height: 38,
     paddingHorizontal: 15,
@@ -569,44 +511,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   filterButtonActive: {
     backgroundColor: "#2563EB",
     borderColor: "#2563EB",
   },
-
   filterText: {
     color: "#94A3B8",
     fontSize: 11,
     fontWeight: "600",
   },
-
-  filterTextActive: {
-    color: "#FFFFFF",
-  },
-
+  filterTextActive: { color: "#FFFFFF" },
   listHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 12,
   },
-
   sectionTitle: {
     color: "#F8FAFC",
     fontSize: 15,
     fontWeight: "800",
   },
-
-  resultCount: {
-    color: "#64748B",
-    fontSize: 10,
-  },
-
-  requestList: {
-    gap: 12,
-  },
-
+  resultCount: { color: "#64748B", fontSize: 10 },
+  requestList: { gap: 12 },
   requestCard: {
     backgroundColor: "#0D1B2A",
     borderWidth: 1,
@@ -614,12 +541,10 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     padding: 15,
   },
-
   requestTopRow: {
     flexDirection: "row",
     alignItems: "center",
   },
-
   serviceIcon: {
     width: 48,
     height: 48,
@@ -629,47 +554,38 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 12,
   },
-
-  requestContent: {
-    flex: 1,
-  },
-
+  requestContent: { flex: 1 },
   serviceName: {
     color: "#F8FAFC",
     fontSize: 14,
     fontWeight: "700",
   },
-
   requestId: {
     color: "#475569",
     fontSize: 9,
     marginTop: 4,
   },
-
   divider: {
     height: 1,
     backgroundColor: "#17263A",
     marginVertical: 13,
   },
-
   requestInfoRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 10,
   },
-
   dateRow: {
     flexDirection: "row",
     alignItems: "center",
     flex: 1,
   },
-
   dateText: {
     color: "#64748B",
     fontSize: 10,
     marginLeft: 6,
   },
-
   priorityBadge: {
     minHeight: 27,
     borderRadius: 8,
@@ -678,17 +594,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
-  priorityText: {
-    fontSize: 9,
-    fontWeight: "700",
-  },
-
+  priorityText: { fontSize: 9, fontWeight: "700" },
   statusRow: {
     flexDirection: "row",
+    alignItems: "center",
     marginTop: 12,
+    gap: 10,
   },
-
   statusBadge: {
     height: 29,
     borderRadius: 9,
@@ -697,19 +609,24 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
-
   statusDot: {
     width: 6,
     height: 6,
     borderRadius: 6,
     marginRight: 6,
   },
-
-  statusText: {
+  statusText: { fontSize: 9, fontWeight: "700" },
+  createdText: {
+    color: "#475569",
     fontSize: 9,
-    fontWeight: "700",
+    flex: 1,
+    textAlign: "right",
   },
-
+  technicianText: {
+    color: "#64748B",
+    fontSize: 10,
+    marginTop: 10,
+  },
   emptyCard: {
     minHeight: 300,
     borderRadius: 18,
@@ -720,7 +637,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 30,
   },
-
   emptyIcon: {
     width: 78,
     height: 78,
@@ -730,13 +646,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 17,
   },
-
   emptyTitle: {
     color: "#FFFFFF",
     fontSize: 18,
     fontWeight: "800",
   },
-
   emptyText: {
     color: "#64748B",
     fontSize: 11,
@@ -744,7 +658,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 7,
   },
-
   emptyButton: {
     height: 44,
     paddingHorizontal: 18,
@@ -754,7 +667,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginTop: 18,
   },
-
   emptyButtonText: {
     color: "#FFFFFF",
     fontSize: 11,

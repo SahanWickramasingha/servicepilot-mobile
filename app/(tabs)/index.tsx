@@ -1,15 +1,17 @@
 import { router } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bell,
   CheckCircle2,
-  ChevronRight,
   Clock3,
+  ClipboardPlus,
   MapPin,
   Plus,
-  Search,
+  Star,
   Wrench,
 } from "lucide-react-native";
 import {
+  ActivityIndicator,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -18,7 +20,178 @@ import {
   View,
 } from "react-native";
 
+import {
+  ACTIVE_REQUEST_STATUSES,
+  SERVICE_CATEGORIES,
+  getRequestStatusColor,
+  getRequestStatusLabel,
+} from "@/src/constants/serviceRequests";
+import { auth } from "@/src/firebase/config";
+import {
+  formatRequestDate,
+  ServiceRequest,
+  subscribeToCustomerRequests,
+} from "@/src/services/request.service";
+import {
+  CustomerNotification,
+  subscribeToCustomerNotifications,
+} from "@/src/services/notification.service";
+import {
+  getTechnicianDivision,
+  getUserProfile,
+  UserProfile,
+} from "@/src/services/user.service";
+import {
+  PublicTechnicianProfile,
+  subscribeToApprovedTechnicians,
+} from "@/src/services/technician.service";
+
 export default function HomeScreen() {
+  const [profile, setProfile] =
+    useState<UserProfile | null>(null);
+  const [requests, setRequests] = useState<
+    ServiceRequest[]
+  >([]);
+  const [notifications, setNotifications] = useState<
+    CustomerNotification[]
+  >([]);
+  const [technicians, setTechnicians] = useState<
+    PublicTechnicianProfile[]
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    const currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      setLoading(false);
+      setErrorMessage("Please sign in again.");
+      return;
+    }
+
+    const customerId = currentUser.uid;
+
+    let unsubscribeRequests: (() => void) | undefined;
+    let unsubscribeNotifications:
+      | (() => void)
+      | undefined;
+    let unsubscribeTechnicians: (() => void) | undefined;
+
+    async function loadCustomer() {
+      try {
+        const userProfile = await getUserProfile(
+          customerId
+        );
+
+        if (!userProfile) {
+          setErrorMessage("Customer profile not found.");
+          setLoading(false);
+          return;
+        }
+
+        setProfile(userProfile);
+
+        unsubscribeRequests =
+          subscribeToCustomerRequests(
+            customerId,
+            (items) => {
+              setRequests(items);
+              setLoading(false);
+            },
+            (error) => {
+              console.error(
+                "Dashboard requests subscription error:",
+                error
+              );
+              setErrorMessage(
+                "Unable to load service requests."
+              );
+              setLoading(false);
+            }
+          );
+
+        unsubscribeNotifications =
+          subscribeToCustomerNotifications(
+            customerId,
+            setNotifications,
+            (error) => {
+              console.error(
+                "Dashboard notifications subscription error:",
+                error
+              );
+            }
+          );
+
+        unsubscribeTechnicians =
+          subscribeToApprovedTechnicians(
+            setTechnicians,
+            (error) => {
+              console.error(
+                "Dashboard technicians subscription error:",
+                error
+              );
+            }
+          );
+      } catch (error) {
+        console.error("Dashboard load error:", error);
+        setErrorMessage("Unable to load dashboard.");
+        setLoading(false);
+      }
+    }
+
+    loadCustomer();
+
+    return () => {
+      unsubscribeRequests?.();
+      unsubscribeNotifications?.();
+      unsubscribeTechnicians?.();
+    };
+  }, []);
+
+  const counts = useMemo(() => {
+    return {
+      active: requests.filter((request) =>
+        ACTIVE_REQUEST_STATUSES.includes(request.status)
+      ).length,
+      pending: requests.filter(
+        (request) =>
+          request.status === "requested" ||
+          request.status === "pending"
+      ).length,
+      completed: requests.filter(
+        (request) => request.status === "completed"
+      ).length,
+      cancelled: requests.filter(
+        (request) => request.status === "cancelled"
+      ).length,
+    };
+  }, [requests]);
+
+  const unreadCount = notifications.filter(
+    (item) => !item.read
+  ).length;
+
+  const recentRequests = requests.slice(0, 3);
+  const topTechnicians = technicians.slice(0, 3);
+  const customerDivision = profile
+    ? getTechnicianDivision(profile)
+    : "";
+  const sameDivisionTechnicians = technicians
+    .filter(
+      (technician) =>
+        technician.serviceDivision === customerDivision
+    )
+    .slice(0, 3);
+
+  if (loading) {
+    return (
+      <View style={styles.centerScreen}>
+        <ActivityIndicator color="#3B82F6" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <StatusBar
@@ -30,15 +203,13 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
-        {/* Header */}
         <View style={styles.headerRow}>
-          <View>
+          <View style={styles.headerText}>
             <Text style={styles.greeting}>
-              Hello, Sahan 👋
+              Welcome, {profile?.fullName || "Customer"}
             </Text>
-
             <Text style={styles.subGreeting}>
-              Good morning!
+              Find approved technicians and request service directly.
             </Text>
           </View>
 
@@ -48,172 +219,151 @@ export default function HomeScreen() {
             onPress={() => router.push("/notifications")}
           >
             <Bell size={20} color="#FFFFFF" />
-
-            <View style={styles.notificationBadge}>
-              <Text style={styles.notificationBadgeText}>
-                2
-              </Text>
-            </View>
+            {unreadCount > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
 
-        {/* Main Action Card */}
+        {!!errorMessage && (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorText}>
+              {errorMessage}
+            </Text>
+          </View>
+        )}
+
         <View style={styles.heroCard}>
           <View style={styles.heroGlow} />
-
           <Text style={styles.heroTitle}>
-            What would you like to do today?
+            Choose an approved technician for your next service.
           </Text>
-
           <Text style={styles.heroSubtitle}>
-            Book a service and track your technician in real time.
+            Browse by category, division, rating, and experience.
           </Text>
-
-<TouchableOpacity
-  style={styles.newRequestButton}
-  activeOpacity={0.85}
-  onPress={() => router.push("/create-request")}
->
-  <Plus
-    size={20}
-    color="#FFFFFF"
-    strokeWidth={2.5}
-  />
-
-  <Text style={styles.newRequestButtonText}>
-    New Service Request
-  </Text>
-</TouchableOpacity>
-        </View>
-
-        {/* Overview */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            Overview
-          </Text>
+          <TouchableOpacity
+            style={styles.newRequestButton}
+            activeOpacity={0.85}
+            onPress={() => router.push("/technicians")}
+          >
+            <Plus size={20} color="#FFFFFF" />
+            <Text style={styles.newRequestButtonText}>
+              Browse Technicians
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.statsGrid}>
           <StatCard
-            value="2"
-            label="Pending"
-            accent="#F59E0B"
-          />
-
-          <StatCard
-            value="1"
-            label="In Progress"
+            value={String(counts.active)}
+            label="Active"
             accent="#3B82F6"
           />
-
           <StatCard
-            value="3"
+            value={String(counts.pending)}
+            label="Requested"
+            accent="#F59E0B"
+          />
+          <StatCard
+            value={String(counts.completed)}
             label="Completed"
             accent="#22C55E"
           />
-
           <StatCard
-            value="0"
+            value={String(counts.cancelled)}
             label="Cancelled"
             accent="#EF4444"
           />
         </View>
 
-        {/* Quick Actions */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>
-            Quick Actions
+            Service Categories
           </Text>
         </View>
-
-        <View style={styles.quickActionsRow}>
-          <QuickAction
-            icon={<Plus size={22} color="#60A5FA" />}
-            title="New Request"
-          />
-
-          <QuickAction
-            icon={<MapPin size={22} color="#22C55E" />}
-            title="Live Tracking"
-          />
-
-          <QuickAction
-            icon={<Search size={22} color="#A78BFA" />}
-            title="Find Service"
-          />
+        <View style={styles.categoryGrid}>
+          {SERVICE_CATEGORIES.map((category) => (
+            <TouchableOpacity
+              key={category}
+              style={styles.categoryCard}
+              activeOpacity={0.82}
+              onPress={() =>
+                router.push({
+                  pathname: "/technicians",
+                  params: { category },
+                })
+              }
+            >
+              <Wrench size={18} color="#60A5FA" />
+              <Text style={styles.categoryText}>
+                {category}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        {/* Recent Requests */}
+        <TechnicianSection
+          title="Top Rated Technicians"
+          technicians={topTechnicians}
+        />
+
+        <TechnicianSection
+          title="Same Division Technicians"
+          technicians={sameDivisionTechnicians}
+          emptyText="No approved technicians found in your division yet."
+        />
+
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>
             Recent Requests
           </Text>
-
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => router.push("/bookings")}
           >
-            <Text style={styles.viewAllText}>
-              View All
-            </Text>
+            <Text style={styles.viewAllText}>View All</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.requestsCard}>
-          <RequestRow
-            icon={<Wrench size={19} color="#94A3B8" />}
-            title="AC Repair"
-            subtitle="Today, 10:30 AM"
-            status="In Progress"
-            statusColor="#22C55E"
-            requestId="REQ-2026-0012"
-          />
-
-          <View style={styles.divider} />
-
-          <RequestRow
-            icon={<Clock3 size={19} color="#94A3B8" />}
-            title="Washing Machine Repair"
-            subtitle="14 Aug 2026, 02:30 PM"
-            status="Assigned"
-            statusColor="#3B82F6"
-            requestId="REQ-2026-0011"
-          />
-
-          <View style={styles.divider} />
-
-          <RequestRow
-            icon={<CheckCircle2 size={19} color="#94A3B8" />}
-            title="Electrical Installation"
-            subtitle="10 Aug 2026"
-            status="Completed"
-            statusColor="#22C55E"
-            requestId="REQ-2026-0010"
-          />
-        </View>
-
-        {/* Support */}
-        <View style={styles.supportCard}>
-          <View>
-            <Text style={styles.supportTitle}>
-              Need help?
-            </Text>
-
-            <Text style={styles.supportSubtitle}>
-              ServicePilot support is here for you.
-            </Text>
+        {recentRequests.length > 0 ? (
+          <View style={styles.requestsCard}>
+            {recentRequests.map((request, index) => (
+              <View key={request.id}>
+                <RequestRow request={request} />
+                {index < recentRequests.length - 1 && (
+                  <View style={styles.divider} />
+                )}
+              </View>
+            ))}
           </View>
-
-          <TouchableOpacity
-            style={styles.supportButton}
-            activeOpacity={0.8}
-          >
-            <ChevronRight
-              size={20}
-              color="#3B82F6"
+        ) : (
+          <View style={styles.emptyCard}>
+            <ClipboardPlus
+              size={34}
+              color="#64748B"
             />
-          </TouchableOpacity>
-        </View>
+            <Text style={styles.emptyTitle}>
+              No service requests yet.
+            </Text>
+            <Text style={styles.emptyText}>
+              Need help with something? Create your first
+              service request.
+            </Text>
+            <TouchableOpacity
+              style={styles.emptyButton}
+              activeOpacity={0.85}
+              onPress={() => router.push("/create-request")}
+            >
+              <Text style={styles.emptyButtonText}>
+                Create Request
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -230,80 +380,57 @@ function StatCard({
 }) {
   return (
     <View style={styles.statCard}>
-      <Text
-        style={[
-          styles.statValue,
-          { color: accent },
-        ]}
-      >
+      <Text style={[styles.statValue, { color: accent }]}>
         {value}
       </Text>
-
-      <Text style={styles.statLabel}>
-        {label}
-      </Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
 
-function QuickAction({
-  icon,
-  title,
-}: {
-  icon: React.ReactNode;
-  title: string;
-}) {
-  return (
-    <TouchableOpacity
-      style={styles.quickActionCard}
-      activeOpacity={0.8}
-    >
-      <View style={styles.quickActionIcon}>
-        {icon}
-      </View>
-
-      <Text style={styles.quickActionText}>
-        {title}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
 function RequestRow({
-  icon,
-  title,
-  subtitle,
-  status,
-  statusColor,
-  requestId,
+  request,
 }: {
-  icon: React.ReactNode;
-  title: string;
-  subtitle: string;
-  status: string;
-  statusColor: string;
-  requestId: string;
+  request: ServiceRequest;
 }) {
+  const color = getRequestStatusColor(request.status);
+
   return (
     <TouchableOpacity
       style={styles.requestRow}
       activeOpacity={0.78}
+      onPress={() =>
+        router.push({
+          pathname: "/request-details",
+          params: { id: request.id },
+        })
+      }
     >
       <View style={styles.requestIcon}>
-        {icon}
+        {request.status === "completed" ? (
+          <CheckCircle2 size={19} color="#22C55E" />
+        ) : request.status === "pending" ||
+          request.status === "requested" ? (
+          <Clock3 size={19} color="#F59E0B" />
+        ) : (
+          <Wrench size={19} color="#94A3B8" />
+        )}
       </View>
 
       <View style={styles.requestContent}>
         <Text style={styles.requestTitle}>
-          {title}
+          {request.title}
         </Text>
-
         <Text style={styles.requestId}>
-          {requestId}
+          {request.serviceCategory}
         </Text>
-
         <Text style={styles.requestSubtitle}>
-          {subtitle}
+          {formatRequestDate(request.createdAt)}
+          {request.technicianName
+            ? ` • ${request.technicianName}`
+            : request.assignedTechnicianName
+              ? ` • ${request.assignedTechnicianName}`
+              : " • Technician unavailable"}
         </Text>
       </View>
 
@@ -311,30 +438,109 @@ function RequestRow({
         style={[
           styles.statusBadge,
           {
-            backgroundColor: `${statusColor}18`,
-            borderColor: `${statusColor}40`,
+            backgroundColor: `${color}18`,
+            borderColor: `${color}40`,
           },
         ]}
       >
-        <Text
-          style={[
-            styles.statusText,
-            { color: statusColor },
-          ]}
-        >
-          {status}
+        <Text style={[styles.statusText, { color }]}>
+          {getRequestStatusLabel(request.status)}
         </Text>
       </View>
     </TouchableOpacity>
   );
 }
 
+function TechnicianSection({
+  title,
+  technicians,
+  emptyText = "Approved technicians will appear here.",
+}: {
+  title: string;
+  technicians: PublicTechnicianProfile[];
+  emptyText?: string;
+}) {
+  return (
+    <>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => router.push("/technicians")}
+        >
+          <Text style={styles.viewAllText}>View All</Text>
+        </TouchableOpacity>
+      </View>
+
+      {technicians.length > 0 ? (
+        <View style={styles.technicianList}>
+          {technicians.map((technician) => (
+            <TouchableOpacity
+              key={technician.uid}
+              style={styles.technicianMiniCard}
+              activeOpacity={0.82}
+              onPress={() =>
+                router.push({
+                  pathname: "/technician-profile",
+                  params: { id: technician.uid },
+                })
+              }
+            >
+              <View style={styles.technicianAvatar}>
+                <Wrench size={20} color="#FFFFFF" />
+              </View>
+              <View style={styles.technicianMiniContent}>
+                <Text style={styles.technicianMiniName}>
+                  {technician.fullName}
+                </Text>
+                <Text style={styles.technicianMiniMeta}>
+                  {technician.specialization}
+                </Text>
+                <View style={styles.technicianMiniRow}>
+                  <MapPin size={12} color="#22D3EE" />
+                  <Text style={styles.technicianMiniDivision}>
+                    {technician.serviceDivision}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.technicianRating}>
+                <Star
+                  size={13}
+                  color="#F59E0B"
+                  fill={
+                    technician.averageRating > 0
+                      ? "#F59E0B"
+                      : "transparent"
+                  }
+                />
+                <Text style={styles.technicianRatingText}>
+                  {technician.averageRating > 0
+                    ? technician.averageRating.toFixed(1)
+                    : "New"}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : (
+        <View style={styles.technicianEmptyCard}>
+          <Text style={styles.technicianEmptyText}>
+            {emptyText}
+          </Text>
+        </View>
+      )}
+    </>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: "#06101D" },
+  centerScreen: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#06101D",
   },
-
   content: {
     width: "100%",
     maxWidth: 520,
@@ -343,26 +549,24 @@ const styles = StyleSheet.create({
     paddingTop: 54,
     paddingBottom: 120,
   },
-
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 22,
+    gap: 14,
   },
-
+  headerText: { flex: 1 },
   greeting: {
     color: "#FFFFFF",
     fontSize: 23,
     fontWeight: "800",
   },
-
   subGreeting: {
     color: "#64748B",
     fontSize: 12,
     marginTop: 4,
   },
-
   notificationButton: {
     width: 44,
     height: 44,
@@ -373,7 +577,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   notificationBadge: {
     position: "absolute",
     top: 6,
@@ -386,15 +589,26 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 3,
   },
-
   notificationBadgeText: {
     color: "#FFFFFF",
     fontSize: 9,
     fontWeight: "800",
   },
-
+  errorCard: {
+    backgroundColor: "rgba(239,68,68,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.22)",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  errorText: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    textAlign: "center",
+  },
   heroCard: {
-    minHeight: 180,
+    minHeight: 178,
     backgroundColor: "#0D1B2A",
     borderRadius: 20,
     borderWidth: 1,
@@ -402,9 +616,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 20,
     overflow: "hidden",
-    marginBottom: 26,
+    marginBottom: 22,
   },
-
   heroGlow: {
     position: "absolute",
     width: 180,
@@ -414,22 +627,19 @@ const styles = StyleSheet.create({
     right: -70,
     top: -70,
   },
-
   heroTitle: {
     color: "#FFFFFF",
     fontSize: 18,
     fontWeight: "800",
-    maxWidth: 260,
+    maxWidth: 290,
   },
-
   heroSubtitle: {
     color: "#94A3B8",
     fontSize: 12,
     lineHeight: 18,
     marginTop: 8,
-    maxWidth: 270,
+    maxWidth: 290,
   },
-
   newRequestButton: {
     height: 50,
     borderRadius: 12,
@@ -440,32 +650,11 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 20,
   },
-
   newRequestButtonText: {
     color: "#FFFFFF",
     fontSize: 14,
     fontWeight: "700",
   },
-
-  sectionHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 11,
-  },
-
-  sectionTitle: {
-    color: "#F8FAFC",
-    fontSize: 16,
-    fontWeight: "800",
-  },
-
-  viewAllText: {
-    color: "#3B82F6",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -473,7 +662,28 @@ const styles = StyleSheet.create({
     rowGap: 10,
     marginBottom: 26,
   },
-
+  categoryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 9,
+    marginBottom: 24,
+  },
+  categoryCard: {
+    width: "48.5%",
+    minHeight: 78,
+    borderRadius: 15,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#17263A",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  categoryText: {
+    color: "#E2E8F0",
+    fontSize: 11,
+    fontWeight: "800",
+    marginTop: 8,
+  },
   statCard: {
     width: "48.5%",
     minHeight: 88,
@@ -484,53 +694,28 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
-  statValue: {
-    fontSize: 24,
-    fontWeight: "800",
-  },
-
+  statValue: { fontSize: 24, fontWeight: "800" },
   statLabel: {
     color: "#94A3B8",
     fontSize: 11,
     marginTop: 5,
   },
-
-  quickActionsRow: {
+  sectionHeader: {
     flexDirection: "row",
-    gap: 10,
-    marginBottom: 28,
-  },
-
-  quickActionCard: {
-    flex: 1,
-    minHeight: 105,
-    backgroundColor: "#0D1B2A",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#17263A",
     alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 8,
+    justifyContent: "space-between",
+    marginBottom: 11,
   },
-
-  quickActionIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    backgroundColor: "#101F30",
-    alignItems: "center",
-    justifyContent: "center",
+  sectionTitle: {
+    color: "#F8FAFC",
+    fontSize: 16,
+    fontWeight: "800",
   },
-
-  quickActionText: {
-    color: "#CBD5E1",
-    fontSize: 11,
-    fontWeight: "600",
-    marginTop: 9,
-    textAlign: "center",
+  viewAllText: {
+    color: "#3B82F6",
+    fontSize: 12,
+    fontWeight: "700",
   },
-
   requestsCard: {
     backgroundColor: "#0D1B2A",
     borderRadius: 17,
@@ -539,15 +724,13 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginBottom: 24,
   },
-
   requestRow: {
-    minHeight: 92,
+    minHeight: 94,
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
-
   requestIcon: {
     width: 46,
     height: 46,
@@ -557,29 +740,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 12,
   },
-
-  requestContent: {
-    flex: 1,
-  },
-
+  requestContent: { flex: 1 },
   requestTitle: {
     color: "#F8FAFC",
     fontSize: 13,
     fontWeight: "700",
   },
-
   requestId: {
     color: "#475569",
     fontSize: 9,
     marginTop: 3,
   },
-
   requestSubtitle: {
     color: "#64748B",
     fontSize: 10,
     marginTop: 4,
   },
-
   statusBadge: {
     minHeight: 28,
     borderRadius: 9,
@@ -587,49 +763,124 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 8,
+    maxWidth: 116,
   },
-
-  statusText: {
-    fontSize: 9,
-    fontWeight: "700",
-  },
-
+  statusText: { fontSize: 9, fontWeight: "700" },
   divider: {
     height: 1,
     backgroundColor: "#17263A",
     marginLeft: 72,
   },
-
-  supportCard: {
-    minHeight: 82,
+  technicianList: {
+    gap: 10,
+    marginBottom: 24,
+  },
+  technicianMiniCard: {
+    minHeight: 92,
+    borderRadius: 16,
     backgroundColor: "#0D1B2A",
     borderWidth: 1,
     borderColor: "#17263A",
-    borderRadius: 16,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
+    paddingHorizontal: 13,
   },
-
-  supportTitle: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-
-  supportSubtitle: {
-    color: "#64748B",
-    fontSize: 11,
-    marginTop: 4,
-  },
-
-  supportButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: "rgba(37,99,235,0.09)",
+  technicianAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 15,
+    backgroundColor: "#2563EB",
     alignItems: "center",
     justifyContent: "center",
+    marginRight: 11,
+  },
+  technicianMiniContent: { flex: 1 },
+  technicianMiniName: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  technicianMiniMeta: {
+    color: "#94A3B8",
+    fontSize: 10,
+    marginTop: 4,
+  },
+  technicianMiniRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+    gap: 5,
+  },
+  technicianMiniDivision: {
+    color: "#64748B",
+    fontSize: 9,
+    flex: 1,
+  },
+  technicianRating: {
+    width: 56,
+    height: 50,
+    borderRadius: 12,
+    backgroundColor: "#101F30",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  technicianRatingText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  technicianEmptyCard: {
+    minHeight: 72,
+    borderRadius: 14,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#17263A",
+    justifyContent: "center",
+    paddingHorizontal: 15,
+    marginBottom: 24,
+  },
+  technicianEmptyText: {
+    color: "#64748B",
+    fontSize: 11,
+    lineHeight: 17,
+    textAlign: "center",
+  },
+  emptyCard: {
+    minHeight: 270,
+    borderRadius: 18,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#17263A",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+  },
+  emptyTitle: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "800",
+    marginTop: 14,
+  },
+  emptyText: {
+    color: "#64748B",
+    fontSize: 12,
+    lineHeight: 19,
+    textAlign: "center",
+    marginTop: 7,
+  },
+  emptyButton: {
+    height: 44,
+    borderRadius: 11,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    marginTop: 18,
+  },
+  emptyButtonText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
   },
 });

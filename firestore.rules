@@ -146,6 +146,151 @@ service cloud.firestore {
         request.resource.data.reviewedBy == request.auth.uid;
     }
 
+    function isCustomer() {
+      return signedIn() &&
+        userRole(request.auth.uid) == "customer";
+    }
+
+    function isVerifiedCustomer() {
+      return isCustomer() &&
+        request.auth.token.email_verified == true;
+    }
+
+    function hasRequiredRequestCreateFields() {
+      return request.resource.data.keys().hasAll([
+        "customerId",
+        "customerName",
+        "customerEmail",
+        "customerPhone",
+        "serviceCategory",
+        "title",
+        "description",
+        "address",
+        "serviceArea",
+        "preferredDate",
+        "preferredTime",
+        "priority",
+        "status",
+        "imageUrls",
+        "createdAt",
+        "updatedAt"
+      ]);
+    }
+
+    function hasOnlyCustomerRequestCreateFields() {
+      return request.resource.data.keys().hasOnly([
+        "customerId",
+        "customerName",
+        "customerEmail",
+        "customerPhone",
+        "serviceCategory",
+        "title",
+        "description",
+        "address",
+        "serviceArea",
+        "preferredDate",
+        "preferredTime",
+        "priority",
+        "status",
+        "imageUrls",
+        "createdAt",
+        "updatedAt"
+      ]);
+    }
+
+    function validCustomerRequestCreate() {
+      return isVerifiedCustomer() &&
+        hasRequiredRequestCreateFields() &&
+        hasOnlyCustomerRequestCreateFields() &&
+        request.resource.data.customerId == request.auth.uid &&
+        request.resource.data.status == "pending" &&
+        request.resource.data.priority in ["normal", "urgent"] &&
+        request.resource.data.imageUrls is list;
+    }
+
+    function validCustomerRequestCancel() {
+      return isVerifiedCustomer() &&
+        resource.data.customerId == request.auth.uid &&
+        resource.data.status == "pending" &&
+        request.resource.data.customerId == resource.data.customerId &&
+        request.resource.data.status == "cancelled" &&
+        request.resource.data.cancelledBy == request.auth.uid &&
+        request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            "status",
+            "updatedAt",
+            "cancelledAt",
+            "cancelledBy"
+          ]);
+    }
+
+    function validDispatcherRequestUpdate() {
+      return isDispatcher() &&
+        request.resource.data.customerId == resource.data.customerId &&
+        request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            "status",
+            "assignedTechnicianId",
+            "assignedTechnicianName",
+            "assignedDispatcherId",
+            "updatedAt"
+          ]) &&
+        request.resource.data.status in [
+          "pending",
+          "assigned",
+          "in_progress",
+          "completed",
+          "cancelled"
+        ];
+    }
+
+    function validNotificationReadUpdate() {
+      return signedIn() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasOnly(["read", "updatedAt"]) &&
+        request.resource.data.read == true;
+    }
+
+    function isOwnCompletedRequest(requestId) {
+      return exists(
+        /databases/$(database)/documents/service_requests/$(requestId)
+      ) &&
+        get(
+          /databases/$(database)/documents/service_requests/$(requestId)
+        ).data.customerId == request.auth.uid &&
+        get(
+          /databases/$(database)/documents/service_requests/$(requestId)
+        ).data.status == "completed";
+    }
+
+    function validReviewCreate(reviewId) {
+      return isVerifiedCustomer() &&
+        request.resource.data.keys().hasOnly([
+          "requestId",
+          "customerId",
+          "technicianId",
+          "rating",
+          "comment",
+          "createdAt"
+        ]) &&
+        request.resource.data.customerId == request.auth.uid &&
+        reviewId ==
+          request.resource.data.requestId + "_" + request.auth.uid &&
+        request.resource.data.rating is int &&
+        request.resource.data.rating >= 1 &&
+        request.resource.data.rating <= 5 &&
+        request.resource.data.technicianId is string &&
+        isOwnCompletedRequest(request.resource.data.requestId);
+    }
+
     match /users/{userId} {
       allow create: if validPublicUserCreate(userId);
       allow read: if isOwner(userId) ||
@@ -156,6 +301,33 @@ service cloud.firestore {
       allow update: if validOwnerUpdate(userId) ||
         validDispatcherTechnicianReview();
       allow delete: if false;
+    }
+
+    match /service_requests/{requestId} {
+      allow create: if validCustomerRequestCreate();
+      allow read: if signedIn() &&
+        (
+          resource.data.customerId == request.auth.uid ||
+          isDispatcher()
+        );
+      allow update: if validCustomerRequestCancel() ||
+        validDispatcherRequestUpdate();
+      allow delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow create: if false;
+      allow read: if signedIn() &&
+        resource.data.userId == request.auth.uid;
+      allow update: if validNotificationReadUpdate();
+      allow delete: if false;
+    }
+
+    match /service_reviews/{reviewId} {
+      allow create: if validReviewCreate(reviewId);
+      allow read: if signedIn() &&
+        resource.data.customerId == request.auth.uid;
+      allow update, delete: if false;
     }
   }
 }

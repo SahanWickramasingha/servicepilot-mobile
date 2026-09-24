@@ -1,14 +1,20 @@
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  sendEmailVerification,
   sendPasswordResetEmail,
+  sendEmailVerification,
   signOut,
   User,
   UserCredential,
 } from "firebase/auth";
 
 import { auth } from "@/src/firebase/config";
+
+type VerificationEmailResponse = {
+  success: boolean;
+  alreadyVerified: boolean;
+  message: string;
+};
 
 export async function registerUser(
   email: string,
@@ -41,8 +47,24 @@ export async function resetPassword(email: string): Promise<void> {
 
 export async function sendVerificationEmail(
   user: User
-): Promise<void> {
+): Promise<VerificationEmailResponse> {
+  await user.reload();
+
+  if (user.emailVerified) {
+    return {
+      success: true,
+      alreadyVerified: true,
+      message: "Email is already verified.",
+    };
+  }
+
   await sendEmailVerification(user);
+
+  return {
+    success: true,
+    alreadyVerified: false,
+    message: "Verification email sent.",
+  };
 }
 
 export async function logoutUser(): Promise<void> {

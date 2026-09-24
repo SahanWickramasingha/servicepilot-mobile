@@ -73,6 +73,7 @@ export default function VerifyEmailScreen() {
       setIsChecking(true);
 
       await currentUser.reload();
+      await currentUser.getIdToken(true);
 
       if (!auth.currentUser?.emailVerified) {
         setErrorMessage(
@@ -80,8 +81,6 @@ export default function VerifyEmailScreen() {
         );
         return;
       }
-
-      await currentUser.getIdToken(true);
 
       await markUserEmailVerified(currentUser.uid);
 
@@ -135,11 +134,14 @@ export default function VerifyEmailScreen() {
       setErrorMessage("");
       setSuccessMessage("");
 
-      await sendVerificationEmail(currentUser);
+      const result =
+        await sendVerificationEmail(currentUser);
 
       setResendTimer(RESEND_SECONDS);
       setSuccessMessage(
-        "A new verification link has been sent."
+        result.alreadyVerified
+          ? "Your email is already verified."
+          : "A new verification link has been sent."
       );
     } catch (error: any) {
       console.error(

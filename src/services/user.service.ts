@@ -41,6 +41,7 @@ export interface UserProfileData {
   qualifications?: string;
   certifications?: string;
   serviceAreas?: string;
+  serviceDivision?: string;
 }
 
 export interface UserProfile {
@@ -60,6 +61,11 @@ export interface UserProfile {
   qualifications?: string;
   certifications?: string;
   serviceAreas?: string;
+  serviceDivision?: string;
+  profilePhotoUrl?: string;
+  averageRating?: number;
+  reviewCount?: number;
+  completedJobs?: number;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -105,11 +111,27 @@ export async function createUserProfile(
             data.certifications?.trim() ?? "",
           serviceAreas:
             data.serviceAreas?.trim() ?? "",
+          serviceDivision:
+            data.serviceAreas?.trim() ?? "",
         }
       : {}),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+}
+
+export function getTechnicianDivision(
+  profile: Pick<
+    UserProfile,
+    "serviceDivision" | "serviceAreas" | "address"
+  >
+): string {
+  return (
+    profile.serviceDivision?.trim() ||
+    profile.serviceAreas?.trim() ||
+    profile.address?.trim() ||
+    "Unassigned Division"
+  );
 }
 
 export async function getUserProfile(
@@ -132,6 +154,24 @@ export async function markUserEmailVerified(
 
   await updateDoc(userRef, {
     emailVerified: true,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function updateUserProfileSafe(
+  uid: string,
+  data: {
+    fullName: string;
+    phone: string;
+    address: string;
+  }
+): Promise<void> {
+  const userRef = doc(db, "users", uid);
+
+  await updateDoc(userRef, {
+    fullName: data.fullName.trim(),
+    phone: data.phone.trim(),
+    address: data.address.trim(),
     updatedAt: serverTimestamp(),
   });
 }

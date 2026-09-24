@@ -181,7 +181,16 @@ export default function LoginScreen() {
         );
       }
 
-      await sendVerificationEmail(currentUser);
+      const result =
+        await sendVerificationEmail(currentUser);
+
+      if (result.alreadyVerified) {
+        setErrorMessage(
+          "Your email is already verified. Please sign in again."
+        );
+        setShowVerifyRecovery(false);
+        return;
+      }
 
       router.push({
         pathname: "/verify-email",

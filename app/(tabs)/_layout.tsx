@@ -1,9 +1,10 @@
 import { Tabs } from "expo-router";
 import {
-  CalendarDays,
-  Clock3,
+  ListChecks,
   Home,
+  MapPinned,
   UserRound,
+  UsersRound,
 } from "lucide-react-native";
 import { ProtectedRoute } from "@/src/components/auth/ProtectedRoute";
 
@@ -72,11 +73,11 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="bookings"
+        name="technicians"
         options={{
-          title: "Bookings",
+          title: "Technicians",
           tabBarIcon: ({ color, focused }) => (
-            <CalendarDays
+            <UsersRound
               size={focused ? 23 : 21}
               color={color}
               strokeWidth={focused ? 2.5 : 2}
@@ -86,11 +87,25 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="history"
+        name="map"
         options={{
-          title: "History",
+          title: "Map",
           tabBarIcon: ({ color, focused }) => (
-            <Clock3
+            <MapPinned
+              size={focused ? 23 : 21}
+              color={color}
+              strokeWidth={focused ? 2.5 : 2}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="bookings"
+        options={{
+          title: "Requests",
+          tabBarIcon: ({ color, focused }) => (
+            <ListChecks
               size={focused ? 23 : 21}
               color={color}
               strokeWidth={focused ? 2.5 : 2}
@@ -122,6 +137,13 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
+        name="notifications"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
         name="select-service"
         options={{
           href: null,
@@ -136,7 +158,21 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
+        name="technician-profile"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
         name="live-tracking"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="history"
         options={{
           href: null,
         }}

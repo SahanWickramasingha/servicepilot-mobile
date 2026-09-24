@@ -24,7 +24,7 @@ export default function LiveTrackingScreen() {
     id?: string;
   }>();
 
-  const requestId = params.id ?? "REQ-2026-0012";
+  const requestId = params.id ?? "No request selected";
 
   return (
     <View style={styles.container}>

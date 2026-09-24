@@ -1,17 +1,19 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
   ArrowLeft,
   CalendarDays,
   Camera,
-  ChevronRight,
   Clock3,
   ImagePlus,
   MapPin,
+  Save,
+  Star,
+  UserRound,
   Wrench,
 } from "lucide-react-native";
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -23,50 +25,186 @@ import {
   View,
 } from "react-native";
 
-type Priority = "low" | "medium" | "high" | "emergency";
+import {
+  RequestPriority,
+  SERVICE_CATEGORIES,
+  ServiceCategory,
+  getPriorityColor,
+  getPriorityLabel,
+} from "@/src/constants/serviceRequests";
+import { auth } from "@/src/firebase/config";
+import { createServiceRequest } from "@/src/services/request.service";
+import {
+  getUserProfile,
+  UserProfile,
+} from "@/src/services/user.service";
+import {
+  getApprovedTechnician,
+  PublicTechnicianProfile,
+} from "@/src/services/technician.service";
 
 export default function CreateRequestScreen() {
-  const [serviceType, setServiceType] = useState(params.service ?? "");
-  const [priority, setPriority] = useState<Priority>("medium");
-  const [date, setDate] = useState("20 May 2026");
-  const [time, setTime] = useState("10:00 AM");
-  const [location, setLocation] = useState(
-    "123, Main Street, Colombo 07"
-  );
+  const params = useLocalSearchParams<{
+    service?: string;
+    technicianId?: string;
+  }>();
+
+  const initialCategory = SERVICE_CATEGORIES.includes(
+    params.service as ServiceCategory
+  )
+    ? (params.service as ServiceCategory)
+    : "Air Conditioning";
+
+  const [profile, setProfile] =
+    useState<UserProfile | null>(null);
+  const [technician, setTechnician] =
+    useState<PublicTechnicianProfile | null>(null);
+  const [serviceCategory, setServiceCategory] =
+    useState<ServiceCategory>(initialCategory);
+  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [address, setAddress] = useState("");
+  const [division, setDivision] = useState("");
+  const [preferredDate, setPreferredDate] = useState("");
+  const [preferredTime, setPreferredTime] = useState("");
+  const [priority, setPriority] =
+    useState<RequestPriority>("normal");
   const [photoCount, setPhotoCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
-  const canContinue = useMemo(() => {
-    return (
-      serviceType.trim().length > 0 &&
-      description.trim().length >= 10 &&
-      location.trim().length > 0
-    );
-  }, [serviceType, description, location]);
+  useEffect(() => {
+    const currentUser = auth.currentUser;
 
-  const handleSelectService = () => {
-    router.push("/select-service");
-  };
-
-  const handleSubmit = () => {
-    if (!canContinue) {
+    if (!currentUser) {
+      setErrorMessage("Please sign in again.");
+      setLoading(false);
       return;
     }
 
-    /*
-      Firebase integration will come later.
+    Promise.all([
+      getUserProfile(currentUser.uid),
+      params.technicianId
+        ? getApprovedTechnician(String(params.technicianId))
+        : Promise.resolve(null),
+    ])
+      .then(([userProfile, approvedTechnician]) => {
+        if (!userProfile) {
+          setErrorMessage("Customer profile not found.");
+          return;
+        }
 
-      Future flow:
-      1. Validate form
-      2. Capture GPS GeoPoint
-      3. Upload photos
-      4. Create Firestore job
-      5. Status = pending
-      6. Notify dispatcher
-    */
+        if (!approvedTechnician) {
+          setErrorMessage(
+            "Please select an approved technician before creating a request."
+          );
+        }
 
-    router.push("/bookings");
+        setProfile(userProfile);
+        setTechnician(approvedTechnician);
+        setAddress(userProfile.address ?? "");
+        setDivision(
+          approvedTechnician?.serviceDivision ??
+            userProfile.address ??
+            ""
+        );
+      })
+      .catch((error) => {
+        console.error("Create request profile load error:", error);
+        setErrorMessage("Unable to load your profile.");
+      })
+      .finally(() => setLoading(false));
+  }, [params.technicianId]);
+
+  const validationMessage = useMemo(() => {
+    if (!serviceCategory.trim()) {
+      return "Please select a service category.";
+    }
+
+    if (!technician) {
+      return "Please select an approved technician.";
+    }
+
+    if (!title.trim()) {
+      return "Please enter a problem title.";
+    }
+
+    if (!description.trim()) {
+      return "Please describe the problem.";
+    }
+
+    if (!address.trim()) {
+      return "Please enter the service location.";
+    }
+
+    if (!preferredDate.trim()) {
+      return "Please enter a preferred date.";
+    }
+
+    return "";
+  }, [
+    serviceCategory,
+    technician,
+    title,
+    description,
+    address,
+    preferredDate,
+  ]);
+
+  const canSubmit =
+    !validationMessage && !submitting && !!profile;
+
+  const handleSubmit = async () => {
+    if (!profile || !technician || validationMessage) {
+      setErrorMessage(validationMessage);
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const requestId = await createServiceRequest({
+        profile,
+        serviceCategory,
+        title,
+        description,
+        address,
+        technician,
+        division,
+        preferredDate,
+        preferredTime,
+        priority,
+        imageUrls: [],
+      });
+
+      setSuccessMessage("Service request created.");
+
+      router.replace({
+        pathname: "/request-details",
+        params: { id: requestId },
+      });
+    } catch (error: any) {
+      console.error("Create request error:", error);
+      setErrorMessage(
+        error?.message ||
+          "Unable to create service request."
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  if (loading) {
+    return (
+      <View style={styles.centerScreen}>
+        <ActivityIndicator color="#3B82F6" />
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -83,7 +221,6 @@ export default function CreateRequestScreen() {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.content}
       >
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
@@ -92,240 +229,263 @@ export default function CreateRequestScreen() {
           >
             <ArrowLeft size={20} color="#FFFFFF" />
           </TouchableOpacity>
-
           <View style={styles.headerText}>
             <Text style={styles.title}>
               Create Service Request
             </Text>
-
             <Text style={styles.subtitle}>
               Tell us what service you need
             </Text>
           </View>
         </View>
 
-        {/* Service Type */}
+        {!!errorMessage && (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorText}>
+              {errorMessage}
+            </Text>
+          </View>
+        )}
+
+        {!!successMessage && (
+          <View style={styles.successCard}>
+            <Text style={styles.successText}>
+              {successMessage}
+            </Text>
+          </View>
+        )}
+
         <Text style={styles.sectionTitle}>
-          Service Details
+          Selected Technician
         </Text>
-
-        <View style={styles.card}>
-          <Text style={styles.label}>
-            Service Type
-          </Text>
-
-          <TouchableOpacity
-            style={styles.selector}
-            activeOpacity={0.8}
-            onPress={handleSelectService}
-          >
-            <View style={styles.selectorLeft}>
-              <View style={styles.iconBox}>
-                <Wrench size={20} color="#60A5FA" />
-              </View>
-
-              <View>
-                <Text style={styles.selectorValue}>
-                  {serviceType || "Select a service"}
-                </Text>
-
-                <Text style={styles.selectorHint}>
-                  Choose the required service
+        {technician ? (
+          <View style={styles.selectedTechnicianCard}>
+            <View style={styles.technicianAvatar}>
+              <UserRound size={26} color="#FFFFFF" />
+            </View>
+            <View style={styles.technicianContent}>
+              <Text style={styles.technicianName}>
+                {technician.fullName}
+              </Text>
+              <Text style={styles.technicianMeta}>
+                {technician.specialization}
+              </Text>
+              <View style={styles.technicianRow}>
+                <Star
+                  size={13}
+                  color="#F59E0B"
+                  fill={
+                    technician.averageRating > 0
+                      ? "#F59E0B"
+                      : "transparent"
+                  }
+                />
+                <Text style={styles.technicianSmallText}>
+                  {technician.averageRating > 0
+                    ? technician.averageRating.toFixed(1)
+                    : "New"}{" "}
+                  • {technician.serviceDivision}
                 </Text>
               </View>
             </View>
-
-            <ChevronRight
-              size={19}
-              color="#64748B"
-            />
-          </TouchableOpacity>
-
-          {/* Demo service chooser until select-service screen is connected */}
-          {!serviceType && (
             <TouchableOpacity
-              style={styles.demoSelect}
-              onPress={() => setServiceType("AC Repair")}
-            >
-              <Text style={styles.demoSelectText}>
-                Use AC Repair for preview
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          <Text style={[styles.label, styles.priorityLabel]}>
-            Priority
-          </Text>
-
-          <View style={styles.priorityRow}>
-            <PriorityButton
-              label="Low"
-              value="low"
-              selected={priority === "low"}
-              onPress={() => setPriority("low")}
-            />
-
-            <PriorityButton
-              label="Medium"
-              value="medium"
-              selected={priority === "medium"}
-              onPress={() => setPriority("medium")}
-            />
-
-            <PriorityButton
-              label="High"
-              value="high"
-              selected={priority === "high"}
-              onPress={() => setPriority("high")}
-            />
-          </View>
-
-          <PriorityButton
-            label="Emergency"
-            value="emergency"
-            selected={priority === "emergency"}
-            onPress={() => setPriority("emergency")}
-            fullWidth
-          />
-
-          {priority === "emergency" && (
-            <View style={styles.emergencyInfo}>
-              <AlertTriangle
-                size={17}
-                color="#F87171"
-              />
-
-              <Text style={styles.emergencyText}>
-                Emergency requests may be prioritised by the dispatcher.
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* Schedule */}
-        <Text style={styles.sectionTitle}>
-          Preferred Schedule
-        </Text>
-
-        <View style={styles.card}>
-          <View style={styles.twoColumnRow}>
-            <TouchableOpacity
-              style={styles.halfField}
+              style={styles.changeTechnicianButton}
               activeOpacity={0.8}
+              onPress={() => router.push("/technicians")}
             >
-              <View style={styles.smallFieldHeader}>
-                <CalendarDays
-                  size={17}
-                  color="#60A5FA"
-                />
-
-                <Text style={styles.smallFieldLabel}>
-                  Date
-                </Text>
-              </View>
-
-              <Text style={styles.smallFieldValue}>
-                {date}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.halfField}
-              activeOpacity={0.8}
-            >
-              <View style={styles.smallFieldHeader}>
-                <Clock3
-                  size={17}
-                  color="#A78BFA"
-                />
-
-                <Text style={styles.smallFieldLabel}>
-                  Time
-                </Text>
-              </View>
-
-              <Text style={styles.smallFieldValue}>
-                {time}
+              <Text style={styles.changeTechnicianText}>
+                Change
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
-
-        {/* Location */}
-        <Text style={styles.sectionTitle}>
-          Location
-        </Text>
-
-        <View style={styles.card}>
-          <View style={styles.locationInput}>
-            <MapPin
-              size={20}
-              color="#3B82F6"
-            />
-
-            <TextInput
-              value={location}
-              onChangeText={setLocation}
-              placeholder="Enter service location"
-              placeholderTextColor="#64748B"
-              style={styles.locationTextInput}
-            />
-          </View>
-
+        ) : (
           <TouchableOpacity
-            style={styles.locationButton}
-            activeOpacity={0.8}
+            style={styles.selectTechnicianCard}
+            activeOpacity={0.85}
+            onPress={() => router.push("/technicians")}
           >
-            <MapPin
-              size={17}
-              color="#3B82F6"
-            />
-
-            <Text style={styles.locationButtonText}>
-              Use Current Location
+            <UserRound size={24} color="#60A5FA" />
+            <Text style={styles.selectTechnicianText}>
+              Select an approved technician
             </Text>
           </TouchableOpacity>
+        )}
+
+        <Text style={styles.sectionTitle}>
+          Service Category
+        </Text>
+        <View style={styles.categoryGrid}>
+          {SERVICE_CATEGORIES.map((category) => (
+            <TouchableOpacity
+              key={category}
+              style={[
+                styles.categoryButton,
+                serviceCategory === category &&
+                  styles.categoryButtonActive,
+              ]}
+              activeOpacity={0.8}
+              onPress={() => setServiceCategory(category)}
+            >
+              <Wrench
+                size={16}
+                color={
+                  serviceCategory === category
+                    ? "#FFFFFF"
+                    : "#60A5FA"
+                }
+              />
+              <Text
+                style={[
+                  styles.categoryText,
+                  serviceCategory === category &&
+                    styles.categoryTextActive,
+                ]}
+              >
+                {category}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        {/* Description */}
         <Text style={styles.sectionTitle}>
-          Description
+          Request Details
         </Text>
-
         <View style={styles.card}>
-          <Text style={styles.descriptionHint}>
-            Explain the problem clearly so the technician can prepare.
-          </Text>
+          <FieldLabel label="Problem Title" />
+          <TextInput
+            value={title}
+            onChangeText={setTitle}
+            placeholder="Example: AC is not cooling"
+            placeholderTextColor="#64748B"
+            style={styles.input}
+          />
 
+          <FieldLabel label="Description" />
           <View style={styles.descriptionBox}>
             <TextInput
               value={description}
               onChangeText={setDescription}
-              placeholder="Example: AC is not cooling properly and makes a noise..."
+              placeholder="Explain the issue clearly..."
               placeholderTextColor="#64748B"
               multiline
               textAlignVertical="top"
               maxLength={500}
               style={styles.descriptionInput}
             />
-
             <Text style={styles.characterCount}>
               {description.length}/500
             </Text>
           </View>
         </View>
 
-        {/* Photos */}
         <Text style={styles.sectionTitle}>
-          Upload Photos
+          Service Location
         </Text>
+        <View style={styles.card}>
+          <View style={styles.iconInput}>
+            <MapPin size={20} color="#3B82F6" />
+            <TextInput
+              value={address}
+              onChangeText={setAddress}
+              placeholder="Enter service location"
+              placeholderTextColor="#64748B"
+              multiline
+              style={styles.iconTextInput}
+            />
+          </View>
+          <FieldLabel label="Division" />
+          <View style={styles.iconInput}>
+            <MapPin size={20} color="#22D3EE" />
+            <TextInput
+              value={division}
+              onChangeText={setDivision}
+              placeholder="Service division"
+              placeholderTextColor="#64748B"
+              style={styles.iconTextInput}
+            />
+          </View>
+        </View>
 
+        <Text style={styles.sectionTitle}>
+          Preferred Schedule
+        </Text>
+        <View style={styles.card}>
+          <View style={styles.twoColumnRow}>
+            <View style={styles.halfField}>
+              <View style={styles.smallFieldHeader}>
+                <CalendarDays size={17} color="#60A5FA" />
+                <Text style={styles.smallFieldLabel}>
+                  Date
+                </Text>
+              </View>
+              <TextInput
+                value={preferredDate}
+                onChangeText={setPreferredDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#64748B"
+                style={styles.smallInput}
+              />
+            </View>
+
+            <View style={styles.halfField}>
+              <View style={styles.smallFieldHeader}>
+                <Clock3 size={17} color="#A78BFA" />
+                <Text style={styles.smallFieldLabel}>
+                  Time
+                </Text>
+              </View>
+              <TextInput
+                value={preferredTime}
+                onChangeText={setPreferredTime}
+                placeholder="10:00 AM"
+                placeholderTextColor="#64748B"
+                style={styles.smallInput}
+              />
+            </View>
+          </View>
+        </View>
+
+        <Text style={styles.sectionTitle}>Priority</Text>
+        <View style={styles.priorityRow}>
+          {(["normal", "urgent"] as RequestPriority[]).map(
+            (item) => {
+              const color = getPriorityColor(item);
+
+              return (
+                <TouchableOpacity
+                  key={item}
+                  style={[
+                    styles.priorityButton,
+                    priority === item && {
+                      backgroundColor: `${color}18`,
+                      borderColor: color,
+                    },
+                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => setPriority(item)}
+                >
+                  <Text
+                    style={[
+                      styles.priorityText,
+                      priority === item && { color },
+                    ]}
+                  >
+                    {getPriorityLabel(item)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            }
+          )}
+        </View>
+
+        <Text style={styles.sectionTitle}>
+          Photos Optional
+        </Text>
         <View style={styles.card}>
           <Text style={styles.photoHint}>
-            Add photos of the issue if available. You can review or remove
-            them before submission.
+            Photo upload UI is ready for a future storage
+            integration. Selected previews are not uploaded yet.
           </Text>
-
           <View style={styles.photoRow}>
             <TouchableOpacity
               style={styles.addPhotoBox}
@@ -336,89 +496,52 @@ export default function CreateRequestScreen() {
                 )
               }
             >
-              <ImagePlus
-                size={26}
-                color="#60A5FA"
-              />
-
+              <ImagePlus size={26} color="#60A5FA" />
               <Text style={styles.addPhotoText}>
                 Add Photo
               </Text>
             </TouchableOpacity>
 
-            {Array.from({ length: photoCount }).map((_, index) => (
-              <View
-                key={index}
-                style={styles.photoPreview}
-              >
-                <Camera
-                  size={23}
-                  color="#94A3B8"
-                />
-
-                <Text style={styles.photoNumber}>
-                  {index + 1}
-                </Text>
-              </View>
-            ))}
+            {Array.from({ length: photoCount }).map(
+              (_, index) => (
+                <View
+                  key={index}
+                  style={styles.photoPreview}
+                >
+                  <Camera size={23} color="#94A3B8" />
+                  <Text style={styles.photoNumber}>
+                    {index + 1}
+                  </Text>
+                </View>
+              )
+            )}
           </View>
-
-          <Text style={styles.photoCountText}>
-            {photoCount}/4 photos selected
-          </Text>
         </View>
 
-        {/* Review */}
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>
-            Request Summary
-          </Text>
-
-          <SummaryRow
-            label="Service"
-            value={serviceType || "Not selected"}
-          />
-
-          <SummaryRow
-            label="Priority"
-            value={capitalize(priority)}
-          />
-
-          <SummaryRow
-            label="Schedule"
-            value={`${date} • ${time}`}
-          />
-
-          <SummaryRow
-            label="Photos"
-            value={`${photoCount} selected`}
-          />
-        </View>
-
-        {/* Submit */}
         <TouchableOpacity
           style={[
             styles.submitButton,
-            !canContinue && styles.submitButtonDisabled,
+            !canSubmit && styles.submitButtonDisabled,
           ]}
-          disabled={!canContinue}
+          disabled={!canSubmit}
           activeOpacity={0.85}
           onPress={handleSubmit}
         >
-          <Text style={styles.submitButtonText}>
-            Review & Submit
-          </Text>
-
-          <ChevronRight
-            size={19}
-            color="#FFFFFF"
-          />
+          {submitting ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <>
+              <Save size={19} color="#FFFFFF" />
+              <Text style={styles.submitButtonText}>
+                Submit Request
+              </Text>
+            </>
+          )}
         </TouchableOpacity>
 
-        {!canContinue && (
+        {!!validationMessage && (
           <Text style={styles.validationText}>
-            Select a service, enter a location, and add at least 10
-            characters of description.
+            {validationMessage}
           </Text>
         )}
       </ScrollView>
@@ -426,109 +549,31 @@ export default function CreateRequestScreen() {
   );
 }
 
-function PriorityButton({
-  label,
-  value,
-  selected,
-  onPress,
-  fullWidth = false,
-}: {
-  label: string;
-  value: Priority;
-  selected: boolean;
-  onPress: () => void;
-  fullWidth?: boolean;
-}) {
-  const accent = getPriorityColor(value);
-
-  return (
-    <TouchableOpacity
-      style={[
-        styles.priorityButton,
-        fullWidth && styles.priorityButtonFull,
-        selected && {
-          backgroundColor: `${accent}18`,
-          borderColor: accent,
-        },
-      ]}
-      activeOpacity={0.8}
-      onPress={onPress}
-    >
-      <Text
-        style={[
-          styles.priorityText,
-          selected && {
-            color: accent,
-          },
-        ]}
-      >
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
-function SummaryRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <View style={styles.summaryRow}>
-      <Text style={styles.summaryLabel}>
-        {label}
-      </Text>
-
-      <Text style={styles.summaryValue}>
-        {value}
-      </Text>
-    </View>
-  );
-}
-
-function getPriorityColor(priority: Priority) {
-  switch (priority) {
-    case "low":
-      return "#22C55E";
-
-    case "medium":
-      return "#F59E0B";
-
-    case "high":
-      return "#F97316";
-
-    case "emergency":
-      return "#EF4444";
-  }
-}
-
-function capitalize(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+function FieldLabel({ label }: { label: string }) {
+  return <Text style={styles.label}>{label}</Text>;
 }
 
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: "#06101D" },
+  centerScreen: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#06101D",
   },
-
   content: {
     width: "100%",
     maxWidth: 520,
     alignSelf: "center",
     paddingHorizontal: 18,
     paddingTop: 54,
-    paddingBottom: 70,
+    paddingBottom: 120,
   },
-
   header: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 28,
+    marginBottom: 24,
   },
-
   backButton: {
     width: 44,
     height: 44,
@@ -540,23 +585,43 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 14,
   },
-
-  headerText: {
-    flex: 1,
-  },
-
+  headerText: { flex: 1 },
   title: {
     color: "#FFFFFF",
     fontSize: 24,
     fontWeight: "800",
   },
-
   subtitle: {
     color: "#64748B",
     fontSize: 12,
     marginTop: 4,
   },
-
+  errorCard: {
+    backgroundColor: "rgba(239,68,68,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.22)",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  errorText: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    textAlign: "center",
+  },
+  successCard: {
+    backgroundColor: "rgba(34,197,94,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.22)",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  successText: {
+    color: "#86EFAC",
+    fontSize: 12,
+    textAlign: "center",
+  },
   sectionTitle: {
     color: "#F8FAFC",
     fontSize: 14,
@@ -564,7 +629,106 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     marginLeft: 2,
   },
-
+  selectedTechnicianCard: {
+    minHeight: 94,
+    borderRadius: 17,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#17263A",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    marginBottom: 24,
+  },
+  technicianAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 17,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  technicianContent: { flex: 1 },
+  technicianName: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  technicianMeta: {
+    color: "#94A3B8",
+    fontSize: 10,
+    marginTop: 4,
+  },
+  technicianRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 6,
+  },
+  technicianSmallText: {
+    color: "#64748B",
+    fontSize: 9,
+    flex: 1,
+  },
+  changeTechnicianButton: {
+    minHeight: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#31547F",
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  changeTechnicianText: {
+    color: "#60A5FA",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  selectTechnicianCard: {
+    minHeight: 76,
+    borderRadius: 16,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#17263A",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+    marginBottom: 24,
+  },
+  selectTechnicianText: {
+    color: "#60A5FA",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  categoryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 22,
+  },
+  categoryButton: {
+    minHeight: 42,
+    borderRadius: 11,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#17263A",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 11,
+  },
+  categoryButtonActive: {
+    backgroundColor: "#2563EB",
+    borderColor: "#2563EB",
+  },
+  categoryText: {
+    color: "#CBD5E1",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  categoryTextActive: { color: "#FFFFFF" },
   card: {
     backgroundColor: "#0D1B2A",
     borderWidth: 1,
@@ -573,190 +737,23 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 24,
   },
-
   label: {
     color: "#E2E8F0",
     fontSize: 12,
     fontWeight: "700",
-    marginBottom: 9,
-  },
-
-  selector: {
-    minHeight: 68,
-    borderRadius: 13,
-    backgroundColor: "#091522",
-    borderWidth: 1,
-    borderColor: "#1E2D42",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 13,
-  },
-
-  selectorLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-
-  iconBox: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    backgroundColor: "#101F30",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-
-  selectorValue: {
-    color: "#F8FAFC",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-
-  selectorHint: {
-    color: "#64748B",
-    fontSize: 10,
-    marginTop: 3,
-  },
-
-  demoSelect: {
-    alignSelf: "flex-start",
-    marginTop: 9,
-  },
-
-  demoSelectText: {
-    color: "#3B82F6",
-    fontSize: 10,
-    fontWeight: "600",
-  },
-
-  priorityLabel: {
-    marginTop: 20,
-  },
-
-  priorityRow: {
-    flexDirection: "row",
-    gap: 8,
     marginBottom: 8,
   },
-
-  priorityButton: {
-    flex: 1,
-    height: 40,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#243247",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#091522",
-  },
-
-  priorityButtonFull: {
-    flex: 0,
-    width: "100%",
-  },
-
-  priorityText: {
-    color: "#94A3B8",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-
-  emergencyInfo: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginTop: 12,
-    backgroundColor: "rgba(239,68,68,0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(239,68,68,0.16)",
-    borderRadius: 10,
-    padding: 10,
-  },
-
-  emergencyText: {
-    flex: 1,
-    color: "#FCA5A5",
-    fontSize: 10,
-    lineHeight: 16,
-    marginLeft: 8,
-  },
-
-  twoColumnRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-
-  halfField: {
-    flex: 1,
-    minHeight: 75,
-    borderRadius: 13,
-    backgroundColor: "#091522",
-    borderWidth: 1,
-    borderColor: "#1E2D42",
-    paddingHorizontal: 13,
-    paddingVertical: 12,
-  },
-
-  smallFieldHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  smallFieldLabel: {
-    color: "#64748B",
-    fontSize: 10,
-    marginLeft: 7,
-  },
-
-  smallFieldValue: {
-    color: "#F8FAFC",
-    fontSize: 12,
-    fontWeight: "700",
-    marginTop: 10,
-  },
-
-  locationInput: {
-    minHeight: 57,
+  input: {
+    height: 54,
     borderRadius: 12,
     backgroundColor: "#091522",
     borderWidth: 1,
     borderColor: "#1E2D42",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 14,
-  },
-
-  locationTextInput: {
-    flex: 1,
     color: "#FFFFFF",
     fontSize: 13,
-    marginLeft: 10,
-    height: "100%",
+    paddingHorizontal: 13,
+    marginBottom: 16,
   },
-
-  locationButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    marginTop: 13,
-  },
-
-  locationButtonText: {
-    color: "#3B82F6",
-    fontSize: 11,
-    fontWeight: "700",
-    marginLeft: 6,
-  },
-
-  descriptionHint: {
-    color: "#64748B",
-    fontSize: 10,
-    lineHeight: 16,
-    marginBottom: 10,
-  },
-
   descriptionBox: {
     minHeight: 145,
     borderRadius: 12,
@@ -767,13 +764,11 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 28,
   },
-
   descriptionInput: {
     color: "#FFFFFF",
     fontSize: 13,
     minHeight: 95,
   },
-
   characterCount: {
     position: "absolute",
     right: 11,
@@ -781,20 +776,82 @@ const styles = StyleSheet.create({
     color: "#475569",
     fontSize: 9,
   },
-
+  iconInput: {
+    minHeight: 66,
+    borderRadius: 12,
+    backgroundColor: "#091522",
+    borderWidth: 1,
+    borderColor: "#1E2D42",
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingHorizontal: 14,
+    paddingTop: 14,
+  },
+  iconTextInput: {
+    flex: 1,
+    color: "#FFFFFF",
+    fontSize: 13,
+    marginLeft: 10,
+    minHeight: 42,
+  },
+  twoColumnRow: { flexDirection: "row", gap: 10 },
+  halfField: {
+    flex: 1,
+    minHeight: 82,
+    borderRadius: 13,
+    backgroundColor: "#091522",
+    borderWidth: 1,
+    borderColor: "#1E2D42",
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+  },
+  smallFieldHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  smallFieldLabel: {
+    color: "#64748B",
+    fontSize: 10,
+    marginLeft: 7,
+  },
+  smallInput: {
+    color: "#F8FAFC",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 8,
+    padding: 0,
+  },
+  priorityRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 24,
+  },
+  priorityButton: {
+    flex: 1,
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#243247",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#091522",
+  },
+  priorityText: {
+    color: "#94A3B8",
+    fontSize: 11,
+    fontWeight: "700",
+  },
   photoHint: {
     color: "#64748B",
     fontSize: 10,
     lineHeight: 16,
     marginBottom: 13,
   },
-
   photoRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 9,
   },
-
   addPhotoBox: {
     width: 92,
     height: 92,
@@ -806,14 +863,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   addPhotoText: {
     color: "#60A5FA",
     fontSize: 10,
     fontWeight: "700",
     marginTop: 6,
   },
-
   photoPreview: {
     width: 92,
     height: 92,
@@ -824,56 +879,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   photoNumber: {
     color: "#64748B",
     fontSize: 9,
     marginTop: 5,
   },
-
-  photoCountText: {
-    color: "#475569",
-    fontSize: 9,
-    marginTop: 10,
-  },
-
-  summaryCard: {
-    backgroundColor: "#0A1625",
-    borderWidth: 1,
-    borderColor: "#17263A",
-    borderRadius: 15,
-    paddingHorizontal: 15,
-    paddingVertical: 14,
-    marginBottom: 20,
-  },
-
-  summaryTitle: {
-    color: "#E2E8F0",
-    fontSize: 12,
-    fontWeight: "700",
-    marginBottom: 10,
-  },
-
-  summaryRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 6,
-  },
-
-  summaryLabel: {
-    color: "#64748B",
-    fontSize: 10,
-  },
-
-  summaryValue: {
-    color: "#CBD5E1",
-    fontSize: 10,
-    fontWeight: "600",
-    maxWidth: "65%",
-    textAlign: "right",
-  },
-
   submitButton: {
     height: 56,
     borderRadius: 12,
@@ -883,17 +893,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
   },
-
-  submitButtonDisabled: {
-    opacity: 0.42,
-  },
-
+  submitButtonDisabled: { opacity: 0.42 },
   submitButtonText: {
     color: "#FFFFFF",
     fontSize: 14,
     fontWeight: "700",
   },
-
   validationText: {
     color: "#64748B",
     fontSize: 10,
