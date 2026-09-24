@@ -19,7 +19,14 @@ import {
   View,
 } from "react-native";
 
+import { logoutUser } from "@/src/services/auth.service";
+
 export default function TechnicianProfileScreen() {
+  const handleLogout = async () => {
+    await logoutUser();
+    router.replace("/login");
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar
@@ -189,6 +196,7 @@ export default function TechnicianProfileScreen() {
         <TouchableOpacity
           style={styles.logoutButton}
           activeOpacity={0.8}
+          onPress={handleLogout}
         >
           <LogOut
             size={18}

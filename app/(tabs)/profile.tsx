@@ -22,10 +22,11 @@ import {
   View,
 } from "react-native";
 
+import { logoutUser } from "@/src/services/auth.service";
 
 export default function ProfileScreen() {
-  const handleLogout = () => {
-    // Firebase logout will be connected later.
+  const handleLogout = async () => {
+    await logoutUser();
     router.replace("/login");
   };
 

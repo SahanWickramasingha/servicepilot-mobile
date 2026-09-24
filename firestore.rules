@@ -1,0 +1,161 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function userRole(userId) {
+      return get(
+        /databases/$(database)/documents/users/$(userId)
+      ).data.role;
+    }
+
+    function isDispatcher() {
+      return signedIn() &&
+        userRole(request.auth.uid) == "dispatcher";
+    }
+
+    function isPublicRegistrationRole() {
+      return request.resource.data.role in [
+        "customer",
+        "technician"
+      ];
+    }
+
+    function hasRequiredUserFields() {
+      return request.resource.data.keys().hasAll([
+        "uid",
+        "fullName",
+        "email",
+        "phone",
+        "address",
+        "role",
+        "emailVerified",
+        "createdAt",
+        "updatedAt"
+      ]);
+    }
+
+    function hasOnlyPublicCreateFields() {
+      return request.resource.data.keys().hasOnly([
+        "uid",
+        "fullName",
+        "email",
+        "phone",
+        "address",
+        "role",
+        "emailVerified",
+        "specialization",
+        "experience",
+        "qualifications",
+        "certifications",
+        "serviceAreas",
+        "technicianApprovalStatus",
+        "reviewedBy",
+        "reviewedAt",
+        "rejectionReason",
+        "createdAt",
+        "updatedAt"
+      ]);
+    }
+
+    function validPublicUserCreate(userId) {
+      return isOwner(userId) &&
+        hasRequiredUserFields() &&
+        hasOnlyPublicCreateFields() &&
+        request.resource.data.uid == userId &&
+        isPublicRegistrationRole() &&
+        request.resource.data.emailVerified == false &&
+        (
+          request.resource.data.role == "customer" ||
+          (
+            request.resource.data.role == "technician" &&
+            request.resource.data.technicianApprovalStatus == "pending"
+          )
+        );
+    }
+
+    function ownerMutableFieldsOnly() {
+      return request.resource.data
+        .diff(resource.data)
+        .affectedKeys()
+        .hasOnly([
+          "fullName",
+          "phone",
+          "address",
+          "specialization",
+          "experience",
+          "qualifications",
+          "certifications",
+          "serviceAreas",
+          "emailVerified",
+          "updatedAt"
+        ]);
+    }
+
+    function validOwnerUpdate(userId) {
+      return isOwner(userId) &&
+        ownerMutableFieldsOnly() &&
+        request.resource.data.role == resource.data.role &&
+        (
+          !request.resource.data
+            .diff(resource.data)
+            .affectedKeys()
+            .hasAny(["emailVerified"]) ||
+          (
+            resource.data.emailVerified == false &&
+            request.resource.data.emailVerified == true &&
+            request.auth.token.email_verified == true
+          )
+        ) &&
+        !request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasAny([
+            "technicianApprovalStatus",
+            "reviewedBy",
+            "reviewedAt",
+            "rejectionReason"
+          ]);
+    }
+
+    function validDispatcherTechnicianReview() {
+      return isDispatcher() &&
+        resource.data.role == "technician" &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            "technicianApprovalStatus",
+            "reviewedBy",
+            "reviewedAt",
+            "rejectionReason",
+            "updatedAt"
+          ]) &&
+        request.resource.data.technicianApprovalStatus in [
+          "approved",
+          "rejected"
+        ] &&
+        request.resource.data.reviewedBy == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow create: if validPublicUserCreate(userId);
+      allow read: if isOwner(userId) ||
+        (
+          isDispatcher() &&
+          resource.data.role == "technician"
+        );
+      allow update: if validOwnerUpdate(userId) ||
+        validDispatcherTechnicianReview();
+      allow delete: if false;
+    }
+  }
+}

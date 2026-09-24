@@ -8,17 +8,14 @@ import {
 } from "react-native";
 import {
   BriefcaseBusiness,
-  Headset,
-  ShieldCheck,
   UserRound,
 } from "lucide-react-native";
-
-type Role = "customer" | "technician" | "dispatcher" | "admin";
+import { PublicRegistrationRole } from "@/src/services/user.service";
 
 export default function RoleSelectionScreen() {
-  const selectRole = (role: Role) => {
+  const selectRole = (role: PublicRegistrationRole) => {
     router.push({
-      pathname: "/login",
+      pathname: "/register",
       params: { role },
     });
   };
@@ -65,42 +62,13 @@ export default function RoleSelectionScreen() {
           </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.card}
-          activeOpacity={0.85}
-          onPress={() => selectRole("dispatcher")}
-        >
-          <View style={[styles.iconBox, styles.dispatcherIcon]}>
-            <Headset size={34} color="#F59E0B" />
-          </View>
-
-          <Text style={styles.roleTitle}>Dispatcher</Text>
-          <Text style={styles.roleDescription}>
-            Assign jobs and manage team
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.card}
-          activeOpacity={0.85}
-          onPress={() => selectRole("admin")}
-        >
-          <View style={[styles.iconBox, styles.adminIcon]}>
-            <ShieldCheck size={34} color="#A78BFA" />
-          </View>
-
-          <Text style={styles.roleTitle}>Super Admin</Text>
-          <Text style={styles.roleDescription}>
-            Manage system and users
-          </Text>
-        </TouchableOpacity>
       </View>
 
       <TouchableOpacity
         style={styles.continueButton}
         onPress={() => router.push("/login")}
       >
-        <Text style={styles.continueButtonText}>Continue</Text>
+        <Text style={styles.continueButtonText}>Back to Login</Text>
       </TouchableOpacity>
     </View>
   );
@@ -168,14 +136,6 @@ const styles = StyleSheet.create({
 
   technicianIcon: {
     backgroundColor: "rgba(6, 182, 212, 0.16)",
-  },
-
-  dispatcherIcon: {
-    backgroundColor: "rgba(245, 158, 11, 0.16)",
-  },
-
-  adminIcon: {
-    backgroundColor: "rgba(124, 58, 237, 0.16)",
   },
 
   roleTitle: {

@@ -1,6 +1,8 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -15,46 +17,191 @@ import {
 
 import { Apple, Eye, EyeOff, LockKeyhole, Mail } from "lucide-react-native";
 
-type UserRole = "customer" | "technician" | "dispatcher" | "admin";
+import {
+  loginUser,
+  logoutUser,
+  sendVerificationEmail,
+} from "@/src/services/auth.service";
+import { auth } from "@/src/firebase/config";
+import {
+  getDashboardRouteForRole,
+  getMobileAccessDecision,
+  getUserProfile,
+  markUserEmailVerified,
+} from "@/src/services/user.service";
 
 export default function LoginScreen() {
-  const params = useLocalSearchParams<{ role?: UserRole }>();
+  const params = useLocalSearchParams<{
+    email?: string;
+    needsVerification?: string;
+    accessMessage?: string;
+  }>();
 
-  const selectedRole = params.role;
-
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(params.email ?? "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [sendingVerification, setSendingVerification] =
+    useState(false);
+  const [errorMessage, setErrorMessage] = useState(
+    params.accessMessage ||
+      (params.needsVerification === "true"
+      ? "Please verify your email before signing in."
+      : "")
+  );
+  const [showVerifyRecovery, setShowVerifyRecovery] =
+    useState(params.needsVerification === "true");
 
-  const handleLogin = () => {
-    /*
-      Firebase Authentication will be added later.
+  const handleLogin = async () => {
+    const cleanEmail = email.trim().toLowerCase();
 
-      Future routing:
-      customer   -> /(customer)
-      technician -> /(technician)
-      dispatcher -> /(dispatcher)
-      admin      -> /(admin)
+    setErrorMessage("");
+    setShowVerifyRecovery(false);
 
-      For now we keep your existing working home route.
-    */
+    if (!cleanEmail || !password) {
+      setErrorMessage(
+        "Please enter your email and password."
+      );
+      return;
+    }
 
-    router.replace("/(tabs)");
+    try {
+      setLoading(true);
+
+      const credential = await loginUser(
+        cleanEmail,
+        password
+      );
+
+      let profile = await getUserProfile(
+        credential.user.uid
+      );
+
+      if (!profile) {
+        setErrorMessage(
+          "User profile not found. Please contact support."
+        );
+        return;
+      }
+
+      await credential.user.reload();
+
+      if (
+        credential.user.emailVerified &&
+        profile.emailVerified !== true
+      ) {
+        await credential.user.getIdToken(true);
+
+        await markUserEmailVerified(
+          credential.user.uid
+        );
+        profile = {
+          ...profile,
+          emailVerified: true,
+        };
+      }
+
+      const accessDecision =
+        getMobileAccessDecision(profile);
+
+      if (!accessDecision.allowed) {
+        setErrorMessage(
+          accessDecision.message ||
+            "This account cannot access the mobile app."
+        );
+        setShowVerifyRecovery(
+          profile.emailVerified !== true
+        );
+
+        if (profile.emailVerified === true) {
+          await logoutUser();
+        }
+
+        return;
+      }
+
+      router.replace(
+        getDashboardRouteForRole(profile.role) as never
+      );
+    } catch (error: any) {
+      console.error("Login error:", error);
+
+      switch (error?.code) {
+        case "auth/invalid-email":
+          setErrorMessage(
+            "Please enter a valid email address."
+          );
+          break;
+
+        case "auth/user-not-found":
+        case "auth/wrong-password":
+        case "auth/invalid-credential":
+          setErrorMessage(
+            "Invalid email or password."
+          );
+          break;
+
+        case "auth/network-request-failed":
+          setErrorMessage(
+            "Please check your internet connection and try again."
+          );
+          break;
+
+        default:
+          setErrorMessage(
+            error?.message ||
+              "Unable to sign in. Please try again."
+          );
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const getRoleLabel = () => {
-    switch (selectedRole) {
-      case "customer":
-        return "Customer";
-      case "technician":
-        return "Technician";
-      case "dispatcher":
-        return "Dispatcher";
-      case "admin":
-        return "Super Admin";
-      default:
-        return null;
+  const handleVerifyRecovery = async () => {
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail) {
+      setErrorMessage(
+        "Please enter your email address first."
+      );
+      return;
+    }
+
+    try {
+      setSendingVerification(true);
+      setErrorMessage("");
+
+      const currentUser = auth.currentUser;
+
+      if (!currentUser) {
+        throw new Error(
+          "Please sign in again before verifying your email."
+        );
+      }
+
+      await sendVerificationEmail(currentUser);
+
+      router.push({
+        pathname: "/verify-email",
+        params: {
+          email: cleanEmail,
+        },
+      });
+    } catch (error: any) {
+      console.error(
+        "Verification recovery error:",
+        error
+      );
+
+      Alert.alert(
+        "Unable to Send Code",
+        error?.message ||
+          "Unable to send verification email."
+      );
+    } finally {
+      setSendingVerification(false);
     }
   };
 
@@ -89,21 +236,6 @@ export default function LoginScreen() {
           <Text style={styles.brandSubtitle}>Field Service Management</Text>
         </View>
 
-        {/* Selected Role */}
-        {selectedRole && (
-          <TouchableOpacity
-            style={styles.roleBadge}
-            onPress={() => router.push("/role-selection")}
-            activeOpacity={0.8}
-          >
-            <View style={styles.roleIndicator} />
-
-            <Text style={styles.roleText}>Signing in as {getRoleLabel()}</Text>
-
-            <Text style={styles.changeRole}>Change</Text>
-          </TouchableOpacity>
-        )}
-
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Welcome Back!</Text>
@@ -120,13 +252,18 @@ export default function LoginScreen() {
 
             <TextInput
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(value) => {
+                setEmail(value);
+                setErrorMessage("");
+                setShowVerifyRecovery(false);
+              }}
               placeholder="Enter your email"
               placeholderTextColor="#64748B"
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
               style={styles.input}
+              editable={!loading}
             />
           </View>
         </View>
@@ -140,16 +277,21 @@ export default function LoginScreen() {
 
             <TextInput
               value={password}
-              onChangeText={setPassword}
+              onChangeText={(value) => {
+                setPassword(value);
+                setErrorMessage("");
+              }}
               placeholder="Enter your password"
               placeholderTextColor="#64748B"
               secureTextEntry={!showPassword}
               style={styles.input}
+              editable={!loading}
             />
 
             <TouchableOpacity
               onPress={() => setShowPassword((current) => !current)}
               style={styles.eyeButton}
+              disabled={loading}
             >
               {showPassword ? (
                 <Eye size={20} color="#94A3B8" />
@@ -166,6 +308,7 @@ export default function LoginScreen() {
             style={styles.rememberContainer}
             onPress={() => setRememberMe((current) => !current)}
             activeOpacity={0.8}
+            disabled={loading}
           >
             <View
               style={[styles.checkbox, rememberMe && styles.checkboxActive]}
@@ -181,13 +324,54 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
 
+        {!!errorMessage && (
+          <View style={styles.errorMessage}>
+            <Text style={styles.errorText}>
+              {errorMessage}
+            </Text>
+
+            {showVerifyRecovery && (
+              <TouchableOpacity
+                style={styles.verifyRecoveryButton}
+                activeOpacity={0.85}
+                onPress={handleVerifyRecovery}
+                disabled={sendingVerification}
+              >
+                {sendingVerification ? (
+                  <ActivityIndicator
+                    size="small"
+                    color="#FFFFFF"
+                  />
+                ) : (
+                  <Text
+                    style={styles.verifyRecoveryText}
+                  >
+                    Verify Email
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         {/* Login */}
         <TouchableOpacity
-          style={styles.loginButton}
+          style={[
+            styles.loginButton,
+            loading && styles.loginButtonDisabled,
+          ]}
           activeOpacity={0.85}
           onPress={handleLogin}
+          disabled={loading}
         >
-          <Text style={styles.loginButtonText}>Login</Text>
+          {loading ? (
+            <ActivityIndicator
+              size="small"
+              color="#FFFFFF"
+            />
+          ) : (
+            <Text style={styles.loginButtonText}>Login</Text>
+          )}
         </TouchableOpacity>
 
         {/* Divider */}
@@ -227,10 +411,7 @@ export default function LoginScreen() {
 
           <TouchableOpacity
             onPress={() =>
-              router.push({
-                pathname: "/register",
-                params: selectedRole ? { role: selectedRole } : undefined,
-              })
+              router.push("/role-selection")
             }
           >
             <Text style={styles.registerText}>Register</Text>
@@ -446,6 +627,38 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
+  errorMessage: {
+    width: "100%",
+    backgroundColor: "rgba(239, 68, 68, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.22)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginBottom: 16,
+  },
+
+  errorText: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    textAlign: "center",
+  },
+
+  verifyRecoveryButton: {
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+  },
+
+  verifyRecoveryText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
   loginButton: {
     height: 56,
     borderRadius: 12,
@@ -460,6 +673,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 12,
     elevation: 5,
+  },
+
+  loginButtonDisabled: {
+    opacity: 0.65,
   },
 
   loginButtonText: {

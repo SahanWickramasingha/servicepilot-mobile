@@ -4,6 +4,7 @@ import {
   sendEmailVerification,
   sendPasswordResetEmail,
   signOut,
+  User,
   UserCredential,
 } from "firebase/auth";
 
@@ -19,7 +20,6 @@ export async function registerUser(
     password
   );
 
-  await sendEmailVerification(userCredential.user);
 
   return userCredential;
 }
@@ -37,6 +37,12 @@ export async function loginUser(
 
 export async function resetPassword(email: string): Promise<void> {
   await sendPasswordResetEmail(auth, email.trim());
+}
+
+export async function sendVerificationEmail(
+  user: User
+): Promise<void> {
+  await sendEmailVerification(user);
 }
 
 export async function logoutUser(): Promise<void> {

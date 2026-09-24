@@ -5,56 +5,58 @@ import {
   Home,
   UserRound,
 } from "lucide-react-native";
+import { ProtectedRoute } from "@/src/components/auth/ProtectedRoute";
 
 export default function TabLayout() {
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
+    <ProtectedRoute allowedRoles={["customer"]}>
+      <Tabs
+        screenOptions={{
+          headerShown: false,
 
-        tabBarStyle: {
-          position: "absolute",
-          left: 14,
-          right: 14,
-          bottom: 12,
+          tabBarStyle: {
+            position: "absolute",
+            left: 14,
+            right: 14,
+            bottom: 12,
 
-          height: 68,
-          borderRadius: 20,
+            height: 68,
+            borderRadius: 20,
 
-          backgroundColor: "#0B1726",
-          borderTopWidth: 0,
-          borderWidth: 1,
-          borderColor: "#17263A",
+            backgroundColor: "#0B1726",
+            borderTopWidth: 0,
+            borderWidth: 1,
+            borderColor: "#17263A",
 
-          paddingTop: 7,
-          paddingBottom: 7,
+            paddingTop: 7,
+            paddingBottom: 7,
 
-          elevation: 10,
+            elevation: 10,
 
-          shadowColor: "#000000",
-          shadowOffset: {
-            width: 0,
-            height: 8,
+            shadowColor: "#000000",
+            shadowOffset: {
+              width: 0,
+              height: 8,
+            },
+            shadowOpacity: 0.25,
+            shadowRadius: 16,
           },
-          shadowOpacity: 0.25,
-          shadowRadius: 16,
-        },
 
-        tabBarActiveTintColor: "#3B82F6",
-        tabBarInactiveTintColor: "#64748B",
+          tabBarActiveTintColor: "#3B82F6",
+          tabBarInactiveTintColor: "#64748B",
 
-        tabBarLabelStyle: {
-          fontSize: 10,
-          fontWeight: "600",
-          marginTop: 2,
-        },
+          tabBarLabelStyle: {
+            fontSize: 10,
+            fontWeight: "600",
+            marginTop: 2,
+          },
 
-        tabBarItemStyle: {
-          borderRadius: 15,
-          marginHorizontal: 4,
-        },
-      }}
-    >
+          tabBarItemStyle: {
+            borderRadius: 15,
+            marginHorizontal: 4,
+          },
+        }}
+      >
       <Tabs.Screen
         name="index"
         options={{
@@ -146,7 +148,7 @@ export default function TabLayout() {
     href: null,
   }}
 />
-    </Tabs>
-    
+      </Tabs>
+    </ProtectedRoute>
   );
 }

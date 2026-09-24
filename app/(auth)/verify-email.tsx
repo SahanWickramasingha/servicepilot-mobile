@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -7,7 +7,6 @@ import {
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -19,38 +18,31 @@ import {
   RefreshCw,
 } from "lucide-react-native";
 
-type UserRole =
-  | "customer"
-  | "technician"
-  | "dispatcher"
-  | "admin";
+import { auth } from "@/src/firebase/config";
+import { sendVerificationEmail } from "@/src/services/auth.service";
+import {
+  getUserProfile,
+  markUserEmailVerified,
+} from "@/src/services/user.service";
 
-const OTP_LENGTH = 6;
 const RESEND_SECONDS = 60;
 
 export default function VerifyEmailScreen() {
   const params = useLocalSearchParams<{
     email?: string;
-    role?: UserRole;
   }>();
 
-  const email = params.email || "your email address";
-  const selectedRole = params.role;
+  const email =
+    params.email ||
+    auth.currentUser?.email ||
+    "your email address";
 
-  const [otp, setOtp] = useState<string[]>(
-    Array(OTP_LENGTH).fill("")
-  );
-
-  const [isVerifying, setIsVerifying] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
   const [isResending, setIsResending] = useState(false);
-
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-
   const [resendTimer, setResendTimer] =
     useState(RESEND_SECONDS);
-
-  const inputRefs = useRef<(TextInput | null)[]>([]);
 
   useEffect(() => {
     if (resendTimer <= 0) {
@@ -64,114 +56,37 @@ export default function VerifyEmailScreen() {
     return () => clearInterval(timer);
   }, [resendTimer]);
 
-  const handleOtpChange = (
-    value: string,
-    index: number
-  ) => {
-    const numericValue = value.replace(/[^0-9]/g, "");
-
-    if (!numericValue) {
-      const newOtp = [...otp];
-      newOtp[index] = "";
-      setOtp(newOtp);
-      return;
-    }
-
-    // Supports pasting full OTP
-    if (numericValue.length > 1) {
-      const pastedCode = numericValue
-        .slice(0, OTP_LENGTH)
-        .split("");
-
-      const newOtp = Array(OTP_LENGTH).fill("");
-
-      pastedCode.forEach((digit, digitIndex) => {
-        newOtp[digitIndex] = digit;
-      });
-
-      setOtp(newOtp);
-
-      const lastIndex = Math.min(
-        pastedCode.length,
-        OTP_LENGTH
-      ) - 1;
-
-      inputRefs.current[lastIndex]?.focus();
-
-      setErrorMessage("");
-
-      return;
-    }
-
-    const newOtp = [...otp];
-
-    newOtp[index] = numericValue;
-
-    setOtp(newOtp);
-    setErrorMessage("");
-
-    if (
-      numericValue &&
-      index < OTP_LENGTH - 1
-    ) {
-      inputRefs.current[index + 1]?.focus();
-    }
-  };
-
-  const handleKeyPress = (
-    key: string,
-    index: number
-  ) => {
-    if (
-      key === "Backspace" &&
-      !otp[index] &&
-      index > 0
-    ) {
-      inputRefs.current[index - 1]?.focus();
-    }
-  };
-
-  const handleVerifyOtp = async () => {
-    const code = otp.join("");
-
+  const handleCheckVerification = async () => {
     setErrorMessage("");
     setSuccessMessage("");
 
-    if (code.length !== OTP_LENGTH) {
-      setErrorMessage(
-        "Please enter the complete 6-digit verification code."
-      );
+    const currentUser = auth.currentUser;
 
+    if (!currentUser) {
+      setErrorMessage(
+        "User session not found. Please login again."
+      );
       return;
     }
 
     try {
-      setIsVerifying(true);
+      setIsChecking(true);
 
-      /*
-        Backend integration will be added next.
+      await currentUser.reload();
 
-        Future flow:
+      if (!auth.currentUser?.emailVerified) {
+        setErrorMessage(
+          "Email is not verified yet. Please open the verification link we sent to your email, then try again."
+        );
+        return;
+      }
 
-        1. Send:
-           email
-           OTP code
+      await currentUser.getIdToken(true);
 
-        2. Backend verifies:
-           - OTP exists
-           - OTP matches
-           - OTP not expired
-           - OTP belongs to this user
+      await markUserEmailVerified(currentUser.uid);
 
-        3. Backend updates:
-           users/{uid}.emailVerified = true
-
-        4. Continue to login/dashboard
-      */
-
-      // TEMPORARY UI TEST
-      await new Promise((resolve) =>
-        setTimeout(resolve, 1200)
+      const profile = await getUserProfile(
+        currentUser.uid
       );
 
       setSuccessMessage(
@@ -179,21 +94,25 @@ export default function VerifyEmailScreen() {
       );
 
       setTimeout(() => {
-        router.replace({
-          pathname: "/login",
-          params: selectedRole
-            ? { role: selectedRole }
-            : undefined,
-        });
-      }, 800);
-    } catch (error) {
-      console.error("OTP verification error:", error);
+        if (profile?.role === "technician") {
+          router.replace("/technician-pending");
+          return;
+        }
+
+        router.replace("/login");
+      }, 1000);
+    } catch (error: any) {
+      console.error(
+        "Email verification check error:",
+        error
+      );
 
       setErrorMessage(
-        "Invalid or expired verification code."
+        error?.message ||
+          "Unable to check email verification."
       );
     } finally {
-      setIsVerifying(false);
+      setIsChecking(false);
     }
   };
 
@@ -202,37 +121,35 @@ export default function VerifyEmailScreen() {
       return;
     }
 
+    const currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      setErrorMessage(
+        "User session not found. Please login again."
+      );
+      return;
+    }
+
     try {
       setIsResending(true);
-
       setErrorMessage("");
       setSuccessMessage("");
 
-      /*
-        Real backend later:
-
-        await requestNewOtp(email);
-      */
-
-      // TEMPORARY UI TEST
-      await new Promise((resolve) =>
-        setTimeout(resolve, 1000)
-      );
-
-      setOtp(Array(OTP_LENGTH).fill(""));
+      await sendVerificationEmail(currentUser);
 
       setResendTimer(RESEND_SECONDS);
-
       setSuccessMessage(
-        "A new verification code has been sent."
+        "A new verification link has been sent."
+      );
+    } catch (error: any) {
+      console.error(
+        "Verification email resend error:",
+        error
       );
 
-      inputRefs.current[0]?.focus();
-    } catch (error) {
-      console.error("OTP resend error:", error);
-
       setErrorMessage(
-        "Unable to resend the verification code."
+        error?.message ||
+          "Unable to resend the verification email."
       );
     } finally {
       setIsResending(false);
@@ -243,9 +160,7 @@ export default function VerifyEmailScreen() {
     <KeyboardAvoidingView
       style={styles.container}
       behavior={
-        Platform.OS === "ios"
-          ? "padding"
-          : undefined
+        Platform.OS === "ios" ? "padding" : undefined
       }
     >
       <StatusBar
@@ -257,25 +172,18 @@ export default function VerifyEmailScreen() {
       <View style={styles.glowBottom} />
 
       <View style={styles.content}>
-        {/* Back */}
         <TouchableOpacity
           style={styles.backButton}
           onPress={() => router.back()}
           activeOpacity={0.8}
         >
-          <ArrowLeft
-            size={20}
-            color="#FFFFFF"
-          />
+          <ArrowLeft size={20} color="#FFFFFF" />
         </TouchableOpacity>
 
-        {/* Brand */}
         <View style={styles.brandArea}>
           <View style={styles.logoOuter}>
             <View style={styles.logoInner}>
-              <Text style={styles.logoSymbol}>
-                S
-              </Text>
+              <Text style={styles.logoSymbol}>S</Text>
             </View>
           </View>
 
@@ -283,10 +191,7 @@ export default function VerifyEmailScreen() {
             <Text style={styles.brandWhite}>
               SERVICE
             </Text>
-
-            <Text style={styles.brandBlue}>
-              PILOT
-            </Text>
+            <Text style={styles.brandBlue}>PILOT</Text>
           </View>
 
           <Text style={styles.brandSubtitle}>
@@ -294,7 +199,6 @@ export default function VerifyEmailScreen() {
           </Text>
         </View>
 
-        {/* Verification Card */}
         <View style={styles.card}>
           <View style={styles.iconWrapper}>
             <MailCheck
@@ -309,52 +213,16 @@ export default function VerifyEmailScreen() {
           </Text>
 
           <Text style={styles.description}>
-            We sent a 6-digit verification code to
+            We sent a verification link to
           </Text>
 
-          <Text style={styles.emailText}>
-            {email}
-          </Text>
+          <Text style={styles.emailText}>{email}</Text>
 
           <Text style={styles.instructions}>
-            Enter the verification code below to
-            activate your ServicePilot account.
+            Open the link in your inbox, then return to
+            ServicePilot and tap the button below.
           </Text>
 
-          {/* OTP */}
-          <View style={styles.otpContainer}>
-            {otp.map((digit, index) => (
-              <TextInput
-                key={index}
-                ref={(ref) => {
-                  inputRefs.current[index] = ref;
-                }}
-                style={[
-                  styles.otpInput,
-                  digit
-                    ? styles.otpInputFilled
-                    : null,
-                ]}
-                value={digit}
-                onChangeText={(value) =>
-                  handleOtpChange(value, index)
-                }
-                onKeyPress={({ nativeEvent }) =>
-                  handleKeyPress(
-                    nativeEvent.key,
-                    index
-                  )
-                }
-                keyboardType="number-pad"
-                maxLength={6}
-                textAlign="center"
-                selectTextOnFocus
-                editable={!isVerifying}
-              />
-            ))}
-          </View>
-
-          {/* Error */}
           {!!errorMessage && (
             <View style={styles.errorMessage}>
               <Text style={styles.errorText}>
@@ -363,7 +231,6 @@ export default function VerifyEmailScreen() {
             </View>
           )}
 
-          {/* Success */}
           {!!successMessage && (
             <View style={styles.successMessage}>
               <CheckCircle2
@@ -377,18 +244,16 @@ export default function VerifyEmailScreen() {
             </View>
           )}
 
-          {/* Verify */}
           <TouchableOpacity
             style={[
               styles.verifyButton,
-              isVerifying &&
-                styles.verifyButtonDisabled,
+              isChecking && styles.verifyButtonDisabled,
             ]}
             activeOpacity={0.85}
-            onPress={handleVerifyOtp}
-            disabled={isVerifying}
+            onPress={handleCheckVerification}
+            disabled={isChecking}
           >
-            {isVerifying ? (
+            {isChecking ? (
               <ActivityIndicator
                 size="small"
                 color="#FFFFFF"
@@ -400,19 +265,16 @@ export default function VerifyEmailScreen() {
                   color="#FFFFFF"
                 />
 
-                <Text
-                  style={styles.verifyButtonText}
-                >
-                  Verify OTP
+                <Text style={styles.verifyButtonText}>
+                  I&apos;ve Verified Email
                 </Text>
               </>
             )}
           </TouchableOpacity>
 
-          {/* Resend */}
           <View style={styles.resendArea}>
             <Text style={styles.resendQuestion}>
-              Didn&apos;t receive the code?
+              Didn&apos;t receive the email?
             </Text>
 
             {resendTimer > 0 ? (
@@ -441,30 +303,20 @@ export default function VerifyEmailScreen() {
                 <Text style={styles.resendText}>
                   {isResending
                     ? "Sending..."
-                    : "Resend Code"}
+                    : "Resend Email"}
                 </Text>
               </TouchableOpacity>
             )}
           </View>
         </View>
 
-        {/* Login */}
         <View style={styles.loginRow}>
           <Text style={styles.loginQuestion}>
-            Wrong email address?
+            Already verified?
           </Text>
 
           <TouchableOpacity
-            onPress={() =>
-              router.replace({
-                pathname: "/login",
-                params: selectedRole
-                  ? {
-                      role: selectedRole,
-                    }
-                  : undefined,
-              })
-            }
+            onPress={() => router.replace("/login")}
           >
             <Text style={styles.loginText}>
               Back to Login
@@ -487,8 +339,7 @@ const styles = StyleSheet.create({
     width: 300,
     height: 300,
     borderRadius: 150,
-    backgroundColor:
-      "rgba(37, 99, 235, 0.06)",
+    backgroundColor: "rgba(37, 99, 235, 0.06)",
     top: -150,
     right: -130,
   },
@@ -498,8 +349,7 @@ const styles = StyleSheet.create({
     width: 340,
     height: 340,
     borderRadius: 170,
-    backgroundColor:
-      "rgba(37, 99, 235, 0.04)",
+    backgroundColor: "rgba(37, 99, 235, 0.04)",
     bottom: -190,
     left: -170,
   },
@@ -538,8 +388,7 @@ const styles = StyleSheet.create({
     width: 70,
     height: 70,
     borderRadius: 22,
-    backgroundColor:
-      "rgba(37, 99, 235, 0.15)",
+    backgroundColor: "rgba(37, 99, 235, 0.15)",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 15,
@@ -552,22 +401,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#2563EB",
     alignItems: "center",
     justifyContent: "center",
-    transform: [
-      {
-        rotate: "-8deg",
-      },
-    ],
+    transform: [{ rotate: "-8deg" }],
   },
 
   logoSymbol: {
     color: "#FFFFFF",
     fontSize: 27,
     fontWeight: "900",
-    transform: [
-      {
-        rotate: "8deg",
-      },
-    ],
+    transform: [{ rotate: "8deg" }],
   },
 
   brandRow: {
@@ -606,8 +447,7 @@ const styles = StyleSheet.create({
     width: 84,
     height: 84,
     borderRadius: 42,
-    backgroundColor:
-      "rgba(37, 99, 235, 0.11)",
+    backgroundColor: "rgba(37, 99, 235, 0.11)",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 20,
@@ -639,44 +479,15 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     textAlign: "center",
     marginTop: 16,
-  },
-
-  otpContainer: {
-    width: "100%",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 8,
-    marginTop: 26,
     marginBottom: 22,
-  },
-
-  otpInput: {
-    flex: 1,
-    maxWidth: 48,
-    height: 56,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#1E2D42",
-    backgroundColor: "#081523",
-    color: "#FFFFFF",
-    fontSize: 21,
-    fontWeight: "700",
-  },
-
-  otpInputFilled: {
-    borderColor: "#2563EB",
-    backgroundColor:
-      "rgba(37, 99, 235, 0.08)",
   },
 
   errorMessage: {
     width: "100%",
     minHeight: 42,
-    backgroundColor:
-      "rgba(239, 68, 68, 0.08)",
+    backgroundColor: "rgba(239, 68, 68, 0.08)",
     borderWidth: 1,
-    borderColor:
-      "rgba(239, 68, 68, 0.22)",
+    borderColor: "rgba(239, 68, 68, 0.22)",
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
@@ -693,11 +504,9 @@ const styles = StyleSheet.create({
   successMessage: {
     width: "100%",
     minHeight: 44,
-    backgroundColor:
-      "rgba(34, 197, 94, 0.08)",
+    backgroundColor: "rgba(34, 197, 94, 0.08)",
     borderWidth: 1,
-    borderColor:
-      "rgba(34, 197, 94, 0.22)",
+    borderColor: "rgba(34, 197, 94, 0.22)",
     borderRadius: 10,
     flexDirection: "row",
     alignItems: "center",

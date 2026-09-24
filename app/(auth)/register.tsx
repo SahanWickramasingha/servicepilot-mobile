@@ -2,13 +2,14 @@ import { router, useLocalSearchParams } from "expo-router";
 import {
   Eye,
   EyeOff,
+  BriefcaseBusiness,
   LockKeyhole,
   Mail,
   MapPin,
   Phone,
   UserRound,
 } from "lucide-react-native";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -21,20 +22,37 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
-import { registerUser } from "@/src/services/auth.service";
-import { createUserProfile } from "@/src/services/user.service";
-
-type UserRole = "customer" | "technician" | "dispatcher" | "admin";
+import {
+  registerUser,
+  sendVerificationEmail,
+} from "@/src/services/auth.service";
+import {
+  createUserProfile,
+  isPublicRegistrationRole,
+  PublicRegistrationRole,
+} from "@/src/services/user.service";
 
 export default function RegisterScreen() {
-  const params = useLocalSearchParams<{ role?: UserRole }>();
-  const selectedRole = params.role;
+  const params = useLocalSearchParams<{ role?: string }>();
+  const selectedRole = isPublicRegistrationRole(params.role)
+    ? params.role
+    : undefined;
+  const registrationRole: PublicRegistrationRole =
+    selectedRole ?? "customer";
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
+  const [specialization, setSpecialization] =
+    useState("");
+  const [experience, setExperience] = useState("");
+  const [qualifications, setQualifications] =
+    useState("");
+  const [certifications, setCertifications] =
+    useState("");
+  const [serviceAreas, setServiceAreas] =
+    useState("");
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -44,31 +62,35 @@ export default function RegisterScreen() {
 
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [loading, setLoading] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   const getRoleLabel = () => {
-    switch (selectedRole) {
+    switch (registrationRole) {
       case "customer":
         return "Customer";
 
       case "technician":
         return "Technician";
-
-      case "dispatcher":
-        return "Dispatcher";
-
-      case "admin":
-        return "Super Admin";
-
-      default:
-        return null;
     }
   };
 
   const handleRegister = async () => {
+    if (isSubmittingRef.current) {
+      return;
+    }
+
     const cleanFullName = fullName.trim();
     const cleanEmail = email.trim().toLowerCase();
     const cleanPhone = phone.trim();
     const cleanAddress = address.trim();
+    const cleanSpecialization =
+      specialization.trim();
+    const cleanExperience = experience.trim();
+    const cleanQualifications =
+      qualifications.trim();
+    const cleanCertifications =
+      certifications.trim();
+    const cleanServiceAreas = serviceAreas.trim();
 
     if (!cleanFullName) {
       Alert.alert("Missing Information", "Please enter your full name.");
@@ -88,6 +110,40 @@ export default function RegisterScreen() {
     if (!cleanAddress) {
       Alert.alert("Missing Information", "Please enter your address.");
       return;
+    }
+
+    if (registrationRole === "technician") {
+      if (!cleanSpecialization) {
+        Alert.alert(
+          "Missing Information",
+          "Please enter your specialization."
+        );
+        return;
+      }
+
+      if (!cleanExperience) {
+        Alert.alert(
+          "Missing Information",
+          "Please enter your experience."
+        );
+        return;
+      }
+
+      if (!cleanQualifications) {
+        Alert.alert(
+          "Missing Information",
+          "Please enter your qualifications."
+        );
+        return;
+      }
+
+      if (!cleanServiceAreas) {
+        Alert.alert(
+          "Missing Information",
+          "Please enter your service area."
+        );
+        return;
+      }
     }
 
     if (password.length < 6) {
@@ -114,28 +170,70 @@ export default function RegisterScreen() {
       return;
     }
 
+    if (
+      params.role &&
+      !isPublicRegistrationRole(params.role)
+    ) {
+      Alert.alert(
+        "Registration Not Available",
+        "Only Customer and Technician accounts can be created from the mobile app."
+      );
+      return;
+    }
+
     try {
+      isSubmittingRef.current = true;
       setLoading(true);
 
       // 1. Create Firebase Authentication account
       const credential = await registerUser(cleanEmail, password);
 
       // 2. Save additional user profile data in Firestore
-      await createUserProfile({
-        uid: credential.user.uid,
-        fullName: cleanFullName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        address: cleanAddress,
-        role: selectedRole ?? "customer",
-      });
+      try {
+        await createUserProfile({
+          uid: credential.user.uid,
+          fullName: cleanFullName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          address: cleanAddress,
+          role: registrationRole,
+          ...(registrationRole === "technician"
+            ? {
+                specialization:
+                  cleanSpecialization,
+                experience: cleanExperience,
+                qualifications:
+                  cleanQualifications,
+                certifications:
+                  cleanCertifications,
+                serviceAreas:
+                  cleanServiceAreas,
+              }
+            : {}),
+        });
+      } catch (profileError: any) {
+        profileError.code =
+          profileError?.code ||
+          "firestore/profile-create-failed";
+        throw profileError;
+      }
+
+      try {
+        await sendVerificationEmail(
+          credential.user
+        );
+      } catch (verificationError: any) {
+        verificationError.code =
+          "auth/verification-email-failed";
+        throw verificationError;
+      }
 
       // 3. Continue to email verification screen
       router.replace({
         pathname: "/verify-email" as never,
         params: {
           email: cleanEmail,
-          role: selectedRole ?? "customer",
+          role: registrationRole,
         },
       });
     } catch (error: any) {
@@ -145,7 +243,7 @@ export default function RegisterScreen() {
         case "auth/email-already-in-use":
           Alert.alert(
             "Account Already Exists",
-            "This email address is already registered."
+            "This email address is already registered. If you have not verified it yet, sign in and use Verify Email."
           );
           break;
 
@@ -171,9 +269,17 @@ export default function RegisterScreen() {
           break;
 
         case "permission-denied":
+        case "firestore/profile-create-failed":
           Alert.alert(
-            "Permission Error",
+            "Profile Setup Failed",
             "Your account was created, but the profile could not be saved."
+          );
+          break;
+
+        case "auth/verification-email-failed":
+          Alert.alert(
+            "Verification Email Failed",
+            "Your account was created, but we could not send the verification email. Please sign in and use Verify Email."
           );
           break;
 
@@ -185,6 +291,7 @@ export default function RegisterScreen() {
           );
       }
     } finally {
+      isSubmittingRef.current = false;
       setLoading(false);
     }
   };
@@ -326,6 +433,135 @@ export default function RegisterScreen() {
             />
           </View>
         </View>
+
+        {/* Password */}
+        {registrationRole === "technician" && (
+          <>
+            <View style={styles.technicianSection}>
+              <Text style={styles.technicianSectionTitle}>
+                Technician Information
+              </Text>
+              <Text style={styles.technicianSectionText}>
+                This information will be reviewed before
+                dashboard access is enabled.
+              </Text>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>
+                Specialization
+              </Text>
+
+              <View style={styles.inputContainer}>
+                <BriefcaseBusiness
+                  size={20}
+                  color="#64748B"
+                />
+
+                <TextInput
+                  value={specialization}
+                  onChangeText={setSpecialization}
+                  placeholder="AC, electrical, plumbing..."
+                  placeholderTextColor="#64748B"
+                  style={styles.input}
+                  editable={!loading}
+                />
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Experience</Text>
+
+              <View style={styles.inputContainer}>
+                <BriefcaseBusiness
+                  size={20}
+                  color="#64748B"
+                />
+
+                <TextInput
+                  value={experience}
+                  onChangeText={setExperience}
+                  placeholder="Example: 3 years"
+                  placeholderTextColor="#64748B"
+                  style={styles.input}
+                  editable={!loading}
+                />
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>
+                Qualifications
+              </Text>
+
+              <View
+                style={[
+                  styles.inputContainer,
+                  styles.multilineInputContainer,
+                ]}
+              >
+                <BriefcaseBusiness
+                  size={20}
+                  color="#64748B"
+                />
+
+                <TextInput
+                  value={qualifications}
+                  onChangeText={setQualifications}
+                  placeholder="Training, skills, qualifications"
+                  placeholderTextColor="#64748B"
+                  style={[
+                    styles.input,
+                    styles.multilineInput,
+                  ]}
+                  editable={!loading}
+                  multiline
+                />
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>
+                Certifications
+              </Text>
+
+              <View style={styles.inputContainer}>
+                <BriefcaseBusiness
+                  size={20}
+                  color="#64748B"
+                />
+
+                <TextInput
+                  value={certifications}
+                  onChangeText={setCertifications}
+                  placeholder="Optional certifications"
+                  placeholderTextColor="#64748B"
+                  style={styles.input}
+                  editable={!loading}
+                />
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>
+                Service Area
+              </Text>
+
+              <View style={styles.inputContainer}>
+                <MapPin size={20} color="#64748B" />
+
+                <TextInput
+                  value={serviceAreas}
+                  onChangeText={setServiceAreas}
+                  placeholder="Cities or areas you cover"
+                  placeholderTextColor="#64748B"
+                  style={styles.input}
+                  editable={!loading}
+                />
+              </View>
+            </View>
+          </>
+        )}
 
         {/* Password */}
         <View style={styles.fieldGroup}>
@@ -639,6 +875,41 @@ const styles = StyleSheet.create({
     fontSize: 15,
     marginLeft: 12,
     height: "100%",
+  },
+
+  multilineInputContainer: {
+    height: 104,
+    alignItems: "flex-start",
+    paddingTop: 16,
+  },
+
+  multilineInput: {
+    height: "100%",
+    textAlignVertical: "top",
+    paddingTop: 0,
+  },
+
+  technicianSection: {
+    marginTop: 6,
+    marginBottom: 16,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: "rgba(37, 99, 235, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(37, 99, 235, 0.18)",
+  },
+
+  technicianSectionTitle: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+
+  technicianSectionText: {
+    color: "#94A3B8",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 5,
   },
 
   eyeButton: {

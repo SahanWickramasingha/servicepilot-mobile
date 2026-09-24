@@ -4,5 +4,11 @@
   "compatibility_date": "2026-09-23",
   "observability": {
     "enabled": true
-  }
+  },
+  "kv_namespaces": [
+    {
+      "binding": "OTP_STORE",
+      "id": "773c650ef92264ac291127c3cbba1733a"
+    }
+  ]
 }
