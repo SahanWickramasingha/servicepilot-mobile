@@ -146,6 +146,11 @@ service cloud.firestore {
         request.resource.data.reviewedBy == request.auth.uid;
     }
 
+    function isApprovedTechnicianProfile() {
+      return resource.data.role == "technician" &&
+        resource.data.technicianApprovalStatus == "approved";
+    }
+
     function isCustomer() {
       return signedIn() &&
         userRole(request.auth.uid) == "customer";
@@ -297,6 +302,10 @@ service cloud.firestore {
         (
           isDispatcher() &&
           resource.data.role == "technician"
+        ) ||
+        (
+          isVerifiedCustomer() &&
+          isApprovedTechnicianProfile()
         );
       allow update: if validOwnerUpdate(userId) ||
         validDispatcherTechnicianReview();
