@@ -9,6 +9,8 @@ import {
   View,
 } from "react-native";
 
+// Import the Firebase auth instance and user service functions
+
 export default function SplashScreen() {
   useEffect(() => {
     const timer = setTimeout(() => {
