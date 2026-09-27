@@ -6,7 +6,7 @@ import {
   StyleSheet,
   View,
 } from "react-native";
-
+// Import the Firebase auth instance and user service functions
 import { auth } from "@/src/firebase/config";
 import {
   getDashboardRouteForRole,
