@@ -12,6 +12,7 @@ import Notifications from "./pages/Notifications";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 
+// Main application component
 export default function App() {
   return (
     <BrowserRouter>
