@@ -13,7 +13,7 @@ import {
   getMobileAccessDecision,
   getUserProfile,
 } from "@/src/services/user.service";
-
+// Check authentication status on app startup
 export default function Index() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(
