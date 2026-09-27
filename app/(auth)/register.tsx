@@ -208,10 +208,23 @@ export default function RegisterScreen() {
                   cleanCertifications,
                 serviceAreas:
                   cleanServiceAreas,
+                serviceDivision:
+                  cleanServiceAreas,
               }
             : {}),
         });
       } catch (profileError: any) {
+        console.error(
+          "Firestore profile creation failed after Auth account creation:",
+          {
+            code: profileError?.code,
+            message: profileError?.message,
+            uid: credential.user.uid,
+            email: cleanEmail,
+            error: profileError,
+          }
+        );
+
         profileError.code =
           profileError?.code ||
           "firestore/profile-create-failed";
@@ -272,7 +285,14 @@ export default function RegisterScreen() {
         case "firestore/profile-create-failed":
           Alert.alert(
             "Profile Setup Failed",
-            "Your account was created, but the profile could not be saved."
+            "Your Firebase account was created, but your Firestore profile could not be saved. Sign-in may be blocked until this partial account is fixed. Please contact support with this email address."
+          );
+          break;
+
+        case "firestore/profile-already-exists":
+          Alert.alert(
+            "Profile Already Exists",
+            "A profile already exists for this authenticated account. Sign in instead, or contact support if you did not create it."
           );
           break;
 

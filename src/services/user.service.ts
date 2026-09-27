@@ -86,6 +86,22 @@ export async function createUserProfile(
 ): Promise<void> {
   const userRef = doc(db, "users", data.uid);
   const isTechnician = data.role === "technician";
+  const existingProfile = await getDoc(userRef);
+
+  if (existingProfile.exists()) {
+    throw Object.assign(
+      new Error(
+        "A profile already exists for this authenticated user."
+      ),
+      {
+        code: "firestore/profile-already-exists",
+      }
+    );
+  }
+
+  const serviceArea = data.serviceAreas?.trim() ?? "";
+  const serviceDivision =
+    data.serviceDivision?.trim() || serviceArea;
 
   await setDoc(userRef, {
     uid: data.uid,
@@ -98,9 +114,6 @@ export async function createUserProfile(
     ...(isTechnician
       ? {
           technicianApprovalStatus: "pending",
-          reviewedBy: null,
-          reviewedAt: null,
-          rejectionReason: null,
           specialization:
             data.specialization?.trim() ?? "",
           experience:
@@ -109,10 +122,8 @@ export async function createUserProfile(
             data.qualifications?.trim() ?? "",
           certifications:
             data.certifications?.trim() ?? "",
-          serviceAreas:
-            data.serviceAreas?.trim() ?? "",
-          serviceDivision:
-            data.serviceAreas?.trim() ?? "",
+          serviceAreas: serviceArea,
+          serviceDivision,
         }
       : {}),
     createdAt: serverTimestamp(),

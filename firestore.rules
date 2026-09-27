@@ -28,6 +28,11 @@ service cloud.firestore {
       ];
     }
 
+    function authEmailMatchesProfile() {
+      return request.auth.token.email is string &&
+        request.resource.data.email == request.auth.token.email;
+    }
+
     function hasRequiredUserFields() {
       return request.resource.data.keys().hasAll([
         "uid",
@@ -42,7 +47,21 @@ service cloud.firestore {
       ]);
     }
 
-    function hasOnlyPublicCreateFields() {
+    function hasOnlyCustomerCreateFields() {
+      return request.resource.data.keys().hasOnly([
+        "uid",
+        "fullName",
+        "email",
+        "phone",
+        "address",
+        "role",
+        "emailVerified",
+        "createdAt",
+        "updatedAt"
+      ]);
+    }
+
+    function hasOnlyTechnicianCreateFields() {
       return request.resource.data.keys().hasOnly([
         "uid",
         "fullName",
@@ -56,26 +75,40 @@ service cloud.firestore {
         "qualifications",
         "certifications",
         "serviceAreas",
+        "serviceDivision",
         "technicianApprovalStatus",
-        "reviewedBy",
-        "reviewedAt",
-        "rejectionReason",
         "createdAt",
         "updatedAt"
+      ]);
+    }
+
+    function hasRequiredTechnicianCreateFields() {
+      return request.resource.data.keys().hasAll([
+        "specialization",
+        "experience",
+        "qualifications",
+        "certifications",
+        "serviceDivision",
+        "technicianApprovalStatus"
       ]);
     }
 
     function validPublicUserCreate(userId) {
       return isOwner(userId) &&
         hasRequiredUserFields() &&
-        hasOnlyPublicCreateFields() &&
         request.resource.data.uid == userId &&
+        authEmailMatchesProfile() &&
         isPublicRegistrationRole() &&
         request.resource.data.emailVerified == false &&
         (
-          request.resource.data.role == "customer" ||
+          (
+            request.resource.data.role == "customer" &&
+            hasOnlyCustomerCreateFields()
+          ) ||
           (
             request.resource.data.role == "technician" &&
+            hasOnlyTechnicianCreateFields() &&
+            hasRequiredTechnicianCreateFields() &&
             request.resource.data.technicianApprovalStatus == "pending"
           )
         );
@@ -94,6 +127,7 @@ service cloud.firestore {
           "qualifications",
           "certifications",
           "serviceAreas",
+          "serviceDivision",
           "emailVerified",
           "updatedAt"
         ]);
@@ -102,6 +136,7 @@ service cloud.firestore {
     function validOwnerUpdate(userId) {
       return isOwner(userId) &&
         ownerMutableFieldsOnly() &&
+        request.resource.data.uid == resource.data.uid &&
         request.resource.data.role == resource.data.role &&
         (
           !request.resource.data
@@ -118,6 +153,8 @@ service cloud.firestore {
           .diff(resource.data)
           .affectedKeys()
           .hasAny([
+            "uid",
+            "role",
             "technicianApprovalStatus",
             "reviewedBy",
             "reviewedAt",
