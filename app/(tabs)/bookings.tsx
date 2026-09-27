@@ -40,6 +40,7 @@ type FilterType =
   | "completed"
   | "cancelled";
 
+  // Main component for displaying and managing service requests
 export default function BookingsScreen() {
   const [selectedFilter, setSelectedFilter] =
     useState<FilterType>("all");
@@ -57,7 +58,7 @@ export default function BookingsScreen() {
       setLoading(false);
       return;
     }
-
+// Subscribe to the user's service requests
     const unsubscribe = subscribeToCustomerRequests(
       currentUser.uid,
       (items) => {
@@ -79,6 +80,7 @@ export default function BookingsScreen() {
     return unsubscribe;
   }, []);
 
+  // Filter the requests based on the selected filter type
   const filteredRequests = useMemo(() => {
     if (selectedFilter === "all") {
       return requests;
