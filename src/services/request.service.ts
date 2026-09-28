@@ -54,6 +54,10 @@ export interface ServiceRequest {
   completedAt?: Timestamp;
   cancelledAt?: Timestamp;
   cancelledBy?: string;
+  rejectionReason?: string;
+  technicianCancellationReason?: string;
+  technicianCancelledAt?: Timestamp;
+  customerCancellationReason?: string;
 }
 
 export type CreateServiceRequestInput = {
@@ -125,6 +129,13 @@ function mapServiceRequest(
     completedAt: data.completedAt as Timestamp | undefined,
     cancelledAt: data.cancelledAt as Timestamp | undefined,
     cancelledBy: data.cancelledBy as string | undefined,
+    rejectionReason: data.rejectionReason as string | undefined,
+    technicianCancellationReason:
+      data.technicianCancellationReason as string | undefined,
+    technicianCancelledAt:
+      data.technicianCancelledAt as Timestamp | undefined,
+    customerCancellationReason:
+      data.customerCancellationReason as string | undefined,
   };
 }
 
@@ -283,18 +294,44 @@ export async function cancelServiceRequest(
   requestId: string,
   customerId: string
 ): Promise<void> {
+  const currentUser = auth.currentUser;
+
+  if (!currentUser) {
+    throw new Error("Please sign in before cancelling a request.");
+  }
+
+  if (currentUser.uid !== customerId) {
+    throw new Error("You can only cancel your own request.");
+  }
+
   await updateDoc(doc(db, "service_requests", requestId), {
     status: "cancelled",
     cancelledAt: serverTimestamp(),
-    cancelledBy: customerId,
+    cancelledBy: "customer",
     updatedAt: serverTimestamp(),
   });
 }
 
 export async function updateTechnicianRequestStatus(
   requestId: string,
-  status: "accepted" | "rejected" | "in_progress" | "completed"
+  status:
+    | "accepted"
+    | "rejected"
+    | "in_progress"
+    | "completed"
+    | "cancelled",
+  options: { reason?: string } = {}
 ): Promise<void> {
+  const reason = options.reason?.trim() ?? "";
+
+  if (status === "rejected" && !reason) {
+    throw new Error("Please enter a rejection reason.");
+  }
+
+  if (status === "cancelled" && !reason) {
+    throw new Error("Please enter a cancellation reason.");
+  }
+
   const timestampField =
     status === "accepted"
       ? "acceptedAt"
@@ -302,13 +339,26 @@ export async function updateTechnicianRequestStatus(
         ? "rejectedAt"
         : status === "in_progress"
           ? "startedAt"
-          : "completedAt";
+          : status === "completed"
+            ? "completedAt"
+            : "technicianCancelledAt";
 
-  await updateDoc(doc(db, "service_requests", requestId), {
+  const updatePayload: Record<string, unknown> = {
     status,
     [timestampField]: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  };
+
+  if (status === "rejected") {
+    updatePayload.rejectionReason = reason;
+  }
+
+  if (status === "cancelled") {
+    updatePayload.cancelledBy = "technician";
+    updatePayload.technicianCancellationReason = reason;
+  }
+
+  await updateDoc(doc(db, "service_requests", requestId), updatePayload);
 }
 
 export function formatRequestDate(

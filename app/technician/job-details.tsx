@@ -1,4 +1,5 @@
 import { router } from "expo-router";
+import { useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -13,10 +14,12 @@ import {
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -32,8 +35,15 @@ import {
   getStatusUi,
 } from "@/src/utils/technicianRequests";
 
+type ReasonAction = "reject" | "cancel";
+
 export default function TechnicianJobDetailsScreen() {
   const { request, loading, errorMessage } = useTechnicianRequest();
+  const [updating, setUpdating] = useState(false);
+  const [reasonAction, setReasonAction] =
+    useState<ReasonAction | null>(null);
+  const [reason, setReason] = useState("");
+  const [reasonError, setReasonError] = useState("");
 
   const handleCallCustomer = () => {
     if (!request?.customerPhone) {
@@ -47,22 +57,82 @@ export default function TechnicianJobDetailsScreen() {
     );
   };
 
+  const handleStatusUpdate = async (
+    status:
+      | "accepted"
+      | "rejected"
+      | "in_progress"
+      | "completed"
+      | "cancelled",
+    actionReason?: string
+  ): Promise<boolean> => {
+    if (!request) {
+      return false;
+    }
+
+    try {
+      setUpdating(true);
+      await updateTechnicianRequestStatus(request.id, status, {
+        reason: actionReason,
+      });
+      return true;
+    } catch (error: any) {
+      Alert.alert(
+        "Job Update Failed",
+        error?.message ?? "Unable to update this job."
+      );
+      return false;
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const handleStartJob = async () => {
     if (!request) {
       return;
     }
 
-    try {
-      await updateTechnicianRequestStatus(request.id, "in_progress");
+    const succeeded = await handleStatusUpdate("in_progress");
+
+    if (succeeded) {
       router.push({
         pathname: "/technician/job-action",
         params: { id: request.id },
       });
-    } catch (error: any) {
-      Alert.alert(
-        "Start Job Failed",
-        error?.message ?? "Unable to start this job."
-      );
+    }
+  };
+
+  const openReasonModal = (action: ReasonAction) => {
+    setReasonAction(action);
+    setReason("");
+    setReasonError("");
+  };
+
+  const closeReasonModal = () => {
+    setReasonAction(null);
+    setReason("");
+    setReasonError("");
+  };
+
+  const submitReasonAction = async () => {
+    const trimmedReason = reason.trim();
+
+    if (!request || !reasonAction) {
+      return;
+    }
+
+    if (!trimmedReason) {
+      setReasonError("Please enter a reason.");
+      return;
+    }
+
+    const succeeded = await handleStatusUpdate(
+      reasonAction === "reject" ? "rejected" : "cancelled",
+      trimmedReason
+    );
+
+    if (succeeded) {
+      closeReasonModal();
     }
   };
 
@@ -248,14 +318,53 @@ export default function TechnicianJobDetailsScreen() {
         </View>
 
         {normalizedStatus === "accepted" && (
-          <TouchableOpacity
-            style={styles.startButton}
-            activeOpacity={0.85}
-            onPress={handleStartJob}
-          >
-            <Wrench size={19} color="#FFFFFF" />
-            <Text style={styles.startButtonText}>Start Service</Text>
-          </TouchableOpacity>
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={styles.cancelJobButton}
+              activeOpacity={0.85}
+              disabled={updating}
+              onPress={() => openReasonModal("cancel")}
+            >
+              <Text style={styles.cancelJobButtonText}>
+                Cancel Job
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.startButton, styles.actionButtonFlex]}
+              activeOpacity={0.85}
+              disabled={updating}
+              onPress={handleStartJob}
+            >
+              <Wrench size={19} color="#FFFFFF" />
+              <Text style={styles.startButtonText}>Start Service</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {normalizedStatus === "requested" && (
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={styles.cancelJobButton}
+              activeOpacity={0.85}
+              disabled={updating}
+              onPress={() => openReasonModal("reject")}
+            >
+              <Text style={styles.cancelJobButtonText}>
+                Reject Request
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.startButton, styles.actionButtonFlex]}
+              activeOpacity={0.85}
+              disabled={updating}
+              onPress={() => handleStatusUpdate("accepted")}
+            >
+              <CheckCircle2 size={19} color="#FFFFFF" />
+              <Text style={styles.startButtonText}>Accept Request</Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {normalizedStatus === "in_progress" && (
@@ -274,7 +383,108 @@ export default function TechnicianJobDetailsScreen() {
           </TouchableOpacity>
         )}
       </ScrollView>
+
+      <ReasonModal
+        action={reasonAction}
+        visible={Boolean(reasonAction)}
+        reason={reason}
+        errorMessage={reasonError}
+        submitting={updating}
+        onChangeReason={(value) => {
+          setReason(value);
+          setReasonError("");
+        }}
+        onClose={closeReasonModal}
+        onSubmit={submitReasonAction}
+      />
     </View>
+  );
+}
+
+function ReasonModal({
+  action,
+  visible,
+  reason,
+  errorMessage,
+  submitting,
+  onChangeReason,
+  onClose,
+  onSubmit,
+}: {
+  action: ReasonAction | null;
+  visible: boolean;
+  reason: string;
+  errorMessage: string;
+  submitting: boolean;
+  onChangeReason: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const isReject = action === "reject";
+
+  return (
+    <Modal
+      transparent
+      animationType="fade"
+      visible={visible}
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.reasonModal}>
+          <Text style={styles.modalTitle}>
+            {isReject ? "Reject Request" : "Cancel Job"}
+          </Text>
+
+          <Text style={styles.modalText}>
+            {isReject
+              ? "Enter the reason the customer request cannot be accepted."
+              : "Enter the reason this accepted job must be cancelled."}
+          </Text>
+
+          <TextInput
+            style={styles.reasonInput}
+            value={reason}
+            onChangeText={onChangeReason}
+            placeholder="Reason"
+            placeholderTextColor="#64748B"
+            multiline
+            textAlignVertical="top"
+          />
+
+          {errorMessage ? (
+            <Text style={styles.reasonError}>{errorMessage}</Text>
+          ) : null}
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={styles.modalSecondaryButton}
+              activeOpacity={0.85}
+              onPress={onClose}
+              disabled={submitting}
+            >
+              <Text style={styles.modalSecondaryText}>
+                Keep Job
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalDangerButton}
+              activeOpacity={0.85}
+              onPress={onSubmit}
+              disabled={submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.modalDangerText}>
+                  {isReject ? "Reject Request" : "Cancel Job"}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -523,6 +733,27 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 9,
   },
+  actionRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  actionButtonFlex: {
+    flex: 1,
+  },
+  cancelJobButton: {
+    flex: 1,
+    height: 56,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.28)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cancelJobButtonText: {
+    color: "#EF4444",
+    fontSize: 13,
+    fontWeight: "700",
+  },
   startButton: {
     height: 56,
     borderRadius: 12,
@@ -533,4 +764,81 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   startButtonText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(2,6,23,0.78)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  reasonModal: {
+    width: "100%",
+    maxWidth: 460,
+    borderRadius: 18,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#243247",
+    padding: 18,
+  },
+  modalTitle: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  modalText: {
+    color: "#94A3B8",
+    fontSize: 11,
+    lineHeight: 18,
+    marginTop: 8,
+  },
+  reasonInput: {
+    minHeight: 112,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: "#273750",
+    backgroundColor: "#101F30",
+    color: "#E2E8F0",
+    fontSize: 12,
+    lineHeight: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    marginTop: 14,
+  },
+  reasonError: {
+    color: "#FCA5A5",
+    fontSize: 10,
+    marginTop: 8,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+  modalSecondaryButton: {
+    flex: 1,
+    height: 46,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: "#273750",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalSecondaryText: {
+    color: "#CBD5E1",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  modalDangerButton: {
+    flex: 1,
+    height: 46,
+    borderRadius: 11,
+    backgroundColor: "#DC2626",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalDangerText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
+  },
 });

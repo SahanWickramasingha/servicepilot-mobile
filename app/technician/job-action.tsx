@@ -23,7 +23,9 @@ import {
   View,
 } from "react-native";
 
+import { normalizeRequestStatus } from "@/src/constants/serviceRequests";
 import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
+import { updateTechnicianRequestStatus } from "@/src/services/request.service";
 import {
   getRequestDisplayTitle,
   getStatusUi,
@@ -35,6 +37,7 @@ export default function TechnicianJobActionScreen() {
 
   const [seconds, setSeconds] = useState(0);
   const [running, setRunning] = useState(true);
+  const [completing, setCompleting] = useState(false);
 
   // UI mock completion states
   const [beforeDone] = useState(false);
@@ -71,9 +74,41 @@ export default function TechnicianJobActionScreen() {
   };
 
   const handleCompleteJob = () => {
+    if (!request) {
+      return;
+    }
+
+    if (normalizeRequestStatus(request.status) !== "in_progress") {
+      Alert.alert(
+        "Complete Job",
+        "Only in-progress jobs can be completed."
+      );
+      return;
+    }
+
     Alert.alert(
       "Complete Job",
-      "Before photos, service notes, after photos and customer signature must be completed before closing the job."
+      "Mark this service job as completed?",
+      [
+        { text: "Keep Working", style: "cancel" },
+        {
+          text: "Complete Job",
+          onPress: async () => {
+            try {
+              setCompleting(true);
+              await updateTechnicianRequestStatus(request.id, "completed");
+              router.replace("/technician/history");
+            } catch (error: any) {
+              Alert.alert(
+                "Complete Job Failed",
+                error?.message ?? "Unable to complete this job."
+              );
+            } finally {
+              setCompleting(false);
+            }
+          },
+        },
+      ]
     );
   };
 
@@ -98,6 +133,7 @@ export default function TechnicianJobActionScreen() {
   }
 
   const status = getStatusUi(request.status);
+  const normalizedStatus = normalizeRequestStatus(request.status);
 
   return (
     <View style={styles.container}>
@@ -387,20 +423,29 @@ export default function TechnicianJobActionScreen() {
         </View>
 
         {/* Complete */}
-        <TouchableOpacity
-          style={styles.completeButton}
-          activeOpacity={0.85}
-          onPress={handleCompleteJob}
-        >
-          <CheckCircle2
-            size={19}
-            color="#FFFFFF"
-          />
+        {normalizedStatus === "in_progress" && (
+          <TouchableOpacity
+            style={styles.completeButton}
+            activeOpacity={0.85}
+            disabled={completing}
+            onPress={handleCompleteJob}
+          >
+            {completing ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <CheckCircle2
+                  size={19}
+                  color="#FFFFFF"
+                />
 
-          <Text style={styles.completeButtonText}>
-            Complete Job
-          </Text>
-        </TouchableOpacity>
+                <Text style={styles.completeButtonText}>
+                  Complete Job
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </View>
   );

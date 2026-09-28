@@ -10,10 +10,12 @@ import {
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -30,6 +32,7 @@ import {
   getRequestDisplayTitle,
   getRequestTimeLabel,
   getStatusUi,
+  isRequestScheduledToday,
   sortRequestsBySchedule,
 } from "@/src/utils/technicianRequests";
 
@@ -38,14 +41,32 @@ type FilterType =
   | "requested"
   | "accepted"
   | "in_progress";
+type TechnicianActionStatus =
+  | "accepted"
+  | "rejected"
+  | "in_progress"
+  | "completed"
+  | "cancelled";
+type ReasonAction = "reject" | "cancel";
 
 export default function TechnicianJobsScreen() {
   const { requests, loading, errorMessage } = useTechnicianWorkspace();
   const [filter, setFilter] = useState<FilterType>("all");
   const [updatingId, setUpdatingId] = useState("");
+  const [reasonAction, setReasonAction] =
+    useState<ReasonAction | null>(null);
+  const [reasonRequest, setReasonRequest] =
+    useState<ServiceRequest | null>(null);
+  const [reason, setReason] = useState("");
+  const [reasonError, setReasonError] = useState("");
 
   const jobs = useMemo(
-    () => sortRequestsBySchedule(getActiveTechnicianRequests(requests)),
+    () =>
+      sortRequestsBySchedule(
+        getActiveTechnicianRequests(requests).filter(
+          isRequestScheduledToday
+        )
+      ),
     [requests]
   );
 
@@ -61,18 +82,66 @@ export default function TechnicianJobsScreen() {
 
   const handleStatusUpdate = async (
     requestId: string,
-    status: "accepted" | "rejected" | "in_progress" | "completed"
-  ) => {
+    status: TechnicianActionStatus,
+    actionReason?: string
+  ): Promise<boolean> => {
     try {
       setUpdatingId(requestId);
-      await updateTechnicianRequestStatus(requestId, status);
+      await updateTechnicianRequestStatus(requestId, status, {
+        reason: actionReason,
+      });
+      return true;
     } catch (error: any) {
       Alert.alert(
         "Job Update Failed",
         error?.message ?? "Unable to update this job."
       );
+      return false;
     } finally {
       setUpdatingId("");
+    }
+  };
+
+  const openReasonModal = (
+    action: ReasonAction,
+    request: ServiceRequest
+  ) => {
+    setReasonAction(action);
+    setReasonRequest(request);
+    setReason("");
+    setReasonError("");
+  };
+
+  const closeReasonModal = () => {
+    setReasonAction(null);
+    setReasonRequest(null);
+    setReason("");
+    setReasonError("");
+  };
+
+  const submitReasonAction = async () => {
+    const trimmedReason = reason.trim();
+
+    if (!reasonRequest || !reasonAction) {
+      return;
+    }
+
+    if (!trimmedReason) {
+      setReasonError("Please enter a reason.");
+      return;
+    }
+
+    const status =
+      reasonAction === "reject" ? "rejected" : "cancelled";
+
+    const succeeded = await handleStatusUpdate(
+      reasonRequest.id,
+      status,
+      trimmedReason
+    );
+
+    if (succeeded) {
+      closeReasonModal();
     }
   };
 
@@ -199,10 +268,13 @@ export default function TechnicianJobsScreen() {
                 handleStatusUpdate(job.id, "accepted")
               }
               onReject={() =>
-                handleStatusUpdate(job.id, "rejected")
+                openReasonModal("reject", job)
               }
               onStart={() =>
                 handleStatusUpdate(job.id, "in_progress")
+              }
+              onCancel={() =>
+                openReasonModal("cancel", job)
               }
             />
           ))}
@@ -222,6 +294,20 @@ export default function TechnicianJobsScreen() {
           </View>
         )}
       </ScrollView>
+
+      <ReasonModal
+        action={reasonAction}
+        visible={Boolean(reasonAction && reasonRequest)}
+        reason={reason}
+        errorMessage={reasonError}
+        submitting={Boolean(reasonRequest && updatingId === reasonRequest.id)}
+        onChangeReason={(value) => {
+          setReason(value);
+          setReasonError("");
+        }}
+        onClose={closeReasonModal}
+        onSubmit={submitReasonAction}
+      />
     </View>
   );
 }
@@ -297,12 +383,14 @@ function JobCard({
   onAccept,
   onReject,
   onStart,
+  onCancel,
 }: {
   job: ServiceRequest;
   updating: boolean;
   onAccept: () => void;
   onReject: () => void;
   onStart: () => void;
+  onCancel: () => void;
 }) {
   const status = getStatusUi(job.status);
   const priority = getPriorityUi(job.priority);
@@ -413,7 +501,7 @@ function JobCard({
               disabled={updating}
             >
               <Text style={styles.rejectButtonText}>
-                Reject
+                Reject Request
               </Text>
             </TouchableOpacity>
 
@@ -425,22 +513,35 @@ function JobCard({
             >
               <CheckCircle2 size={17} color="#FFFFFF" />
               <Text style={styles.acceptButtonText}>
-                Accept
+                Accept Request
               </Text>
             </TouchableOpacity>
           </>
         )}
 
         {normalizedStatus === "accepted" && (
-          <TouchableOpacity
-            style={styles.startButton}
-            activeOpacity={0.85}
-            onPress={onStart}
-            disabled={updating}
-          >
-            <Wrench size={17} color="#FFFFFF" />
-            <Text style={styles.startButtonText}>Start Job</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              style={styles.rejectButton}
+              activeOpacity={0.85}
+              onPress={onCancel}
+              disabled={updating}
+            >
+              <Text style={styles.rejectButtonText}>
+                Cancel Job
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.startButton}
+              activeOpacity={0.85}
+              onPress={onStart}
+              disabled={updating}
+            >
+              <Wrench size={17} color="#FFFFFF" />
+              <Text style={styles.startButtonText}>Start Job</Text>
+            </TouchableOpacity>
+          </>
         )}
 
         {normalizedStatus === "in_progress" && (
@@ -461,6 +562,93 @@ function JobCard({
         )}
       </View>
     </View>
+  );
+}
+
+function ReasonModal({
+  action,
+  visible,
+  reason,
+  errorMessage,
+  submitting,
+  onChangeReason,
+  onClose,
+  onSubmit,
+}: {
+  action: ReasonAction | null;
+  visible: boolean;
+  reason: string;
+  errorMessage: string;
+  submitting: boolean;
+  onChangeReason: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const isReject = action === "reject";
+
+  return (
+    <Modal
+      transparent
+      animationType="fade"
+      visible={visible}
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.reasonModal}>
+          <Text style={styles.modalTitle}>
+            {isReject ? "Reject Request" : "Cancel Job"}
+          </Text>
+
+          <Text style={styles.modalText}>
+            {isReject
+              ? "Enter the reason the customer request cannot be accepted."
+              : "Enter the reason this accepted job must be cancelled."}
+          </Text>
+
+          <TextInput
+            style={styles.reasonInput}
+            value={reason}
+            onChangeText={onChangeReason}
+            placeholder="Reason"
+            placeholderTextColor="#64748B"
+            multiline
+            textAlignVertical="top"
+          />
+
+          {errorMessage ? (
+            <Text style={styles.reasonError}>{errorMessage}</Text>
+          ) : null}
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={styles.modalSecondaryButton}
+              activeOpacity={0.85}
+              onPress={onClose}
+              disabled={submitting}
+            >
+              <Text style={styles.modalSecondaryText}>
+                Keep Job
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalDangerButton}
+              activeOpacity={0.85}
+              onPress={onSubmit}
+              disabled={submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.modalDangerText}>
+                  {isReject ? "Reject Request" : "Cancel Job"}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -709,5 +897,82 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     textAlign: "center",
     marginTop: 6,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(2,6,23,0.78)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  reasonModal: {
+    width: "100%",
+    maxWidth: 460,
+    borderRadius: 18,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#243247",
+    padding: 18,
+  },
+  modalTitle: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  modalText: {
+    color: "#94A3B8",
+    fontSize: 11,
+    lineHeight: 18,
+    marginTop: 8,
+  },
+  reasonInput: {
+    minHeight: 112,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: "#273750",
+    backgroundColor: "#101F30",
+    color: "#E2E8F0",
+    fontSize: 12,
+    lineHeight: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    marginTop: 14,
+  },
+  reasonError: {
+    color: "#FCA5A5",
+    fontSize: 10,
+    marginTop: 8,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+  modalSecondaryButton: {
+    flex: 1,
+    height: 46,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: "#273750",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalSecondaryText: {
+    color: "#CBD5E1",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  modalDangerButton: {
+    flex: 1,
+    height: 46,
+    borderRadius: 11,
+    backgroundColor: "#DC2626",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalDangerText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
   },
 });

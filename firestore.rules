@@ -279,8 +279,9 @@ service cloud.firestore {
         resource.data.customerId == request.auth.uid &&
         resource.data.status in ["requested", "pending"] &&
         request.resource.data.customerId == resource.data.customerId &&
+        request.resource.data.technicianId == resource.data.technicianId &&
         request.resource.data.status == "cancelled" &&
-        request.resource.data.cancelledBy == request.auth.uid &&
+        request.resource.data.cancelledBy == "customer" &&
         request.resource.data
           .diff(resource.data)
           .affectedKeys()
@@ -329,16 +330,33 @@ service cloud.firestore {
             "rejectedAt",
             "startedAt",
             "completedAt",
+            "technicianCancelledAt",
+            "cancelledBy",
+            "rejectionReason",
+            "technicianCancellationReason",
             "updatedAt"
           ]) &&
         (
           (
             resource.data.status in ["requested", "pending"] &&
-            request.resource.data.status in ["accepted", "rejected"]
+            request.resource.data.status == "accepted"
+          ) ||
+          (
+            resource.data.status in ["requested", "pending"] &&
+            request.resource.data.status == "rejected" &&
+            request.resource.data.rejectionReason is string &&
+            request.resource.data.rejectionReason.size() > 0
           ) ||
           (
             resource.data.status in ["accepted", "assigned"] &&
-            request.resource.data.status in ["in_progress", "rejected"]
+            request.resource.data.status == "in_progress"
+          ) ||
+          (
+            resource.data.status in ["accepted", "assigned"] &&
+            request.resource.data.status == "cancelled" &&
+            request.resource.data.cancelledBy == "technician" &&
+            request.resource.data.technicianCancellationReason is string &&
+            request.resource.data.technicianCancellationReason.size() > 0
           ) ||
           (
             resource.data.status == "in_progress" &&

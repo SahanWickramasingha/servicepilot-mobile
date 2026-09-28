@@ -26,7 +26,7 @@ import {
   getPriorityLabel,
   getRequestStatusColor,
   getRequestStatusLabel,
-  RequestStatus,
+  normalizeRequestStatus,
 } from "@/src/constants/serviceRequests";
 import { auth } from "@/src/firebase/config";
 import {
@@ -36,49 +36,134 @@ import {
   subscribeToServiceRequest,
 } from "@/src/services/request.service";
 
-const TIMELINE: Array<{
+type TimelineStep = {
   key: string;
   title: string;
-  statuses: RequestStatus[];
-}> = [
-  {
-    key: "submitted",
-    title: "Request Submitted",
-    statuses: [
-      "pending",
-      "assigned",
-      "in_progress",
-      "completed",
-      "cancelled",
-    ],
-  },
-  {
-    key: "review",
-    title: "Dispatcher Review",
-    statuses: [
-      "pending",
-      "assigned",
-      "in_progress",
-      "completed",
-      "cancelled",
-    ],
-  },
-  {
-    key: "assigned",
-    title: "Technician Assigned",
-    statuses: ["assigned", "in_progress", "completed"],
-  },
-  {
-    key: "progress",
-    title: "Work In Progress",
-    statuses: ["in_progress", "completed"],
-  },
-  {
-    key: "completed",
-    title: "Completed",
-    statuses: ["completed"],
-  },
-] as const;
+  completed: boolean;
+  active: boolean;
+};
+
+type CancellationSource = "customer" | "technician" | "unknown";
+
+function getCancellationSource(
+  request: ServiceRequest
+): CancellationSource {
+  if (request.cancelledBy === "technician") {
+    return "technician";
+  }
+
+  if (
+    request.cancelledBy === "customer" ||
+    request.cancelledBy === request.customerId
+  ) {
+    return "customer";
+  }
+
+  return "unknown";
+}
+
+function getTimelineItems(request: ServiceRequest): TimelineStep[] {
+  const normalizedStatus = normalizeRequestStatus(request.status);
+
+  if (normalizedStatus === "rejected") {
+    return [
+      {
+        key: "sent",
+        title: "Request Sent",
+        completed: true,
+        active: false,
+      },
+      {
+        key: "rejected",
+        title: "Rejected by Technician",
+        completed: true,
+        active: true,
+      },
+    ];
+  }
+
+  if (normalizedStatus === "cancelled") {
+    const cancellationSource = getCancellationSource(request);
+
+    if (cancellationSource === "technician") {
+      return [
+        {
+          key: "sent",
+          title: "Request Sent",
+          completed: true,
+          active: false,
+        },
+        {
+          key: "accepted",
+          title: "Technician Accepted",
+          completed: true,
+          active: false,
+        },
+        {
+          key: "cancelled",
+          title: "Cancelled by Technician",
+          completed: true,
+          active: true,
+        },
+      ];
+    }
+
+    return [
+      {
+        key: "sent",
+        title: "Request Sent",
+        completed: true,
+        active: false,
+      },
+      {
+        key: "cancelled",
+        title:
+          cancellationSource === "customer"
+            ? "Cancelled by Customer"
+            : "Cancelled",
+        completed: true,
+        active: true,
+      },
+    ];
+  }
+
+  const steps: {
+    key: string;
+    title: string;
+    status: ReturnType<typeof normalizeRequestStatus>;
+  }[] = [
+    {
+      key: "sent",
+      title: "Request Sent",
+      status: "requested",
+    },
+    {
+      key: "accepted",
+      title: "Technician Accepted",
+      status: "accepted",
+    },
+    {
+      key: "progress",
+      title: "Work In Progress",
+      status: "in_progress",
+    },
+    {
+      key: "completed",
+      title: "Completed",
+      status: "completed",
+    },
+  ];
+  const activeIndex = steps.findIndex(
+    (item) => item.status === normalizedStatus
+  );
+
+  return steps.map((item, index) => ({
+    key: item.key,
+    title: item.title,
+    completed: activeIndex >= 0 && index <= activeIndex,
+    active: index === activeIndex,
+  }));
+}
 
 export default function RequestDetailsScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
@@ -136,21 +221,24 @@ export default function RequestDetailsScreen() {
   const statusColor = request
     ? getRequestStatusColor(request.status)
     : "#64748B";
+  const normalizedStatus = request
+    ? normalizeRequestStatus(request.status)
+    : null;
+  const statusLabel =
+    normalizedStatus === "cancelled"
+      ? "Request Cancelled"
+      : request
+        ? getRequestStatusLabel(request.status)
+        : "";
 
-  const canCancel = request?.status === "pending";
+  const canCancel = normalizedStatus === "requested";
 
   const timelineItems = useMemo(() => {
     if (!request) {
       return [];
     }
 
-    return TIMELINE.map((item) => ({
-      ...item,
-      completed: item.statuses.includes(request.status),
-      active:
-        request.status !== "cancelled" &&
-        item.statuses[0] === request.status,
-    }));
+    return getTimelineItems(request);
   }, [request]);
 
   const handleCancel = () => {
@@ -159,8 +247,8 @@ export default function RequestDetailsScreen() {
     }
 
     Alert.alert(
-      "Cancel Request",
-      "Are you sure you want to cancel this service request?",
+      "Cancel this service request?",
+      undefined,
       [
         { text: "Keep Request", style: "cancel" },
         {
@@ -168,10 +256,16 @@ export default function RequestDetailsScreen() {
           style: "destructive",
           onPress: async () => {
             try {
+              const currentUser = auth.currentUser;
+
+              if (!currentUser) {
+                throw new Error("Please sign in again.");
+              }
+
               setCancelling(true);
               await cancelServiceRequest(
                 request.id,
-                request.customerId
+                currentUser.uid
               );
             } catch (error: any) {
               console.error("Cancel request error:", error);
@@ -311,7 +405,7 @@ export default function RequestDetailsScreen() {
                 { color: statusColor },
               ]}
             >
-              {getRequestStatusLabel(request.status)}
+              {statusLabel}
             </Text>
           </View>
 
@@ -351,6 +445,8 @@ export default function RequestDetailsScreen() {
           </Text>
         </View>
 
+        <CustomerResponseCard request={request} />
+
         <Text style={styles.sectionTitle}>
           Assigned Technician
         </Text>
@@ -360,13 +456,12 @@ export default function RequestDetailsScreen() {
           </View>
           <View style={styles.technicianInfo}>
             <Text style={styles.technicianName}>
-              {request.assignedTechnicianName ||
-                "Waiting for technician assignment"}
+              {request.technicianName ||
+                request.assignedTechnicianName ||
+                "Selected technician unavailable"}
             </Text>
             <Text style={styles.technicianRole}>
-              {request.assignedTechnicianId
-                ? "Service Technician"
-                : "Dispatcher review in progress"}
+              Service Technician
             </Text>
           </View>
         </View>
@@ -395,9 +490,13 @@ export default function RequestDetailsScreen() {
               last={index === timelineItems.length - 1}
             />
           ))}
-          {request.status === "cancelled" && (
+          {normalizedStatus === "cancelled" && (
             <Text style={styles.cancelledTimelineText}>
-              This request was cancelled before work started.
+              {getCancellationSource(request) === "technician"
+                ? "This accepted request was cancelled by the technician."
+                : getCancellationSource(request) === "customer"
+                  ? "You cancelled this request before work started."
+                  : "This request was cancelled."}
             </Text>
           )}
         </View>
@@ -420,28 +519,97 @@ export default function RequestDetailsScreen() {
           </TouchableOpacity>
         )}
 
-        <TouchableOpacity
-          style={[
-            styles.cancelButton,
-            !canCancel && styles.cancelButtonDisabled,
-          ]}
-          activeOpacity={0.8}
-          disabled={!canCancel || cancelling}
-          onPress={handleCancel}
-        >
-          {cancelling ? (
-            <ActivityIndicator color="#EF4444" />
-          ) : (
-            <Text style={styles.cancelButtonText}>
-              {canCancel
-                ? "Cancel Request"
-                : "Cancellation Not Available"}
-            </Text>
-          )}
-        </TouchableOpacity>
+        {canCancel && (
+          <TouchableOpacity
+            style={styles.cancelButton}
+            activeOpacity={0.8}
+            disabled={cancelling}
+            onPress={handleCancel}
+          >
+            {cancelling ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.cancelButtonText}>
+                Cancel Request
+              </Text>
+            )}
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </View>
   );
+}
+
+function CustomerResponseCard({
+  request,
+}: {
+  request: ServiceRequest;
+}) {
+  const normalizedStatus = normalizeRequestStatus(request.status);
+
+  if (normalizedStatus === "rejected") {
+    return (
+      <>
+        <Text style={styles.sectionTitle}>
+          Technician Response
+        </Text>
+        <View style={styles.responseCard}>
+          <Text style={styles.responseTitle}>
+            Rejected by Technician
+          </Text>
+          <Text style={styles.responseText}>
+            {request.rejectionReason?.trim() ||
+              "No rejection reason was provided."}
+          </Text>
+        </View>
+      </>
+    );
+  }
+
+  if (normalizedStatus !== "cancelled") {
+    return null;
+  }
+
+  const cancellationSource = getCancellationSource(request);
+
+  if (cancellationSource === "technician") {
+    return (
+      <>
+        <Text style={styles.sectionTitle}>
+          Technician Response
+        </Text>
+        <View style={styles.responseCard}>
+          <Text style={styles.responseTitle}>
+            Cancelled by Technician
+          </Text>
+          <Text style={styles.responseText}>
+            {request.technicianCancellationReason?.trim() ||
+              "No cancellation reason was provided."}
+          </Text>
+        </View>
+      </>
+    );
+  }
+
+  if (cancellationSource === "customer") {
+    return (
+      <>
+        <Text style={styles.sectionTitle}>
+          Request Status
+        </Text>
+        <View style={styles.responseCard}>
+          <Text style={styles.responseTitle}>
+            Cancelled by You
+          </Text>
+          <Text style={styles.responseText}>
+            This request remains available in your request history.
+          </Text>
+        </View>
+      </>
+    );
+  }
+
+  return null;
 }
 
 function InfoRow({
@@ -671,6 +839,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 20,
   },
+  responseCard: {
+    minHeight: 84,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#243247",
+    borderRadius: 16,
+    padding: 15,
+    marginBottom: 24,
+  },
+  responseTitle: {
+    color: "#F8FAFC",
+    fontSize: 13,
+    fontWeight: "800",
+    marginBottom: 7,
+  },
+  responseText: {
+    color: "#CBD5E1",
+    fontSize: 12,
+    lineHeight: 20,
+  },
   technicianCard: {
     minHeight: 92,
     backgroundColor: "#0D1B2A",
@@ -775,18 +963,15 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   cancelButton: {
-    height: 52,
+    height: 56,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(239,68,68,0.30)",
-    backgroundColor: "rgba(239,68,68,0.05)",
+    backgroundColor: "#DC2626",
     alignItems: "center",
     justifyContent: "center",
     marginTop: 10,
   },
-  cancelButtonDisabled: { opacity: 0.45 },
   cancelButtonText: {
-    color: "#EF4444",
+    color: "#FFFFFF",
     fontSize: 13,
     fontWeight: "700",
   },

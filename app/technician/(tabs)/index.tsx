@@ -31,6 +31,7 @@ import {
   getRatingLabel,
   getStatusUi,
   getUpcomingTechnicianRequests,
+  isCurrentOrFutureRequest,
   isRequestScheduledToday,
   sortRequestsBySchedule,
 } from "@/src/utils/technicianRequests";
@@ -44,11 +45,14 @@ export default function TechnicianDashboard() {
     activeRequests.filter(isRequestScheduledToday)
   );
   const upcomingRequests = getUpcomingTechnicianRequests(requests);
+  const nextJobRequests = sortRequestsBySchedule(
+    activeRequests.filter(isCurrentOrFutureRequest)
+  );
   const completedRequests = getCompletedTechnicianRequests(requests);
   const inProgressCount = requests.filter(
     (request) => request.status === "in_progress"
   ).length;
-  const nextJob = upcomingRequests[0] ?? null;
+  const nextJob = nextJobRequests[0] ?? null;
 
   if (loading) {
     return <LoadingState />;
