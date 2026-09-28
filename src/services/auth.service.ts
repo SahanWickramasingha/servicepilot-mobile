@@ -9,6 +9,12 @@ import {
 } from "firebase/auth";
 
 import { auth } from "@/src/firebase/config";
+import {
+  getFirebaseErrorCode,
+  getFirebaseErrorMessage,
+  logRegistrationDebug,
+  logRegistrationError,
+} from "@/src/utils/registrationDebug";
 
 type VerificationEmailResponse = {
   success: boolean;
@@ -20,14 +26,38 @@ export async function registerUser(
   email: string,
   password: string
 ): Promise<UserCredential> {
-  const userCredential = await createUserWithEmailAndPassword(
-    auth,
-    email.trim(),
-    password
-  );
+  logRegistrationDebug({
+    step: "createUserWithEmailAndPassword:start",
+    uid: null,
+    firebaseErrorCode: null,
+    firebaseErrorMessage: null,
+  });
 
+  try {
+    const userCredential = await createUserWithEmailAndPassword(
+      auth,
+      email.trim(),
+      password
+    );
 
-  return userCredential;
+    logRegistrationDebug({
+      step: "createUserWithEmailAndPassword:success",
+      uid: userCredential.user.uid,
+      firebaseErrorCode: null,
+      firebaseErrorMessage: null,
+    });
+
+    return userCredential;
+  } catch (error) {
+    logRegistrationError({
+      step: "createUserWithEmailAndPassword:error",
+      uid: null,
+      firebaseErrorCode: getFirebaseErrorCode(error),
+      firebaseErrorMessage: getFirebaseErrorMessage(error),
+    });
+
+    throw error;
+  }
 }
 
 export async function loginUser(
@@ -48,9 +78,34 @@ export async function resetPassword(email: string): Promise<void> {
 export async function sendVerificationEmail(
   user: User
 ): Promise<VerificationEmailResponse> {
-  await user.reload();
+  logRegistrationDebug({
+    step: "sendEmailVerification:reload-user:start",
+    uid: user.uid,
+    firebaseErrorCode: null,
+    firebaseErrorMessage: null,
+  });
+
+  try {
+    await user.reload();
+  } catch (error) {
+    logRegistrationError({
+      step: "sendEmailVerification:reload-user:error",
+      uid: user.uid,
+      firebaseErrorCode: getFirebaseErrorCode(error),
+      firebaseErrorMessage: getFirebaseErrorMessage(error),
+    });
+
+    throw error;
+  }
 
   if (user.emailVerified) {
+    logRegistrationDebug({
+      step: "sendEmailVerification:already-verified",
+      uid: user.uid,
+      firebaseErrorCode: null,
+      firebaseErrorMessage: null,
+    });
+
     return {
       success: true,
       alreadyVerified: true,
@@ -58,7 +113,32 @@ export async function sendVerificationEmail(
     };
   }
 
-  await sendEmailVerification(user);
+  logRegistrationDebug({
+    step: "sendEmailVerification:start",
+    uid: user.uid,
+    firebaseErrorCode: null,
+    firebaseErrorMessage: null,
+  });
+
+  try {
+    await sendEmailVerification(user);
+  } catch (error) {
+    logRegistrationError({
+      step: "sendEmailVerification:error",
+      uid: user.uid,
+      firebaseErrorCode: getFirebaseErrorCode(error),
+      firebaseErrorMessage: getFirebaseErrorMessage(error),
+    });
+
+    throw error;
+  }
+
+  logRegistrationDebug({
+    step: "sendEmailVerification:success",
+    uid: user.uid,
+    firebaseErrorCode: null,
+    firebaseErrorMessage: null,
+  });
 
   return {
     success: true,

@@ -22,6 +22,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import type { UserCredential } from "firebase/auth";
 import {
   registerUser,
   sendVerificationEmail,
@@ -29,8 +30,18 @@ import {
 import {
   createUserProfile,
   isPublicRegistrationRole,
-  PublicRegistrationRole,
 } from "@/src/services/user.service";
+import type {
+  PublicRegistrationRole,
+  UserProfileData,
+} from "@/src/services/user.service";
+import {
+  getFirebaseErrorCode,
+  getFirebaseErrorMessage,
+  getSafeProfileDebugValues,
+  logRegistrationDebug,
+  logRegistrationError,
+} from "@/src/utils/registrationDebug";
 
 export default function RegisterScreen() {
   const params = useLocalSearchParams<{ role?: string }>();
@@ -186,48 +197,95 @@ export default function RegisterScreen() {
       setLoading(true);
 
       // 1. Create Firebase Authentication account
-      const credential = await registerUser(cleanEmail, password);
+      let credential: UserCredential;
+
+      try {
+        credential = await registerUser(cleanEmail, password);
+      } catch (authError: any) {
+        authError.registrationStep =
+          authError?.registrationStep ||
+          "createUserWithEmailAndPassword";
+
+        logRegistrationError({
+          step: "register-screen:auth-create:error",
+          uid: null,
+          firebaseErrorCode:
+            getFirebaseErrorCode(authError),
+          firebaseErrorMessage:
+            getFirebaseErrorMessage(authError),
+          registrationStep:
+            authError.registrationStep,
+        });
+
+        throw authError;
+      }
 
       // 2. Save additional user profile data in Firestore
-      try {
-        await createUserProfile({
-          uid: credential.user.uid,
-          fullName: cleanFullName,
-          email: cleanEmail,
-          phone: cleanPhone,
-          address: cleanAddress,
-          role: registrationRole,
-          ...(registrationRole === "technician"
-            ? {
-                specialization:
-                  cleanSpecialization,
-                experience: cleanExperience,
-                qualifications:
-                  cleanQualifications,
-                certifications:
-                  cleanCertifications,
-                serviceAreas:
-                  cleanServiceAreas,
-                serviceDivision:
-                  cleanServiceAreas,
-              }
-            : {}),
-        });
-      } catch (profileError: any) {
-        console.error(
-          "Firestore profile creation failed after Auth account creation:",
-          {
-            code: profileError?.code,
-            message: profileError?.message,
-            uid: credential.user.uid,
-            email: cleanEmail,
-            error: profileError,
-          }
-        );
+      const profilePayload: UserProfileData = {
+        uid: credential.user.uid,
+        fullName: cleanFullName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        address: cleanAddress,
+        role: registrationRole,
+        ...(registrationRole === "technician"
+          ? {
+              specialization:
+                cleanSpecialization,
+              experience: cleanExperience,
+              qualifications:
+                cleanQualifications,
+              certifications:
+                cleanCertifications,
+              serviceAreas:
+                cleanServiceAreas,
+              serviceDivision:
+                cleanServiceAreas,
+            }
+          : {}),
+      };
 
+      logRegistrationDebug({
+        step: "register-screen:profile-payload:created",
+        uid: credential.user.uid,
+        firebaseErrorCode: null,
+        firebaseErrorMessage: null,
+        ...getSafeProfileDebugValues(
+          profilePayload as unknown as Record<
+            string,
+            unknown
+          >
+        ),
+      });
+
+      try {
+        await createUserProfile(profilePayload);
+      } catch (profileError: any) {
         profileError.code =
           profileError?.code ||
           "firestore/profile-create-failed";
+        profileError.registrationStep =
+          profileError?.registrationStep ||
+          "createUserProfile";
+        profileError.uid = credential.user.uid;
+
+        logRegistrationError({
+          step: "register-screen:profile-write:error",
+          uid: credential.user.uid,
+          firebaseErrorCode:
+            getFirebaseErrorCode(profileError),
+          firebaseErrorMessage:
+            getFirebaseErrorMessage(profileError),
+          registrationStep:
+            profileError.registrationStep,
+          ...getSafeProfileDebugValues(
+            profilePayload as unknown as Record<
+              string,
+              unknown
+            >
+          ),
+        });
+
         throw profileError;
       }
 
@@ -236,8 +294,31 @@ export default function RegisterScreen() {
           credential.user
         );
       } catch (verificationError: any) {
+        const originalCode =
+          getFirebaseErrorCode(verificationError);
+        const originalMessage =
+          getFirebaseErrorMessage(
+            verificationError
+          );
+
         verificationError.code =
           "auth/verification-email-failed";
+        verificationError.registrationStep =
+          verificationError?.registrationStep ||
+          "sendEmailVerification";
+        verificationError.uid = credential.user.uid;
+
+        logRegistrationError({
+          step: "register-screen:email-verification:error",
+          uid: credential.user.uid,
+          firebaseErrorCode: originalCode,
+          firebaseErrorMessage: originalMessage,
+          displayedErrorCode:
+            verificationError.code,
+          registrationStep:
+            verificationError.registrationStep,
+        });
+
         throw verificationError;
       }
 
@@ -250,7 +331,18 @@ export default function RegisterScreen() {
         },
       });
     } catch (error: any) {
-      console.error("Registration error:", error);
+      logRegistrationError({
+        step: "register-screen:registration:error",
+        uid:
+          typeof error?.uid === "string"
+            ? error.uid
+            : null,
+        firebaseErrorCode: getFirebaseErrorCode(error),
+        firebaseErrorMessage:
+          getFirebaseErrorMessage(error),
+        registrationStep:
+          error?.registrationStep ?? "unknown",
+      });
 
       switch (error?.code) {
         case "auth/email-already-in-use":
@@ -282,6 +374,7 @@ export default function RegisterScreen() {
           break;
 
         case "permission-denied":
+        case "firestore/profile-write-failed":
         case "firestore/profile-create-failed":
           Alert.alert(
             "Profile Setup Failed",

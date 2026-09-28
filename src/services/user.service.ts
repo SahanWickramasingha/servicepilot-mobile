@@ -12,6 +12,13 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/src/firebase/config";
+import {
+  getFirebaseErrorCode,
+  getFirebaseErrorMessage,
+  getSafeProfileDebugValues,
+  logRegistrationDebug,
+  logRegistrationError,
+} from "@/src/utils/registrationDebug";
 
 export type UserRole =
   | "customer"
@@ -103,7 +110,7 @@ export async function createUserProfile(
   const serviceDivision =
     data.serviceDivision?.trim() || serviceArea;
 
-  await setDoc(userRef, {
+  const profilePayload = {
     uid: data.uid,
     fullName: data.fullName.trim(),
     email: data.email.trim().toLowerCase(),
@@ -128,6 +135,55 @@ export async function createUserProfile(
       : {}),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  };
+  const safeProfileDebugValues =
+    getSafeProfileDebugValues(profilePayload);
+
+  logRegistrationDebug({
+    step: "firestore-profile-payload:created",
+    uid: data.uid,
+    firebaseErrorCode: null,
+    firebaseErrorMessage: null,
+    path: `users/${data.uid}`,
+    ...safeProfileDebugValues,
+  });
+
+  logRegistrationDebug({
+    step: "setDoc-users-uid:start",
+    uid: data.uid,
+    firebaseErrorCode: null,
+    firebaseErrorMessage: null,
+    path: `users/${data.uid}`,
+    ...safeProfileDebugValues,
+  });
+
+  try {
+    await setDoc(userRef, profilePayload);
+  } catch (error: any) {
+    logRegistrationError({
+      step: "setDoc-users-uid:error",
+      uid: data.uid,
+      firebaseErrorCode: getFirebaseErrorCode(error),
+      firebaseErrorMessage: getFirebaseErrorMessage(error),
+      path: `users/${data.uid}`,
+      ...safeProfileDebugValues,
+    });
+
+    error.code =
+      error?.code || "firestore/profile-write-failed";
+    error.registrationStep =
+      error?.registrationStep ||
+      "setDoc-users-uid";
+    throw error;
+  }
+
+  logRegistrationDebug({
+    step: "setDoc-users-uid:success",
+    uid: data.uid,
+    firebaseErrorCode: null,
+    firebaseErrorMessage: null,
+    path: `users/${data.uid}`,
+    ...safeProfileDebugValues,
   });
 }
 
