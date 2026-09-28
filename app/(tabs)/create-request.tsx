@@ -1,5 +1,8 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
+import DateTimePicker, {
+  DateTimePickerEvent,
+} from "@react-native-community/datetimepicker";
 import {
   ArrowLeft,
   CalendarDays,
@@ -43,6 +46,85 @@ import {
   PublicTechnicianProfile,
 } from "@/src/services/technician.service";
 
+const TIME_SLOTS = [
+  "09:00 AM",
+  "10:00 AM",
+  "11:00 AM",
+  "12:00 PM",
+  "01:00 PM",
+  "02:00 PM",
+  "03:00 PM",
+  "04:00 PM",
+  "05:00 PM",
+];
+
+function getTodayStart() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+function formatDateForStorage(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateForDisplay(date: Date) {
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function isSameCalendarDay(first: Date, second: Date) {
+  return (
+    first.getFullYear() === second.getFullYear() &&
+    first.getMonth() === second.getMonth() &&
+    first.getDate() === second.getDate()
+  );
+}
+
+function buildScheduledDate(date: Date, timeSlot: string) {
+  const match = timeSlot.match(/^(\d{2}):(\d{2}) (AM|PM)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, hourValue, minuteValue, meridiem] = match;
+  let hours = Number(hourValue);
+
+  if (meridiem === "PM" && hours !== 12) {
+    hours += 12;
+  }
+
+  if (meridiem === "AM" && hours === 12) {
+    hours = 0;
+  }
+
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    hours,
+    Number(minuteValue),
+    0,
+    0
+  );
+}
+
+function isPastTimeSlot(date: Date | null, timeSlot: string) {
+  if (!date || !isSameCalendarDay(date, new Date())) {
+    return false;
+  }
+
+  const scheduledDate = buildScheduledDate(date, timeSlot);
+  return !scheduledDate || scheduledDate.getTime() <= Date.now();
+}
+
 export default function CreateRequestScreen() {
   const params = useLocalSearchParams<{
     service?: string;
@@ -65,7 +147,10 @@ export default function CreateRequestScreen() {
   const [description, setDescription] = useState("");
   const [address, setAddress] = useState("");
   const [division, setDivision] = useState("");
-  const [preferredDate, setPreferredDate] = useState("");
+  const [selectedDate, setSelectedDate] =
+    useState<Date | null>(null);
+  const [showDatePicker, setShowDatePicker] =
+    useState(false);
   const [preferredTime, setPreferredTime] = useState("");
   const [priority, setPriority] =
     useState<RequestPriority>("normal");
@@ -118,6 +203,14 @@ export default function CreateRequestScreen() {
       .finally(() => setLoading(false));
   }, [params.technicianId]);
 
+  const preferredDate = selectedDate
+    ? formatDateForStorage(selectedDate)
+    : "";
+  const scheduledAt =
+    selectedDate && preferredTime
+      ? buildScheduledDate(selectedDate, preferredTime)
+      : null;
+
   const validationMessage = useMemo(() => {
     if (!serviceCategory.trim()) {
       return "Please select a service category.";
@@ -139,8 +232,16 @@ export default function CreateRequestScreen() {
       return "Please enter the service location.";
     }
 
-    if (!preferredDate.trim()) {
-      return "Please enter a preferred date.";
+    if (!selectedDate) {
+      return "Please select a preferred date.";
+    }
+
+    if (!preferredTime) {
+      return "Please select a preferred time.";
+    }
+
+    if (!scheduledAt || scheduledAt.getTime() <= Date.now()) {
+      return "Please select a future date and time.";
     }
 
     return "";
@@ -150,7 +251,9 @@ export default function CreateRequestScreen() {
     title,
     description,
     address,
-    preferredDate,
+    selectedDate,
+    preferredTime,
+    scheduledAt,
   ]);
 
   const canSubmit =
@@ -159,6 +262,11 @@ export default function CreateRequestScreen() {
   const handleSubmit = async () => {
     if (!profile || !technician || validationMessage) {
       setErrorMessage(validationMessage);
+      return;
+    }
+
+    if (!scheduledAt) {
+      setErrorMessage("Please select a future date and time.");
       return;
     }
 
@@ -177,6 +285,7 @@ export default function CreateRequestScreen() {
         division,
         preferredDate,
         preferredTime,
+        scheduledAt,
         priority,
         imageUrls: [],
       });
@@ -195,6 +304,31 @@ export default function CreateRequestScreen() {
       );
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleDateChange = (
+    event: DateTimePickerEvent,
+    nextDate?: Date
+  ) => {
+    if (Platform.OS === "android") {
+      setShowDatePicker(false);
+    }
+
+    if (event.type === "dismissed" || !nextDate) {
+      return;
+    }
+
+    const normalizedDate = new Date(
+      nextDate.getFullYear(),
+      nextDate.getMonth(),
+      nextDate.getDate()
+    );
+
+    setSelectedDate(normalizedDate);
+
+    if (preferredTime && isPastTimeSlot(normalizedDate, preferredTime)) {
+      setPreferredTime("");
     }
   };
 
@@ -410,39 +544,93 @@ export default function CreateRequestScreen() {
           Preferred Schedule
         </Text>
         <View style={styles.card}>
-          <View style={styles.twoColumnRow}>
-            <View style={styles.halfField}>
-              <View style={styles.smallFieldHeader}>
-                <CalendarDays size={17} color="#60A5FA" />
-                <Text style={styles.smallFieldLabel}>
-                  Date
-                </Text>
-              </View>
-              <TextInput
-                value={preferredDate}
-                onChangeText={setPreferredDate}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor="#64748B"
-                style={styles.smallInput}
-              />
+          <View style={styles.scheduleField}>
+            <View style={styles.smallFieldHeader}>
+              <CalendarDays size={17} color="#60A5FA" />
+              <Text style={styles.smallFieldLabel}>
+                Preferred Date
+              </Text>
             </View>
 
-            <View style={styles.halfField}>
-              <View style={styles.smallFieldHeader}>
-                <Clock3 size={17} color="#A78BFA" />
-                <Text style={styles.smallFieldLabel}>
-                  Time
-                </Text>
-              </View>
-              <TextInput
-                value={preferredTime}
-                onChangeText={setPreferredTime}
-                placeholder="10:00 AM"
-                placeholderTextColor="#64748B"
-                style={styles.smallInput}
+            <TouchableOpacity
+              style={styles.datePickerButton}
+              activeOpacity={0.85}
+              onPress={() => setShowDatePicker(true)}
+            >
+              <Text
+                style={[
+                  styles.datePickerText,
+                  !selectedDate && styles.datePickerPlaceholder,
+                ]}
+              >
+                {selectedDate
+                  ? formatDateForDisplay(selectedDate)
+                  : "Select a date"}
+              </Text>
+            </TouchableOpacity>
+
+            {showDatePicker && (
+              <DateTimePicker
+                value={selectedDate ?? getTodayStart()}
+                mode="date"
+                display={Platform.OS === "ios" ? "inline" : "calendar"}
+                minimumDate={getTodayStart()}
+                onChange={handleDateChange}
               />
+            )}
+          </View>
+
+          <View style={styles.scheduleField}>
+            <View style={styles.smallFieldHeader}>
+              <Clock3 size={17} color="#A78BFA" />
+              <Text style={styles.smallFieldLabel}>
+                Preferred Time
+              </Text>
+            </View>
+
+            <View style={styles.timeSlotGrid}>
+              {TIME_SLOTS.map((slot) => {
+                const disabled = isPastTimeSlot(selectedDate, slot);
+                const selected = preferredTime === slot;
+
+                return (
+                  <TouchableOpacity
+                    key={slot}
+                    style={[
+                      styles.timeSlot,
+                      selected && styles.timeSlotActive,
+                      disabled && styles.timeSlotDisabled,
+                    ]}
+                    activeOpacity={0.85}
+                    disabled={disabled}
+                    onPress={() => setPreferredTime(slot)}
+                  >
+                    <Text
+                      style={[
+                        styles.timeSlotText,
+                        selected && styles.timeSlotTextActive,
+                        disabled && styles.timeSlotTextDisabled,
+                      ]}
+                    >
+                      {slot}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
+
+          {!selectedDate && (
+            <Text style={styles.inlineValidationText}>
+              Date is required.
+            </Text>
+          )}
+
+          {selectedDate && !preferredTime && (
+            <Text style={styles.inlineValidationText}>
+              Select one available time slot.
+            </Text>
+          )}
         </View>
 
         <Text style={styles.sectionTitle}>Priority</Text>
@@ -795,6 +983,9 @@ const styles = StyleSheet.create({
     minHeight: 42,
   },
   twoColumnRow: { flexDirection: "row", gap: 10 },
+  scheduleField: {
+    marginBottom: 16,
+  },
   halfField: {
     flex: 1,
     minHeight: 82,
@@ -820,6 +1011,66 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 8,
     padding: 0,
+  },
+  datePickerButton: {
+    minHeight: 54,
+    borderRadius: 12,
+    backgroundColor: "#091522",
+    borderWidth: 1,
+    borderColor: "#1E2D42",
+    justifyContent: "center",
+    paddingHorizontal: 13,
+    marginTop: 9,
+  },
+  datePickerText: {
+    color: "#F8FAFC",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  datePickerPlaceholder: {
+    color: "#64748B",
+    fontWeight: "600",
+  },
+  timeSlotGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10,
+  },
+  timeSlot: {
+    minWidth: "30%",
+    minHeight: 40,
+    borderRadius: 11,
+    backgroundColor: "#091522",
+    borderWidth: 1,
+    borderColor: "#1E2D42",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  timeSlotActive: {
+    backgroundColor: "#2563EB",
+    borderColor: "#60A5FA",
+  },
+  timeSlotDisabled: {
+    opacity: 0.38,
+  },
+  timeSlotText: {
+    color: "#CBD5E1",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  timeSlotTextActive: {
+    color: "#FFFFFF",
+  },
+  timeSlotTextDisabled: {
+    color: "#64748B",
+  },
+  inlineValidationText: {
+    color: "#FCA5A5",
+    fontSize: 10,
+    lineHeight: 16,
+    marginTop: -4,
   },
   priorityRow: {
     flexDirection: "row",

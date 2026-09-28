@@ -214,6 +214,7 @@ service cloud.firestore {
         "division",
         "preferredDate",
         "preferredTime",
+        "scheduledAt",
         "priority",
         "status",
         "imageUrls",
@@ -238,6 +239,7 @@ service cloud.firestore {
         "division",
         "preferredDate",
         "preferredTime",
+        "scheduledAt",
         "priority",
         "status",
         "imageUrls",
@@ -267,6 +269,7 @@ service cloud.firestore {
         request.resource.data.technicianName is string &&
         isApprovedTechnicianId(request.resource.data.technicianId) &&
         request.resource.data.status == "requested" &&
+        request.resource.data.scheduledAt is timestamp &&
         request.resource.data.priority in ["normal", "urgent"] &&
         request.resource.data.imageUrls is list;
     }

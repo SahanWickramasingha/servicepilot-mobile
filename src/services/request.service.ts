@@ -39,6 +39,7 @@ export interface ServiceRequest {
   division: string;
   preferredDate: string;
   preferredTime: string;
+  scheduledAt?: Timestamp;
   priority: RequestPriority;
   status: RequestStatus;
   assignedTechnicianId?: string | null;
@@ -65,6 +66,7 @@ export type CreateServiceRequestInput = {
   division?: string;
   preferredDate: string;
   preferredTime?: string;
+  scheduledAt: Date;
   priority: RequestPriority;
   imageUrls?: string[];
 };
@@ -100,6 +102,7 @@ function mapServiceRequest(
     ),
     preferredDate: String(data.preferredDate ?? ""),
     preferredTime: String(data.preferredTime ?? ""),
+    scheduledAt: data.scheduledAt as Timestamp | undefined,
     priority: (data.priority ?? "normal") as RequestPriority,
     status: (data.status ?? "pending") as RequestStatus,
     assignedTechnicianId:
@@ -179,6 +182,7 @@ export async function createServiceRequest(
         approvedTechnician.serviceDivision,
       preferredDate: input.preferredDate.trim(),
       preferredTime: input.preferredTime?.trim() ?? "",
+      scheduledAt: Timestamp.fromDate(input.scheduledAt),
       priority: input.priority,
       status: "requested",
       imageUrls: input.imageUrls ?? [],
