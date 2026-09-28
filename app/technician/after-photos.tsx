@@ -27,7 +27,7 @@ type PhotoItem = {
 export default function AfterServicePhotosScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
 
-  const jobId = params.id ?? "REQ-2026-0012";
+  const jobId = String(params.id ?? "");
 
   const [photos, setPhotos] = useState<PhotoItem[]>([
     { id: 1, added: false },
@@ -140,7 +140,7 @@ export default function AfterServicePhotosScreen() {
             </Text>
 
             <Text style={styles.requestId}>
-              {jobId}
+              {jobId || "No request selected"}
             </Text>
           </View>
         </View>

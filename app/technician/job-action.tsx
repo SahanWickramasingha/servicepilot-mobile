@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from "expo-router";
+import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
@@ -14,6 +14,7 @@ import {
 } from "lucide-react-native";
 import {
   Alert,
+  ActivityIndicator,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -22,12 +23,15 @@ import {
   View,
 } from "react-native";
 
-export default function TechnicianJobActionScreen() {
-  const params = useLocalSearchParams<{
-    id?: string;
-  }>();
+import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
+import {
+  getRequestDisplayTitle,
+  getStatusUi,
+} from "@/src/utils/technicianRequests";
 
-  const jobId = params.id ?? "REQ-2026-0012";
+export default function TechnicianJobActionScreen() {
+  const { request, requestId, loading, errorMessage } =
+    useTechnicianRequest();
 
   const [seconds, setSeconds] = useState(0);
   const [running, setRunning] = useState(true);
@@ -73,6 +77,28 @@ export default function TechnicianJobActionScreen() {
     );
   };
 
+  if (loading) {
+    return (
+      <View style={styles.stateScreen}>
+        <ActivityIndicator color="#22C55E" />
+        <Text style={styles.stateText}>Loading active service...</Text>
+      </View>
+    );
+  }
+
+  if (errorMessage || !request) {
+    return (
+      <View style={styles.stateScreen}>
+        <Text style={styles.stateTitle}>Service unavailable</Text>
+        <Text style={styles.stateText}>
+          {errorMessage || "Unable to load this service request."}
+        </Text>
+      </View>
+    );
+  }
+
+  const status = getStatusUi(request.status);
+
   return (
     <View style={styles.container}>
       <StatusBar
@@ -103,7 +129,7 @@ export default function TechnicianJobActionScreen() {
             </Text>
 
             <Text style={styles.requestId}>
-              {jobId}
+              {request.id}
             </Text>
           </View>
 
@@ -111,7 +137,7 @@ export default function TechnicianJobActionScreen() {
             <View style={styles.liveDot} />
 
             <Text style={styles.liveText}>
-              LIVE
+              ACTIVE
             </Text>
           </View>
         </View>
@@ -131,17 +157,25 @@ export default function TechnicianJobActionScreen() {
             </Text>
 
             <Text style={styles.serviceName}>
-              AC Repair
+              {getRequestDisplayTitle(request)}
             </Text>
 
             <Text style={styles.customerName}>
-              Emma Johnson
+              {request.customerName || "Customer"}
             </Text>
           </View>
 
-          <View style={styles.statusBadge}>
-            <Text style={styles.statusText}>
-              In Progress
+          <View
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor: `${status.color}12`,
+                borderColor: `${status.color}35`,
+              },
+            ]}
+          >
+            <Text style={[styles.statusText, { color: status.color }]}>
+              {status.label}
             </Text>
           </View>
         </View>
@@ -233,7 +267,7 @@ export default function TechnicianJobActionScreen() {
                 pathname:
                   "/technician/before-photos",
                 params: {
-                  id: jobId,
+                  id: requestId,
                 },
               })
             }
@@ -255,7 +289,7 @@ export default function TechnicianJobActionScreen() {
                 pathname:
                   "/technician/service-notes",
                 params: {
-                  id: jobId,
+                  id: requestId,
                 },
               })
             }
@@ -277,7 +311,7 @@ export default function TechnicianJobActionScreen() {
                 pathname:
                   "/technician/after-photos",
                 params: {
-                  id: jobId,
+                  id: requestId,
                 },
               })
             }
@@ -299,7 +333,7 @@ export default function TechnicianJobActionScreen() {
                 pathname:
                   "/technician/signature",
                 params: {
-                  id: jobId,
+                  id: requestId,
                 },
               })
             }
@@ -488,6 +522,29 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#06101D",
+  },
+
+  stateScreen: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#06101D",
+    paddingHorizontal: 28,
+  },
+
+  stateTitle: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+
+  stateText: {
+    color: "#94A3B8",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 10,
+    textAlign: "center",
   },
 
   content: {

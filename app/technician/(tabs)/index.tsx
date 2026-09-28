@@ -4,8 +4,6 @@ import {
   BriefcaseBusiness,
   CheckCircle2,
   ChevronRight,
-  Clock3,
-  DollarSign,
   MapPin,
   Navigation,
   Star,
@@ -13,6 +11,8 @@ import {
   Wrench,
 } from "lucide-react-native";
 import {
+  ActivityIndicator,
+  Image,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -21,7 +21,56 @@ import {
   View,
 } from "react-native";
 
+import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
+import { ServiceRequest } from "@/src/services/request.service";
+import {
+  getActiveTechnicianRequests,
+  getCompletedTechnicianRequests,
+  getRequestDisplayTitle,
+  getRequestTimeLabel,
+  getRatingLabel,
+  getStatusUi,
+  getUpcomingTechnicianRequests,
+  isRequestScheduledToday,
+  sortRequestsBySchedule,
+} from "@/src/utils/technicianRequests";
+
 export default function TechnicianDashboard() {
+  const { profile, requests, loading, errorMessage } =
+    useTechnicianWorkspace();
+
+  const activeRequests = getActiveTechnicianRequests(requests);
+  const todayRequests = sortRequestsBySchedule(
+    activeRequests.filter(isRequestScheduledToday)
+  );
+  const upcomingRequests = getUpcomingTechnicianRequests(requests);
+  const completedRequests = getCompletedTechnicianRequests(requests);
+  const inProgressCount = requests.filter(
+    (request) => request.status === "in_progress"
+  ).length;
+  const nextJob = upcomingRequests[0] ?? null;
+
+  if (loading) {
+    return <LoadingState />;
+  }
+
+  if (errorMessage || !profile) {
+    return (
+      <ScreenState
+        title="Dashboard unavailable"
+        message={
+          errorMessage ||
+          "Unable to load your technician dashboard."
+        }
+      />
+    );
+  }
+
+  const ratingLabel = getRatingLabel(
+    Number(profile.averageRating ?? 0),
+    Number(profile.reviewCount ?? 0)
+  );
+
   return (
     <View style={styles.container}>
       <StatusBar
@@ -33,94 +82,76 @@ export default function TechnicianDashboard() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
-        {/* Header */}
         <View style={styles.header}>
           <View style={styles.profileRow}>
             <View style={styles.avatar}>
-              <UserRound
-                size={24}
-                color="#FFFFFF"
-              />
+              {profile.profilePhotoUrl ? (
+                <Image
+                  source={{ uri: profile.profilePhotoUrl }}
+                  style={styles.avatarImage}
+                />
+              ) : (
+                <UserRound size={24} color="#FFFFFF" />
+              )}
             </View>
 
-            <View>
-              <Text style={styles.greeting}>
-                Good morning,
-              </Text>
+            <View style={styles.profileText}>
+              <Text style={styles.greeting}>Good morning,</Text>
 
-              <Text style={styles.name}>
-                Alex Smith 👋
+              <Text style={styles.name} numberOfLines={1}>
+                {profile.fullName || "Service Technician"}
               </Text>
             </View>
           </View>
 
-          <View style={styles.headerActions}>
-            <View style={styles.onlineBadge}>
-              <View style={styles.onlineDot} />
-
-              <Text style={styles.onlineText}>
-                Online
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={styles.notificationButton}
-              activeOpacity={0.8}
-            >
-              <Bell
-                size={20}
-                color="#FFFFFF"
-              />
-
-              <View style={styles.notificationDot} />
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity
+            style={styles.notificationButton}
+            activeOpacity={0.8}
+          >
+            <Bell size={20} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
 
-        {/* Overview */}
-        <Text style={styles.sectionTitle}>
-          Today's Overview
-        </Text>
+        <Text style={styles.sectionTitle}>Today&apos;s Overview</Text>
 
         <View style={styles.statsGrid}>
           <StatCard
-            value="5"
+            value={String(todayRequests.length)}
             label="Today's Jobs"
             color="#F59E0B"
           />
 
           <StatCard
-            value="2"
+            value={String(inProgressCount)}
             label="In Progress"
             color="#3B82F6"
           />
 
           <StatCard
-            value="1"
+            value={String(upcomingRequests.length)}
             label="Upcoming"
             color="#22D3EE"
           />
 
           <StatCard
-            value="12"
+            value={String(completedRequests.length)}
             label="Completed"
             color="#22C55E"
           />
         </View>
 
-        {/* Earnings */}
-        <View style={styles.earningsCard}>
-          <View>
-            <Text style={styles.earningsLabel}>
-              Earnings This Month
+        <View style={styles.ratingCard}>
+          <View style={styles.ratingSummary}>
+            <Text style={styles.ratingSectionLabel}>
+              Technician Rating
             </Text>
 
-            <Text style={styles.earningsValue}>
-              Rs. 62,000
+            <Text style={styles.ratingSummaryValue}>
+              {ratingLabel}
             </Text>
 
-            <Text style={styles.earningsGrowth}>
-              ↑ 12% from last month
+            <Text style={styles.ratingSectionHint}>
+              Based on customer reviews
             </Text>
           </View>
 
@@ -128,222 +159,209 @@ export default function TechnicianDashboard() {
             <Star
               size={20}
               color="#F59E0B"
-              fill="#F59E0B"
+              fill={
+                Number(profile.averageRating ?? 0) > 0
+                  ? "#F59E0B"
+                  : "transparent"
+              }
             />
 
             <Text style={styles.ratingValue}>
-              4.8
+              {Number(profile.averageRating ?? 0) > 0
+                ? Number(profile.averageRating).toFixed(1)
+                : "0"}
             </Text>
 
-            <Text style={styles.ratingLabel}>
-              Rating
-            </Text>
+            <Text style={styles.ratingLabel}>Rating</Text>
           </View>
         </View>
 
-        {/* Next Job */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            Next Job
-          </Text>
+          <Text style={styles.sectionTitle}>Next Job</Text>
 
           <TouchableOpacity
             onPress={() => router.push("/technician/jobs")}
           >
-            <Text style={styles.viewAll}>
-              See All
-            </Text>
+            <Text style={styles.viewAll}>See All</Text>
           </TouchableOpacity>
         </View>
 
-        <View style={styles.nextJobCard}>
-          <View style={styles.jobHeader}>
-            <View style={styles.jobIcon}>
-              <Wrench
-                size={23}
-                color="#60A5FA"
-              />
-            </View>
+        {nextJob ? (
+          <NextJobCard request={nextJob} />
+        ) : (
+          <EmptyCard message="No upcoming jobs." />
+        )}
 
-            <View style={styles.jobHeaderContent}>
-              <Text style={styles.jobTime}>
-                10:00 AM
-              </Text>
-
-              <Text style={styles.jobTitle}>
-                AC Repair
-              </Text>
-
-              <Text style={styles.jobId}>
-                REQ-2026-0012
-              </Text>
-            </View>
-
-            <View style={styles.highBadge}>
-              <Text style={styles.highText}>
-                High
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.customerRow}>
-            <View style={styles.smallAvatar}>
-              <UserRound
-                size={17}
-                color="#CBD5E1"
-              />
-            </View>
-
-            <View style={styles.customerContent}>
-              <Text style={styles.infoLabel}>
-                Customer
-              </Text>
-
-              <Text style={styles.customerName}>
-                Emma Johnson
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.locationRow}>
-            <MapPin
-              size={17}
-              color="#64748B"
-            />
-
-            <Text style={styles.locationText}>
-              123, Main Street, Colombo 07
-            </Text>
-          </View>
-
-          <View style={styles.jobActions}>
-            <TouchableOpacity
-              style={styles.detailsButton}
-              activeOpacity={0.8}
-              onPress={() =>
-                router.push({
-                  pathname: "/technician/job-details",
-                  params: {
-                    id: "REQ-2026-0012",
-                  },
-                })
-              }
-            >
-              <Text style={styles.detailsButtonText}>
-                View Details
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.navigationButton}
-              activeOpacity={0.8}
-              onPress={() =>
-                router.push("/technician/navigation")
-              }
-            >
-              <Navigation
-                size={17}
-                color="#FFFFFF"
-              />
-
-              <Text style={styles.navigationButtonText}>
-                Navigate
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Today's Jobs */}
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>
-            Today's Jobs
-          </Text>
+          <Text style={styles.sectionTitle}>Today&apos;s Jobs</Text>
 
           <TouchableOpacity
             onPress={() => router.push("/technician/jobs")}
           >
-            <Text style={styles.viewAll}>
-              View All
-            </Text>
+            <Text style={styles.viewAll}>View All</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.jobsCard}>
-          <DashboardJob
-            time="12:30 PM"
-            service="Washing Machine Repair"
-            location="Nawala Road, Nugegoda"
-            status="Accepted"
-            color="#22C55E"
-          />
-
-          <View style={styles.jobDivider} />
-
-          <DashboardJob
-            time="03:00 PM"
-            service="Electrical Installation"
-            location="Galle Road, Colombo 03"
-            status="In Progress"
-            color="#3B82F6"
-          />
-
-          <View style={styles.jobDivider} />
-
-          <DashboardJob
-            time="05:00 PM"
-            service="Refrigerator Repair"
-            location="Dehiwala, Colombo"
-            status="Upcoming"
-            color="#F59E0B"
-          />
+          {todayRequests.length > 0 ? (
+            todayRequests.slice(0, 3).map((request, index) => (
+              <View key={request.id}>
+                {index > 0 && <View style={styles.jobDivider} />}
+                <DashboardJob request={request} />
+              </View>
+            ))
+          ) : (
+            <Text style={styles.jobsEmptyText}>
+              No jobs scheduled for today.
+            </Text>
+          )}
         </View>
 
-        {/* Quick Actions */}
-        <Text style={styles.sectionTitle}>
-          Quick Actions
-        </Text>
+        <Text style={styles.sectionTitle}>Quick Actions</Text>
 
         <View style={styles.quickActions}>
           <QuickAction
             icon={
-              <BriefcaseBusiness
-                size={21}
-                color="#60A5FA"
-              />
+              <BriefcaseBusiness size={21} color="#60A5FA" />
             }
             label="My Jobs"
             onPress={() => router.push("/technician/jobs")}
           />
 
           <QuickAction
-            icon={
-              <Navigation
-                size={21}
-                color="#22C55E"
-              />
-            }
+            icon={<Navigation size={21} color="#22C55E" />}
             label="Navigation"
             onPress={() =>
-              router.push("/technician/navigation")
+              nextJob
+                ? router.push({
+                    pathname: "/technician/navigation",
+                    params: { id: nextJob.id },
+                  })
+                : router.push("/technician/jobs")
             }
           />
 
           <QuickAction
-            icon={
-              <CheckCircle2
-                size={21}
-                color="#A78BFA"
-              />
-            }
+            icon={<CheckCircle2 size={21} color="#A78BFA" />}
             label="Completed"
-            onPress={() =>
-              router.push("/technician/history")
-            }
+            onPress={() => router.push("/technician/history")}
           />
         </View>
       </ScrollView>
+    </View>
+  );
+}
+
+function LoadingState() {
+  return (
+    <View style={styles.stateScreen}>
+      <ActivityIndicator color="#22C55E" />
+      <Text style={styles.stateText}>Loading dashboard...</Text>
+    </View>
+  );
+}
+
+function ScreenState({
+  title,
+  message,
+}: {
+  title: string;
+  message: string;
+}) {
+  return (
+    <View style={styles.stateScreen}>
+      <Text style={styles.stateTitle}>{title}</Text>
+      <Text style={styles.stateText}>{message}</Text>
+    </View>
+  );
+}
+
+function EmptyCard({ message }: { message: string }) {
+  return (
+    <View style={styles.emptyCard}>
+      <Text style={styles.emptyCardText}>{message}</Text>
+    </View>
+  );
+}
+
+function NextJobCard({ request }: { request: ServiceRequest }) {
+  const priority = request.priority === "urgent" ? "Urgent" : "Normal";
+
+  return (
+    <View style={styles.nextJobCard}>
+      <View style={styles.jobHeader}>
+        <View style={styles.jobIcon}>
+          <Wrench size={23} color="#60A5FA" />
+        </View>
+
+        <View style={styles.jobHeaderContent}>
+          <Text style={styles.jobTime}>
+            {getRequestTimeLabel(request)}
+          </Text>
+
+          <Text style={styles.jobTitle} numberOfLines={1}>
+            {getRequestDisplayTitle(request)}
+          </Text>
+
+          <Text style={styles.jobId}>{request.id}</Text>
+        </View>
+
+        <View style={styles.highBadge}>
+          <Text style={styles.highText}>{priority}</Text>
+        </View>
+      </View>
+
+      <View style={styles.divider} />
+
+      <View style={styles.customerRow}>
+        <View style={styles.smallAvatar}>
+          <UserRound size={17} color="#CBD5E1" />
+        </View>
+
+        <View style={styles.customerContent}>
+          <Text style={styles.infoLabel}>Customer</Text>
+          <Text style={styles.customerName}>
+            {request.customerName || "Customer"}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.locationRow}>
+        <MapPin size={17} color="#64748B" />
+
+        <Text style={styles.locationText}>
+          {request.address || "Address not provided"}
+        </Text>
+      </View>
+
+      <View style={styles.jobActions}>
+        <TouchableOpacity
+          style={styles.detailsButton}
+          activeOpacity={0.8}
+          onPress={() =>
+            router.push({
+              pathname: "/technician/job-details",
+              params: { id: request.id },
+            })
+          }
+        >
+          <Text style={styles.detailsButtonText}>View Details</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.navigationButton}
+          activeOpacity={0.8}
+          onPress={() =>
+            router.push({
+              pathname: "/technician/navigation",
+              params: { id: request.id },
+            })
+          }
+        >
+          <Navigation size={17} color="#FFFFFF" />
+          <Text style={styles.navigationButtonText}>Navigate</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -359,58 +377,41 @@ function StatCard({
 }) {
   return (
     <View style={styles.statCard}>
-      <Text
-        style={[
-          styles.statValue,
-          { color },
-        ]}
-      >
-        {value}
-      </Text>
-
-      <Text style={styles.statLabel}>
-        {label}
-      </Text>
+      <Text style={[styles.statValue, { color }]}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
 
-function DashboardJob({
-  time,
-  service,
-  location,
-  status,
-  color,
-}: {
-  time: string;
-  service: string;
-  location: string;
-  status: string;
-  color: string;
-}) {
+function DashboardJob({ request }: { request: ServiceRequest }) {
+  const status = getStatusUi(request.status);
+
   return (
     <TouchableOpacity
       style={styles.dashboardJob}
       activeOpacity={0.8}
+      onPress={() =>
+        router.push({
+          pathname: "/technician/job-details",
+          params: { id: request.id },
+        })
+      }
     >
       <View style={styles.dashboardJobIcon}>
-        <Wrench
-          size={18}
-          color="#94A3B8"
-        />
+        <Wrench size={18} color="#94A3B8" />
       </View>
 
       <View style={styles.dashboardJobContent}>
         <Text style={styles.dashboardJobTime}>
-          {time}
+          {getRequestTimeLabel(request)}
         </Text>
 
-        <Text style={styles.dashboardJobTitle}>
-          {service}
+        <Text style={styles.dashboardJobTitle} numberOfLines={1}>
+          {getRequestDisplayTitle(request)}
         </Text>
 
-        <Text style={styles.dashboardJobLocation}>
-          {location}
+        <Text style={styles.dashboardJobLocation} numberOfLines={1}>
+          {request.address || "Address not provided"}
         </Text>
       </View>
 
@@ -419,18 +420,18 @@ function DashboardJob({
           style={[
             styles.smallStatusBadge,
             {
-              backgroundColor: `${color}15`,
-              borderColor: `${color}35`,
+              backgroundColor: `${status.color}15`,
+              borderColor: `${status.color}35`,
             },
           ]}
         >
           <Text
             style={[
               styles.smallStatusText,
-              { color },
+              { color: status.color },
             ]}
           >
-            {status}
+            {status.label}
           </Text>
         </View>
 
@@ -459,23 +460,35 @@ function QuickAction({
       activeOpacity={0.8}
       onPress={onPress}
     >
-      <View style={styles.quickActionIcon}>
-        {icon}
-      </View>
-
-      <Text style={styles.quickActionLabel}>
-        {label}
-      </Text>
+      <View style={styles.quickActionIcon}>{icon}</View>
+      <Text style={styles.quickActionLabel}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: "#06101D" },
+  stateScreen: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#06101D",
+    paddingHorizontal: 28,
   },
-
+  stateTitle: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  stateText: {
+    color: "#94A3B8",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 10,
+    textAlign: "center",
+  },
   content: {
     width: "100%",
     maxWidth: 520,
@@ -484,19 +497,18 @@ const styles = StyleSheet.create({
     paddingTop: 54,
     paddingBottom: 120,
   },
-
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 27,
   },
-
   profileRow: {
     flexDirection: "row",
     alignItems: "center",
+    flex: 1,
   },
-
+  profileText: { flex: 1 },
   avatar: {
     width: 48,
     height: 48,
@@ -505,51 +517,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginRight: 11,
+    overflow: "hidden",
   },
-
-  greeting: {
-    color: "#64748B",
-    fontSize: 10,
-  },
-
+  avatarImage: { width: "100%", height: "100%" },
+  greeting: { color: "#64748B", fontSize: 10 },
   name: {
     color: "#FFFFFF",
     fontSize: 18,
     fontWeight: "800",
     marginTop: 2,
   },
-
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-
-  onlineBadge: {
-    height: 30,
-    borderRadius: 10,
-    backgroundColor: "rgba(34,197,94,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(34,197,94,0.19)",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 8,
-  },
-
-  onlineDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 6,
-    backgroundColor: "#22C55E",
-    marginRight: 5,
-  },
-
-  onlineText: {
-    color: "#22C55E",
-    fontSize: 8,
-    fontWeight: "700",
-  },
-
   notificationButton: {
     width: 43,
     height: 43,
@@ -560,24 +537,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
-  notificationDot: {
-    position: "absolute",
-    width: 8,
-    height: 8,
-    borderRadius: 8,
-    backgroundColor: "#EF4444",
-    right: 8,
-    top: 8,
-  },
-
   sectionTitle: {
     color: "#F8FAFC",
     fontSize: 14,
     fontWeight: "800",
     marginBottom: 11,
   },
-
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -585,7 +550,6 @@ const styles = StyleSheet.create({
     rowGap: 10,
     marginBottom: 18,
   },
-
   statCard: {
     width: "48.5%",
     minHeight: 90,
@@ -596,19 +560,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
-  statValue: {
-    fontSize: 24,
-    fontWeight: "800",
-  },
-
-  statLabel: {
-    color: "#94A3B8",
-    fontSize: 10,
-    marginTop: 5,
-  },
-
-  earningsCard: {
+  statValue: { fontSize: 24, fontWeight: "800" },
+  statLabel: { color: "#94A3B8", fontSize: 10, marginTop: 5 },
+  ratingCard: {
     minHeight: 108,
     borderRadius: 17,
     backgroundColor: "#0D1B2A",
@@ -619,26 +573,21 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     marginBottom: 25,
+    gap: 12,
   },
-
-  earningsLabel: {
-    color: "#64748B",
-    fontSize: 9,
-  },
-
-  earningsValue: {
+  ratingSummary: { flex: 1 },
+  ratingSectionLabel: { color: "#64748B", fontSize: 9 },
+  ratingSummaryValue: {
     color: "#FFFFFF",
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: "800",
     marginTop: 4,
   },
-
-  earningsGrowth: {
-    color: "#22C55E",
+  ratingSectionHint: {
+    color: "#94A3B8",
     fontSize: 9,
     marginTop: 6,
   },
-
   ratingBox: {
     width: 76,
     height: 76,
@@ -647,33 +596,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   ratingValue: {
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "800",
     marginTop: 3,
   },
-
-  ratingLabel: {
-    color: "#64748B",
-    fontSize: 8,
-    marginTop: 2,
-  },
-
+  ratingLabel: { color: "#64748B", fontSize: 8, marginTop: 2 },
   sectionHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-
   viewAll: {
     color: "#22C55E",
     fontSize: 10,
     fontWeight: "700",
     marginBottom: 11,
   },
-
   nextJobCard: {
     borderRadius: 18,
     backgroundColor: "#0D1B2A",
@@ -682,12 +622,20 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 25,
   },
-
-  jobHeader: {
-    flexDirection: "row",
-    alignItems: "center",
+  emptyCard: {
+    borderRadius: 18,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#17263A",
+    padding: 18,
+    marginBottom: 25,
   },
-
+  emptyCardText: {
+    color: "#94A3B8",
+    fontSize: 11,
+    textAlign: "center",
+  },
+  jobHeader: { flexDirection: "row", alignItems: "center" },
   jobIcon: {
     width: 48,
     height: 48,
@@ -697,30 +645,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 11,
   },
-
-  jobHeaderContent: {
-    flex: 1,
-  },
-
-  jobTime: {
-    color: "#F59E0B",
-    fontSize: 9,
-    fontWeight: "700",
-  },
-
+  jobHeaderContent: { flex: 1 },
+  jobTime: { color: "#F59E0B", fontSize: 9, fontWeight: "700" },
   jobTitle: {
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "800",
     marginTop: 2,
   },
-
-  jobId: {
-    color: "#475569",
-    fontSize: 8,
-    marginTop: 3,
-  },
-
+  jobId: { color: "#475569", fontSize: 8, marginTop: 3 },
   highBadge: {
     height: 28,
     borderRadius: 9,
@@ -730,24 +663,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     justifyContent: "center",
   },
-
-  highText: {
-    color: "#F97316",
-    fontSize: 8,
-    fontWeight: "700",
-  },
-
+  highText: { color: "#F97316", fontSize: 8, fontWeight: "700" },
   divider: {
     height: 1,
     backgroundColor: "#17263A",
     marginVertical: 14,
   },
-
-  customerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
+  customerRow: { flexDirection: "row", alignItems: "center" },
   smallAvatar: {
     width: 37,
     height: 37,
@@ -757,41 +679,26 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 9,
   },
-
-  customerContent: {
-    flex: 1,
-  },
-
-  infoLabel: {
-    color: "#64748B",
-    fontSize: 8,
-  },
-
+  customerContent: { flex: 1 },
+  infoLabel: { color: "#64748B", fontSize: 8 },
   customerName: {
     color: "#CBD5E1",
     fontSize: 11,
     fontWeight: "600",
     marginTop: 2,
   },
-
   locationRow: {
     flexDirection: "row",
     alignItems: "center",
     marginTop: 13,
   },
-
   locationText: {
     color: "#94A3B8",
     fontSize: 10,
     marginLeft: 7,
+    flex: 1,
   },
-
-  jobActions: {
-    flexDirection: "row",
-    gap: 9,
-    marginTop: 15,
-  },
-
+  jobActions: { flexDirection: "row", gap: 9, marginTop: 15 },
   detailsButton: {
     flex: 1,
     height: 45,
@@ -801,13 +708,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   detailsButtonText: {
     color: "#CBD5E1",
     fontSize: 10,
     fontWeight: "700",
   },
-
   navigationButton: {
     flex: 1,
     height: 45,
@@ -818,13 +723,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
   },
-
   navigationButtonText: {
     color: "#FFFFFF",
     fontSize: 10,
     fontWeight: "700",
   },
-
   jobsCard: {
     borderRadius: 17,
     backgroundColor: "#0D1B2A",
@@ -833,7 +736,12 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginBottom: 25,
   },
-
+  jobsEmptyText: {
+    color: "#94A3B8",
+    fontSize: 11,
+    textAlign: "center",
+    padding: 18,
+  },
   dashboardJob: {
     minHeight: 92,
     flexDirection: "row",
@@ -841,7 +749,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     paddingVertical: 12,
   },
-
   dashboardJobIcon: {
     width: 43,
     height: 43,
@@ -851,29 +758,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 10,
   },
-
-  dashboardJobContent: {
-    flex: 1,
-  },
-
-  dashboardJobTime: {
-    color: "#64748B",
-    fontSize: 8,
-  },
-
+  dashboardJobContent: { flex: 1 },
+  dashboardJobTime: { color: "#64748B", fontSize: 8 },
   dashboardJobTitle: {
     color: "#E2E8F0",
     fontSize: 11,
     fontWeight: "700",
     marginTop: 3,
   },
-
   dashboardJobLocation: {
     color: "#475569",
     fontSize: 8,
     marginTop: 3,
   },
-
   smallStatusBadge: {
     minHeight: 25,
     borderRadius: 8,
@@ -881,28 +778,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     justifyContent: "center",
   },
-
-  smallStatusText: {
-    fontSize: 8,
-    fontWeight: "700",
-  },
-
-  jobChevron: {
-    alignSelf: "flex-end",
-    marginTop: 9,
-  },
-
+  smallStatusText: { fontSize: 8, fontWeight: "700" },
+  jobChevron: { alignSelf: "flex-end", marginTop: 9 },
   jobDivider: {
     height: 1,
     backgroundColor: "#17263A",
     marginLeft: 66,
   },
-
-  quickActions: {
-    flexDirection: "row",
-    gap: 9,
-  },
-
+  quickActions: { flexDirection: "row", gap: 9 },
   quickAction: {
     flex: 1,
     minHeight: 104,
@@ -913,7 +796,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   quickActionIcon: {
     width: 44,
     height: 44,
@@ -922,7 +804,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   quickActionLabel: {
     color: "#CBD5E1",
     fontSize: 9,

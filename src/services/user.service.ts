@@ -4,6 +4,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   query,
   serverTimestamp,
   setDoc,
@@ -212,6 +213,25 @@ export async function getUserProfile(
   }
 
   return snapshot.data() as UserProfile;
+}
+
+export function subscribeToUserProfile(
+  uid: string,
+  onNext: (profile: UserProfile | null) => void,
+  onError: (error: Error) => void
+) {
+  return onSnapshot(
+    doc(db, "users", uid),
+    (snapshot) => {
+      if (!snapshot.exists()) {
+        onNext(null);
+        return;
+      }
+
+      onNext(snapshot.data() as UserProfile);
+    },
+    onError
+  );
 }
 
 export async function markUserEmailVerified(

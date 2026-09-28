@@ -204,11 +204,14 @@ service cloud.firestore {
         "customerName",
         "customerEmail",
         "customerPhone",
+        "technicianId",
+        "technicianName",
         "serviceCategory",
         "title",
         "description",
         "address",
         "serviceArea",
+        "division",
         "preferredDate",
         "preferredTime",
         "priority",
@@ -225,11 +228,14 @@ service cloud.firestore {
         "customerName",
         "customerEmail",
         "customerPhone",
+        "technicianId",
+        "technicianName",
         "serviceCategory",
         "title",
         "description",
         "address",
         "serviceArea",
+        "division",
         "preferredDate",
         "preferredTime",
         "priority",
@@ -240,12 +246,27 @@ service cloud.firestore {
       ]);
     }
 
+    function isApprovedTechnicianId(technicianId) {
+      return exists(
+        /databases/$(database)/documents/users/$(technicianId)
+      ) &&
+        get(
+          /databases/$(database)/documents/users/$(technicianId)
+        ).data.role == "technician" &&
+        get(
+          /databases/$(database)/documents/users/$(technicianId)
+        ).data.technicianApprovalStatus == "approved";
+    }
+
     function validCustomerRequestCreate() {
       return isVerifiedCustomer() &&
         hasRequiredRequestCreateFields() &&
         hasOnlyCustomerRequestCreateFields() &&
         request.resource.data.customerId == request.auth.uid &&
-        request.resource.data.status == "pending" &&
+        request.resource.data.technicianId is string &&
+        request.resource.data.technicianName is string &&
+        isApprovedTechnicianId(request.resource.data.technicianId) &&
+        request.resource.data.status == "requested" &&
         request.resource.data.priority in ["normal", "urgent"] &&
         request.resource.data.imageUrls is list;
     }
@@ -253,7 +274,7 @@ service cloud.firestore {
     function validCustomerRequestCancel() {
       return isVerifiedCustomer() &&
         resource.data.customerId == request.auth.uid &&
-        resource.data.status == "pending" &&
+        resource.data.status in ["requested", "pending"] &&
         request.resource.data.customerId == resource.data.customerId &&
         request.resource.data.status == "cancelled" &&
         request.resource.data.cancelledBy == request.auth.uid &&
@@ -288,6 +309,39 @@ service cloud.firestore {
           "completed",
           "cancelled"
         ];
+    }
+
+    function validTechnicianRequestStatusUpdate() {
+      return signedIn() &&
+        isApprovedTechnicianId(request.auth.uid) &&
+        resource.data.technicianId == request.auth.uid &&
+        request.resource.data.technicianId == resource.data.technicianId &&
+        request.resource.data.customerId == resource.data.customerId &&
+        request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            "status",
+            "acceptedAt",
+            "rejectedAt",
+            "startedAt",
+            "completedAt",
+            "updatedAt"
+          ]) &&
+        (
+          (
+            resource.data.status in ["requested", "pending"] &&
+            request.resource.data.status in ["accepted", "rejected"]
+          ) ||
+          (
+            resource.data.status in ["accepted", "assigned"] &&
+            request.resource.data.status in ["in_progress", "rejected"]
+          ) ||
+          (
+            resource.data.status == "in_progress" &&
+            request.resource.data.status == "completed"
+          )
+        );
     }
 
     function validNotificationReadUpdate() {
@@ -354,10 +408,15 @@ service cloud.firestore {
       allow read: if signedIn() &&
         (
           resource.data.customerId == request.auth.uid ||
+          (
+            resource.data.technicianId == request.auth.uid &&
+            isApprovedTechnicianId(request.auth.uid)
+          ) ||
           isDispatcher()
         );
       allow update: if validCustomerRequestCancel() ||
-        validDispatcherRequestUpdate();
+        validDispatcherRequestUpdate() ||
+        validTechnicianRequestStatusUpdate();
       allow delete: if false;
     }
 

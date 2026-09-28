@@ -11,6 +11,8 @@ import {
   Wrench,
 } from "lucide-react-native";
 import {
+  ActivityIndicator,
+  Image,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -19,13 +21,42 @@ import {
   View,
 } from "react-native";
 
+import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
 import { logoutUser } from "@/src/services/auth.service";
+import { getCompletedTechnicianRequests } from "@/src/utils/technicianRequests";
 
 export default function TechnicianProfileScreen() {
+  const { profile, requests, loading, errorMessage } =
+    useTechnicianWorkspace();
+  const completedJobs = getCompletedTechnicianRequests(requests).length;
+
   const handleLogout = async () => {
     await logoutUser();
     router.replace("/login");
   };
+
+  if (loading) {
+    return <StateScreen message="Loading profile..." />;
+  }
+
+  if (errorMessage || !profile) {
+    return (
+      <StateScreen
+        title="Profile unavailable"
+        message={errorMessage || "Unable to load technician profile."}
+      />
+    );
+  }
+
+  const rating =
+    Number(profile.averageRating ?? 0) > 0
+      ? Number(profile.averageRating).toFixed(1)
+      : "No ratings yet";
+  const reviewCount = Number(profile.reviewCount ?? 0);
+  const specialization =
+    profile.specialization || "Specialization not provided";
+  const serviceDivision =
+    profile.serviceDivision || profile.serviceAreas || "Division not set";
 
   return (
     <View style={styles.container}>
@@ -38,9 +69,7 @@ export default function TechnicianProfileScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
-        <Text style={styles.pageTitle}>
-          Profile
-        </Text>
+        <Text style={styles.pageTitle}>Profile</Text>
 
         <Text style={styles.subtitle}>
           Manage your technician account
@@ -48,120 +77,82 @@ export default function TechnicianProfileScreen() {
 
         <View style={styles.profileCard}>
           <View style={styles.avatar}>
-            <UserRound
-              size={41}
-              color="#FFFFFF"
-            />
+            {profile.profilePhotoUrl ? (
+              <Image
+                source={{ uri: profile.profilePhotoUrl }}
+                style={styles.avatarImage}
+              />
+            ) : (
+              <UserRound size={41} color="#FFFFFF" />
+            )}
           </View>
 
           <Text style={styles.name}>
-            Alex Smith
+            {profile.fullName || "Service Technician"}
           </Text>
 
-          <Text style={styles.role}>
-            Senior Service Technician
-          </Text>
+          <Text style={styles.role}>{specialization}</Text>
 
-          <View style={styles.onlineBadge}>
-            <View style={styles.onlineDot} />
-
-            <Text style={styles.onlineText}>
-              Available for Jobs
-            </Text>
-          </View>
+          <Text style={styles.divisionText}>{serviceDivision}</Text>
 
           <View style={styles.ratingRow}>
             <Star
               size={17}
               color="#F59E0B"
-              fill="#F59E0B"
+              fill={reviewCount > 0 ? "#F59E0B" : "transparent"}
             />
 
-            <Text style={styles.ratingValue}>
-              4.8
-            </Text>
+            <Text style={styles.ratingValue}>{rating}</Text>
 
-            <Text style={styles.ratingCount}>
-              • 124 reviews
-            </Text>
+            {reviewCount > 0 && (
+              <Text style={styles.ratingCount}>
+                - {reviewCount} review{reviewCount === 1 ? "" : "s"}
+              </Text>
+            )}
           </View>
         </View>
 
         <View style={styles.statsRow}>
+          <StatCard value={String(completedJobs)} label="Jobs" />
+          <StatCard value={rating} label="Rating" />
           <StatCard
-            value="124"
-            label="Jobs"
-          />
-
-          <StatCard
-            value="4.8"
-            label="Rating"
-          />
-
-          <StatCard
-            value="96%"
-            label="Success"
+            value={profile.experience || "Not set"}
+            label="Experience"
           />
         </View>
 
-        <Text style={styles.sectionTitle}>
-          Technician
-        </Text>
+        <Text style={styles.sectionTitle}>Technician</Text>
 
         <View style={styles.menuCard}>
           <MenuRow
-            icon={
-              <Award
-                size={19}
-                color="#F59E0B"
-              />
-            }
+            icon={<Award size={19} color="#F59E0B" />}
             title="Performance"
             subtitle="Ratings, completed jobs and statistics"
-            onPress={() =>
-              router.push("/technician/performance")
-            }
+            onPress={() => router.push("/technician/performance")}
           />
 
           <View style={styles.divider} />
 
           <MenuRow
-            icon={
-              <Wrench
-                size={19}
-                color="#60A5FA"
-              />
-            }
+            icon={<Wrench size={19} color="#60A5FA" />}
             title="Skills & Services"
-            subtitle="AC, electrical and appliance repairs"
+            subtitle={`${specialization} - ${serviceDivision}`}
           />
         </View>
 
-        <Text style={styles.sectionTitle}>
-          Account
-        </Text>
+        <Text style={styles.sectionTitle}>Account</Text>
 
         <View style={styles.menuCard}>
           <MenuRow
-            icon={
-              <UserRound
-                size={19}
-                color="#A78BFA"
-              />
-            }
+            icon={<UserRound size={19} color="#A78BFA" />}
             title="Personal Information"
-            subtitle="Update your technician profile"
+            subtitle={profile.email || "Email not available"}
           />
 
           <View style={styles.divider} />
 
           <MenuRow
-            icon={
-              <Bell
-                size={19}
-                color="#F59E0B"
-              />
-            }
+            icon={<Bell size={19} color="#F59E0B" />}
             title="Notifications"
             subtitle="Manage alerts and job notifications"
           />
@@ -169,12 +160,7 @@ export default function TechnicianProfileScreen() {
           <View style={styles.divider} />
 
           <MenuRow
-            icon={
-              <ShieldCheck
-                size={19}
-                color="#22C55E"
-              />
-            }
+            icon={<ShieldCheck size={19} color="#22C55E" />}
             title="Security"
             subtitle="Password and account security"
           />
@@ -182,12 +168,7 @@ export default function TechnicianProfileScreen() {
           <View style={styles.divider} />
 
           <MenuRow
-            icon={
-              <Settings
-                size={19}
-                color="#94A3B8"
-              />
-            }
+            icon={<Settings size={19} color="#94A3B8" />}
             title="Settings"
             subtitle="Application preferences"
           />
@@ -198,16 +179,28 @@ export default function TechnicianProfileScreen() {
           activeOpacity={0.8}
           onPress={handleLogout}
         >
-          <LogOut
-            size={18}
-            color="#EF4444"
-          />
-
-          <Text style={styles.logoutText}>
-            Sign Out
-          </Text>
+          <LogOut size={18} color="#EF4444" />
+          <Text style={styles.logoutText}>Sign Out</Text>
         </TouchableOpacity>
       </ScrollView>
+    </View>
+  );
+}
+
+function StateScreen({
+  title = "Please wait",
+  message,
+}: {
+  title?: string;
+  message: string;
+}) {
+  return (
+    <View style={styles.stateScreen}>
+      {!title.includes("unavailable") && (
+        <ActivityIndicator color="#22C55E" />
+      )}
+      <Text style={styles.stateTitle}>{title}</Text>
+      <Text style={styles.stateText}>{message}</Text>
     </View>
   );
 }
@@ -221,13 +214,10 @@ function StatCard({
 }) {
   return (
     <View style={styles.statCard}>
-      <Text style={styles.statValue}>
+      <Text style={styles.statValue} numberOfLines={2}>
         {value}
       </Text>
-
-      <Text style={styles.statLabel}>
-        {label}
-      </Text>
+      <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
 }
@@ -249,34 +239,41 @@ function MenuRow({
       activeOpacity={0.8}
       onPress={onPress}
     >
-      <View style={styles.menuIcon}>
-        {icon}
-      </View>
+      <View style={styles.menuIcon}>{icon}</View>
 
       <View style={styles.menuContent}>
-        <Text style={styles.menuTitle}>
-          {title}
-        </Text>
-
-        <Text style={styles.menuSubtitle}>
+        <Text style={styles.menuTitle}>{title}</Text>
+        <Text style={styles.menuSubtitle} numberOfLines={1}>
           {subtitle}
         </Text>
       </View>
 
-      <ChevronRight
-        size={18}
-        color="#475569"
-      />
+      <ChevronRight size={18} color="#475569" />
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: "#06101D" },
+  stateScreen: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#06101D",
+    paddingHorizontal: 28,
   },
-
+  stateTitle: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "800",
+    marginTop: 12,
+  },
+  stateText: {
+    color: "#94A3B8",
+    fontSize: 12,
+    marginTop: 8,
+    textAlign: "center",
+  },
   content: {
     width: "100%",
     maxWidth: 520,
@@ -285,20 +282,13 @@ const styles = StyleSheet.create({
     paddingTop: 54,
     paddingBottom: 120,
   },
-
-  pageTitle: {
-    color: "#FFFFFF",
-    fontSize: 27,
-    fontWeight: "800",
-  },
-
+  pageTitle: { color: "#FFFFFF", fontSize: 27, fontWeight: "800" },
   subtitle: {
     color: "#64748B",
     fontSize: 10,
     marginTop: 4,
     marginBottom: 22,
   },
-
   profileCard: {
     borderRadius: 20,
     backgroundColor: "#0D1B2A",
@@ -306,8 +296,8 @@ const styles = StyleSheet.create({
     borderColor: "#17263A",
     alignItems: "center",
     paddingVertical: 25,
+    paddingHorizontal: 18,
   },
-
   avatar: {
     width: 92,
     height: 92,
@@ -315,71 +305,50 @@ const styles = StyleSheet.create({
     backgroundColor: "#15803D",
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
-
+  avatarImage: { width: "100%", height: "100%" },
   name: {
     color: "#FFFFFF",
     fontSize: 20,
     fontWeight: "800",
     marginTop: 14,
+    textAlign: "center",
   },
-
   role: {
+    color: "#94A3B8",
+    fontSize: 10,
+    marginTop: 4,
+    textAlign: "center",
+  },
+  divisionText: {
     color: "#64748B",
     fontSize: 9,
     marginTop: 4,
+    textAlign: "center",
   },
-
-  onlineBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 10,
-    paddingHorizontal: 9,
-    height: 27,
-    borderRadius: 9,
-    backgroundColor: "rgba(34,197,94,0.07)",
-  },
-
-  onlineDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 6,
-    backgroundColor: "#22C55E",
-    marginRight: 5,
-  },
-
-  onlineText: {
-    color: "#22C55E",
-    fontSize: 8,
-    fontWeight: "700",
-  },
-
   ratingRow: {
     flexDirection: "row",
     alignItems: "center",
     marginTop: 13,
   },
-
   ratingValue: {
     color: "#FFFFFF",
     fontSize: 11,
     fontWeight: "700",
     marginLeft: 5,
   },
-
   ratingCount: {
     color: "#64748B",
     fontSize: 8,
     marginLeft: 4,
   },
-
   statsRow: {
     flexDirection: "row",
     gap: 9,
     marginTop: 13,
     marginBottom: 26,
   },
-
   statCard: {
     flex: 1,
     height: 76,
@@ -389,27 +358,21 @@ const styles = StyleSheet.create({
     borderColor: "#17263A",
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 6,
   },
-
   statValue: {
     color: "#22C55E",
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: "800",
+    textAlign: "center",
   },
-
-  statLabel: {
-    color: "#64748B",
-    fontSize: 8,
-    marginTop: 4,
-  },
-
+  statLabel: { color: "#64748B", fontSize: 8, marginTop: 4 },
   sectionTitle: {
     color: "#F8FAFC",
     fontSize: 13,
     fontWeight: "800",
     marginBottom: 9,
   },
-
   menuCard: {
     borderRadius: 16,
     backgroundColor: "#0D1B2A",
@@ -418,13 +381,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     marginBottom: 24,
   },
-
   menuRow: {
     minHeight: 72,
     flexDirection: "row",
     alignItems: "center",
   },
-
   menuIcon: {
     width: 42,
     height: 42,
@@ -434,29 +395,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 10,
   },
-
-  menuContent: {
-    flex: 1,
-  },
-
-  menuTitle: {
-    color: "#E2E8F0",
-    fontSize: 10,
-    fontWeight: "700",
-  },
-
-  menuSubtitle: {
-    color: "#64748B",
-    fontSize: 8,
-    marginTop: 4,
-  },
-
-  divider: {
-    height: 1,
-    backgroundColor: "#17263A",
-    marginLeft: 52,
-  },
-
+  menuContent: { flex: 1 },
+  menuTitle: { color: "#E2E8F0", fontSize: 10, fontWeight: "700" },
+  menuSubtitle: { color: "#64748B", fontSize: 8, marginTop: 4 },
+  divider: { height: 1, backgroundColor: "#17263A", marginLeft: 52 },
   logoutButton: {
     height: 52,
     borderRadius: 12,
@@ -468,10 +410,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 7,
   },
-
-  logoutText: {
-    color: "#EF4444",
-    fontSize: 11,
-    fontWeight: "700",
-  },
+  logoutText: { color: "#EF4444", fontSize: 11, fontWeight: "700" },
 });

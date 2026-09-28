@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from "expo-router";
+import { router } from "expo-router";
 import {
   ArrowLeft,
   CalendarDays,
@@ -11,6 +11,7 @@ import {
   Wrench,
 } from "lucide-react-native";
 import {
+  ActivityIndicator,
   Alert,
   ScrollView,
   StatusBar,
@@ -20,66 +21,67 @@ import {
   View,
 } from "react-native";
 
+import { normalizeRequestStatus } from "@/src/constants/serviceRequests";
+import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
+import { updateTechnicianRequestStatus } from "@/src/services/request.service";
+import {
+  getPriorityUi,
+  getRequestDateLabel,
+  getRequestDisplayTitle,
+  getRequestTimeLabel,
+  getStatusUi,
+} from "@/src/utils/technicianRequests";
+
 export default function TechnicianJobDetailsScreen() {
-  const params = useLocalSearchParams<{
-    id?: string;
-  }>();
-
-  const jobId = params.id ?? "REQ-2026-0012";
-
-  const job = {
-    id: jobId,
-    service: "AC Repair",
-    priority: "High",
-    status: "Accepted",
-    date: "20 May 2026",
-    time: "10:00 AM",
-
-    customer: {
-      name: "Emma Johnson",
-      phone: "+94 71 234 5678",
-    },
-
-    location: "123, Main Street, Colombo 07",
-
-    description:
-      "The air conditioner is not cooling properly and makes an unusual noise. Please inspect the gas level, filters and outdoor unit.",
-  };
+  const { request, loading, errorMessage } = useTechnicianRequest();
 
   const handleCallCustomer = () => {
+    if (!request?.customerPhone) {
+      Alert.alert("Customer Phone", "No customer phone number is available.");
+      return;
+    }
+
     Alert.alert(
       "Call Customer",
-      `Call ${job.customer.name} at ${job.customer.phone}`
+      `Call ${request.customerName || "customer"} at ${request.customerPhone}`
     );
   };
 
-  const handleNavigate = () => {
-    /*
-      Real Google Maps navigation will be connected later.
-    */
+  const handleStartJob = async () => {
+    if (!request) {
+      return;
+    }
 
-    Alert.alert(
-      "Navigation",
-      "Google Maps navigation will be connected in the Maps phase."
+    try {
+      await updateTechnicianRequestStatus(request.id, "in_progress");
+      router.push({
+        pathname: "/technician/job-action",
+        params: { id: request.id },
+      });
+    } catch (error: any) {
+      Alert.alert(
+        "Start Job Failed",
+        error?.message ?? "Unable to start this job."
+      );
+    }
+  };
+
+  if (loading) {
+    return <StateScreen message="Loading job details..." />;
+  }
+
+  if (errorMessage || !request) {
+    return (
+      <StateScreen
+        title="Job unavailable"
+        message={errorMessage || "Unable to load this job."}
+      />
     );
-  };
+  }
 
-  const handleStartJob = () => {
-    /*
-      Later:
-      status Accepted -> In Progress
-      jobEvents record
-      timestamp
-      notification
-    */
-
-    router.push({
-      pathname: "/technician/job-action",
-      params: {
-        id: job.id,
-      },
-    });
-  };
+  const status = getStatusUi(request.status);
+  const priority = getPriorityUi(request.priority);
+  const normalizedStatus = normalizeRequestStatus(request.status);
 
   return (
     <View style={styles.container}>
@@ -92,125 +94,102 @@ export default function TechnicianJobDetailsScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
-        {/* Header */}
-
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
             activeOpacity={0.8}
             onPress={() => router.back()}
           >
-            <ArrowLeft
-              size={20}
-              color="#FFFFFF"
-            />
+            <ArrowLeft size={20} color="#FFFFFF" />
           </TouchableOpacity>
 
           <View style={styles.headerContent}>
-            <Text style={styles.title}>
-              Job Details
-            </Text>
-
-            <Text style={styles.jobId}>
-              {job.id}
-            </Text>
+            <Text style={styles.title}>Job Details</Text>
+            <Text style={styles.jobId}>{request.id}</Text>
           </View>
 
-          <View style={styles.statusBadge}>
-            <View style={styles.statusDot} />
-
-            <Text style={styles.statusText}>
-              {job.status}
+          <View
+            style={[
+              styles.statusBadge,
+              {
+                backgroundColor: `${status.color}12`,
+                borderColor: `${status.color}35`,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.statusDot,
+                { backgroundColor: status.color },
+              ]}
+            />
+            <Text style={[styles.statusText, { color: status.color }]}>
+              {status.label}
             </Text>
           </View>
         </View>
-
-        {/* Service */}
 
         <View style={styles.serviceCard}>
           <View style={styles.serviceIcon}>
-            <Wrench
-              size={27}
-              color="#60A5FA"
-            />
+            <Wrench size={27} color="#60A5FA" />
           </View>
 
           <View style={styles.serviceContent}>
-            <Text style={styles.smallLabel}>
-              Service
-            </Text>
-
+            <Text style={styles.smallLabel}>Service</Text>
             <Text style={styles.serviceName}>
-              {job.service}
+              {getRequestDisplayTitle(request)}
             </Text>
           </View>
 
-          <View style={styles.priorityBadge}>
-            <Text style={styles.priorityText}>
-              {job.priority}
+          <View
+            style={[
+              styles.priorityBadge,
+              {
+                backgroundColor: `${priority.color}12`,
+                borderColor: `${priority.color}35`,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.priorityText,
+                { color: priority.color },
+              ]}
+            >
+              {priority.label}
             </Text>
           </View>
         </View>
 
-        {/* Schedule */}
-
-        <Text style={styles.sectionTitle}>
-          Schedule
-        </Text>
+        <Text style={styles.sectionTitle}>Schedule</Text>
 
         <View style={styles.scheduleRow}>
-          <View style={styles.scheduleCard}>
-            <CalendarDays
-              size={20}
-              color="#60A5FA"
-            />
+          <InfoCard
+            icon={<CalendarDays size={20} color="#60A5FA" />}
+            label="Date"
+            value={getRequestDateLabel(request)}
+          />
 
-            <Text style={styles.scheduleLabel}>
-              Date
-            </Text>
-
-            <Text style={styles.scheduleValue}>
-              {job.date}
-            </Text>
-          </View>
-
-          <View style={styles.scheduleCard}>
-            <Clock3
-              size={20}
-              color="#A78BFA"
-            />
-
-            <Text style={styles.scheduleLabel}>
-              Time
-            </Text>
-
-            <Text style={styles.scheduleValue}>
-              {job.time}
-            </Text>
-          </View>
+          <InfoCard
+            icon={<Clock3 size={20} color="#A78BFA" />}
+            label="Time"
+            value={getRequestTimeLabel(request)}
+          />
         </View>
 
-        {/* Customer */}
-
-        <Text style={styles.sectionTitle}>
-          Customer
-        </Text>
+        <Text style={styles.sectionTitle}>Customer</Text>
 
         <View style={styles.customerCard}>
           <View style={styles.avatar}>
-            <UserRound
-              size={27}
-              color="#FFFFFF"
-            />
+            <UserRound size={27} color="#FFFFFF" />
           </View>
 
           <View style={styles.customerContent}>
             <Text style={styles.customerName}>
-              {job.customer.name}
+              {request.customerName || "Customer"}
             </Text>
-
             <Text style={styles.customerPhone}>
-              {job.customer.phone}
+              {request.customerPhone || "Phone not provided"}
             </Text>
           </View>
 
@@ -219,34 +198,21 @@ export default function TechnicianJobDetailsScreen() {
             activeOpacity={0.8}
             onPress={handleCallCustomer}
           >
-            <Phone
-              size={19}
-              color="#22C55E"
-            />
+            <Phone size={19} color="#22C55E" />
           </TouchableOpacity>
         </View>
 
-        {/* Location */}
-
-        <Text style={styles.sectionTitle}>
-          Service Location
-        </Text>
+        <Text style={styles.sectionTitle}>Service Location</Text>
 
         <View style={styles.locationCard}>
           <View style={styles.locationIcon}>
-            <MapPin
-              size={21}
-              color="#3B82F6"
-            />
+            <MapPin size={21} color="#3B82F6" />
           </View>
 
           <View style={styles.locationContent}>
-            <Text style={styles.locationLabel}>
-              Address
-            </Text>
-
+            <Text style={styles.locationLabel}>Address</Text>
             <Text style={styles.locationValue}>
-              {job.location}
+              {request.address || "Address not provided"}
             </Text>
           </View>
         </View>
@@ -254,146 +220,116 @@ export default function TechnicianJobDetailsScreen() {
         <TouchableOpacity
           style={styles.navigateButton}
           activeOpacity={0.85}
-          onPress={handleNavigate}
+          onPress={() =>
+            router.push({
+              pathname: "/technician/navigation",
+              params: { id: request.id },
+            })
+          }
         >
-          <Navigation
-            size={18}
-            color="#FFFFFF"
-          />
-
-          <Text style={styles.navigateText}>
-            Navigate to Customer
-          </Text>
+          <Navigation size={18} color="#FFFFFF" />
+          <Text style={styles.navigateText}>Open Job Navigation</Text>
         </TouchableOpacity>
 
-        {/* Instructions */}
-
-        <Text style={styles.sectionTitle}>
-          Service Instructions
-        </Text>
+        <Text style={styles.sectionTitle}>Service Instructions</Text>
 
         <View style={styles.instructionsCard}>
           <Text style={styles.instructionsText}>
-            {job.description}
+            {request.description || "No description was provided."}
           </Text>
         </View>
 
-        {/* Evidence */}
-
-        <Text style={styles.sectionTitle}>
-          Required Service Evidence
-        </Text>
-
-        <View style={styles.evidenceCard}>
-          <EvidenceItem
-            title="Before Service Photos"
-            description="Capture condition before starting work."
-          />
-
-          <View style={styles.divider} />
-
-          <EvidenceItem
-            title="Service Notes"
-            description="Record work completed and important findings."
-          />
-
-          <View style={styles.divider} />
-
-          <EvidenceItem
-            title="After Service Photos"
-            description="Capture completed service evidence."
-          />
-
-          <View style={styles.divider} />
-
-          <EvidenceItem
-            title="Customer Signature"
-            description="Required before job completion."
-          />
-        </View>
-
-        {/* Important notice */}
-
         <View style={styles.noticeCard}>
-          <CheckCircle2
-            size={18}
-            color="#22C55E"
-          />
-
+          <CheckCircle2 size={18} color="#22C55E" />
           <Text style={styles.noticeText}>
             Check the customer location and service instructions before
             starting this job.
           </Text>
         </View>
 
-        {/* Start */}
+        {normalizedStatus === "accepted" && (
+          <TouchableOpacity
+            style={styles.startButton}
+            activeOpacity={0.85}
+            onPress={handleStartJob}
+          >
+            <Wrench size={19} color="#FFFFFF" />
+            <Text style={styles.startButtonText}>Start Service</Text>
+          </TouchableOpacity>
+        )}
 
-        <TouchableOpacity
-          style={styles.startButton}
-          activeOpacity={0.85}
-          onPress={handleStartJob}
-        >
-          <Wrench
-            size={19}
-            color="#FFFFFF"
-          />
-
-          <Text style={styles.startButtonText}>
-            Start Service
-          </Text>
-        </TouchableOpacity>
-
-        {/* Reject */}
-
-        <TouchableOpacity
-          style={styles.rejectButton}
-          activeOpacity={0.8}
-          onPress={() =>
-            Alert.alert(
-              "Reject Job",
-              "A rejection reason will be required when the backend workflow is connected."
-            )
-          }
-        >
-          <Text style={styles.rejectText}>
-            Reject / Report Issue
-          </Text>
-        </TouchableOpacity>
+        {normalizedStatus === "in_progress" && (
+          <TouchableOpacity
+            style={styles.startButton}
+            activeOpacity={0.85}
+            onPress={() =>
+              router.push({
+                pathname: "/technician/job-action",
+                params: { id: request.id },
+              })
+            }
+          >
+            <Wrench size={19} color="#FFFFFF" />
+            <Text style={styles.startButtonText}>Continue Service</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </View>
   );
 }
 
-function EvidenceItem({
-  title,
-  description,
+function StateScreen({
+  title = "Please wait",
+  message,
 }: {
-  title: string;
-  description: string;
+  title?: string;
+  message: string;
 }) {
   return (
-    <View style={styles.evidenceItem}>
-      <View style={styles.evidenceDot} />
+    <View style={styles.stateScreen}>
+      {!title.includes("unavailable") && (
+        <ActivityIndicator color="#22C55E" />
+      )}
+      <Text style={styles.stateTitle}>{title}</Text>
+      <Text style={styles.stateText}>{message}</Text>
+    </View>
+  );
+}
 
-      <View style={styles.evidenceContent}>
-        <Text style={styles.evidenceTitle}>
-          {title}
-        </Text>
-
-        <Text style={styles.evidenceDescription}>
-          {description}
-        </Text>
-      </View>
+function InfoCard({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.scheduleCard}>
+      {icon}
+      <Text style={styles.scheduleLabel}>{label}</Text>
+      <Text style={styles.scheduleValue}>{value}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: "#06101D" },
+  stateScreen: {
     flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#06101D",
+    paddingHorizontal: 28,
   },
-
+  stateTitle: { color: "#FFFFFF", fontSize: 18, fontWeight: "800" },
+  stateText: {
+    color: "#94A3B8",
+    fontSize: 12,
+    marginTop: 10,
+    textAlign: "center",
+  },
   content: {
     width: "100%",
     maxWidth: 520,
@@ -402,13 +338,7 @@ const styles = StyleSheet.create({
     paddingTop: 54,
     paddingBottom: 70,
   },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 24,
-  },
-
+  header: { flexDirection: "row", alignItems: "center", marginBottom: 24 },
   backButton: {
     width: 44,
     height: 44,
@@ -420,48 +350,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 13,
   },
-
-  headerContent: {
-    flex: 1,
-  },
-
-  title: {
-    color: "#FFFFFF",
-    fontSize: 24,
-    fontWeight: "800",
-  },
-
-  jobId: {
-    color: "#64748B",
-    fontSize: 10,
-    marginTop: 3,
-  },
-
+  headerContent: { flex: 1 },
+  title: { color: "#FFFFFF", fontSize: 24, fontWeight: "800" },
+  jobId: { color: "#64748B", fontSize: 10, marginTop: 3 },
   statusBadge: {
     minHeight: 30,
     borderRadius: 9,
-    backgroundColor: "rgba(34,197,94,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(34,197,94,0.22)",
     paddingHorizontal: 9,
     flexDirection: "row",
     alignItems: "center",
   },
-
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 6,
-    backgroundColor: "#22C55E",
-    marginRight: 6,
-  },
-
-  statusText: {
-    color: "#22C55E",
-    fontSize: 8,
-    fontWeight: "700",
-  },
-
+  statusDot: { width: 6, height: 6, borderRadius: 6, marginRight: 6 },
+  statusText: { fontSize: 8, fontWeight: "700" },
   serviceCard: {
     minHeight: 92,
     borderRadius: 18,
@@ -473,7 +374,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     marginBottom: 24,
   },
-
   serviceIcon: {
     width: 52,
     height: 52,
@@ -483,39 +383,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 12,
   },
-
-  serviceContent: {
-    flex: 1,
-  },
-
-  smallLabel: {
-    color: "#64748B",
-    fontSize: 8,
-  },
-
+  serviceContent: { flex: 1 },
+  smallLabel: { color: "#64748B", fontSize: 8 },
   serviceName: {
     color: "#FFFFFF",
     fontSize: 17,
     fontWeight: "800",
     marginTop: 3,
   },
-
   priorityBadge: {
     height: 28,
     borderRadius: 9,
-    backgroundColor: "rgba(249,115,22,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(249,115,22,0.25)",
     justifyContent: "center",
     paddingHorizontal: 9,
   },
-
-  priorityText: {
-    color: "#F97316",
-    fontSize: 8,
-    fontWeight: "700",
-  },
-
+  priorityText: { fontSize: 8, fontWeight: "700" },
   sectionTitle: {
     color: "#F8FAFC",
     fontSize: 14,
@@ -523,13 +406,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     marginLeft: 2,
   },
-
-  scheduleRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 24,
-  },
-
+  scheduleRow: { flexDirection: "row", gap: 10, marginBottom: 24 },
   scheduleCard: {
     flex: 1,
     minHeight: 94,
@@ -539,20 +416,13 @@ const styles = StyleSheet.create({
     borderColor: "#17263A",
     padding: 14,
   },
-
-  scheduleLabel: {
-    color: "#64748B",
-    fontSize: 8,
-    marginTop: 9,
-  },
-
+  scheduleLabel: { color: "#64748B", fontSize: 8, marginTop: 9 },
   scheduleValue: {
     color: "#E2E8F0",
     fontSize: 11,
     fontWeight: "700",
     marginTop: 3,
   },
-
   customerCard: {
     minHeight: 90,
     borderRadius: 16,
@@ -564,7 +434,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     marginBottom: 24,
   },
-
   avatar: {
     width: 52,
     height: 52,
@@ -574,23 +443,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 11,
   },
-
-  customerContent: {
-    flex: 1,
-  },
-
-  customerName: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-
-  customerPhone: {
-    color: "#64748B",
-    fontSize: 9,
-    marginTop: 4,
-  },
-
+  customerContent: { flex: 1 },
+  customerName: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
+  customerPhone: { color: "#64748B", fontSize: 9, marginTop: 4 },
   callButton: {
     width: 42,
     height: 42,
@@ -601,7 +456,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
   locationCard: {
     minHeight: 84,
     borderRadius: 15,
@@ -612,7 +466,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 14,
   },
-
   locationIcon: {
     width: 44,
     height: 44,
@@ -622,23 +475,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 11,
   },
-
-  locationContent: {
-    flex: 1,
-  },
-
-  locationLabel: {
-    color: "#64748B",
-    fontSize: 8,
-  },
-
+  locationContent: { flex: 1 },
+  locationLabel: { color: "#64748B", fontSize: 8 },
   locationValue: {
     color: "#CBD5E1",
     fontSize: 10,
     fontWeight: "600",
     marginTop: 4,
   },
-
   navigateButton: {
     height: 50,
     borderRadius: 12,
@@ -650,13 +494,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 24,
   },
-
-  navigateText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-
+  navigateText: { color: "#FFFFFF", fontSize: 11, fontWeight: "700" },
   instructionsCard: {
     minHeight: 125,
     borderRadius: 16,
@@ -666,59 +504,7 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 24,
   },
-
-  instructionsText: {
-    color: "#CBD5E1",
-    fontSize: 11,
-    lineHeight: 19,
-  },
-
-  evidenceCard: {
-    borderRadius: 17,
-    backgroundColor: "#0D1B2A",
-    borderWidth: 1,
-    borderColor: "#17263A",
-    paddingHorizontal: 14,
-    marginBottom: 18,
-  },
-
-  evidenceItem: {
-    minHeight: 68,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  evidenceDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 9,
-    backgroundColor: "#22C55E",
-    marginRight: 12,
-  },
-
-  evidenceContent: {
-    flex: 1,
-  },
-
-  evidenceTitle: {
-    color: "#E2E8F0",
-    fontSize: 10,
-    fontWeight: "700",
-  },
-
-  evidenceDescription: {
-    color: "#64748B",
-    fontSize: 8,
-    lineHeight: 13,
-    marginTop: 3,
-  },
-
-  divider: {
-    height: 1,
-    backgroundColor: "#17263A",
-    marginLeft: 21,
-  },
-
+  instructionsText: { color: "#CBD5E1", fontSize: 11, lineHeight: 19 },
   noticeCard: {
     minHeight: 70,
     borderRadius: 14,
@@ -730,7 +516,6 @@ const styles = StyleSheet.create({
     padding: 13,
     marginBottom: 20,
   },
-
   noticeText: {
     color: "#94A3B8",
     fontSize: 9,
@@ -738,7 +523,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 9,
   },
-
   startButton: {
     height: 56,
     borderRadius: 12,
@@ -748,27 +532,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
   },
-
-  startButtonText: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-
-  rejectButton: {
-    height: 51,
-    borderRadius: 12,
-    backgroundColor: "rgba(239,68,68,0.05)",
-    borderWidth: 1,
-    borderColor: "rgba(239,68,68,0.20)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 10,
-  },
-
-  rejectText: {
-    color: "#EF4444",
-    fontSize: 11,
-    fontWeight: "700",
-  },
+  startButtonText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
 });

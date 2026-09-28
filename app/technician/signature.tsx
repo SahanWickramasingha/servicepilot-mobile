@@ -8,7 +8,7 @@ import {
   Signature,
   UserRound,
 } from "lucide-react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   ScrollView,
@@ -20,20 +20,30 @@ import {
   View,
 } from "react-native";
 
+import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
+
 export default function CustomerSignatureScreen() {
   const params = useLocalSearchParams<{
     id?: string;
   }>();
-
-  const jobId = params.id ?? "REQ-2026-0012";
+  const { request } = useTechnicianRequest();
+  const jobId = String(params.id ?? "");
 
   const [customerName, setCustomerName] =
-    useState("Emma Johnson");
+    useState("");
+  const displayCustomerName =
+    customerName || request?.customerName || "";
 
   const [signed, setSigned] = useState(false);
 
   const [confirmed, setConfirmed] =
     useState(false);
+
+  useEffect(() => {
+    if (!customerName && request?.customerName) {
+      setCustomerName(request.customerName);
+    }
+  }, [customerName, request?.customerName]);
 
   const handleAddSignature = () => {
     setSigned(true);
@@ -133,7 +143,7 @@ export default function CustomerSignatureScreen() {
             </Text>
 
             <Text style={styles.requestId}>
-              {jobId}
+              {jobId || "No request selected"}
             </Text>
           </View>
         </View>
@@ -229,7 +239,7 @@ export default function CustomerSignatureScreen() {
             <>
               <View style={styles.signatureMock}>
                 <Text style={styles.signatureText}>
-                  Emma Johnson
+                  {displayCustomerName || "Customer"}
                 </Text>
 
                 <View style={styles.signatureLine} />

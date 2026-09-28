@@ -31,7 +31,7 @@ type PartItem = {
 export default function ServiceNotesScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
 
-  const jobId = params.id ?? "REQ-2026-0012";
+  const jobId = String(params.id ?? "");
 
   const [diagnosis, setDiagnosis] = useState("");
   const [workCompleted, setWorkCompleted] = useState("");
@@ -166,7 +166,7 @@ export default function ServiceNotesScreen() {
             </Text>
 
             <Text style={styles.requestId}>
-              {jobId}
+              {jobId || "No request selected"}
             </Text>
           </View>
         </View>
