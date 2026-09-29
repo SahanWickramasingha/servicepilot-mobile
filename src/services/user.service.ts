@@ -59,6 +59,7 @@ export interface UserProfile {
   phone: string;
   address: string;
   role: UserRole;
+  accountStatus?: "active" | "disabled" | string;
   emailVerified?: boolean;
   technicianApprovalStatus?: TechnicianApprovalStatus;
   reviewedBy?: string | null;
@@ -317,7 +318,7 @@ export function getDashboardRouteForRole(
     case "technician":
       return "/technician";
     case "dispatcher":
-      return "/dispatcher";
+      return "/login";
     case "customer":
     default:
       return "/(tabs)";
@@ -327,6 +328,17 @@ export function getDashboardRouteForRole(
 export function getMobileAccessDecision(
   profile: UserProfile
 ): MobileAccessDecision {
+  if (
+    profile.accountStatus &&
+    profile.accountStatus !== "active"
+  ) {
+    return {
+      allowed: false,
+      message:
+        "This account has been disabled. Please contact support.",
+    };
+  }
+
   if (profile.emailVerified !== true) {
     return {
       allowed: false,
@@ -337,8 +349,14 @@ export function getMobileAccessDecision(
 
   switch (profile.role) {
     case "customer":
-    case "dispatcher":
       return { allowed: true };
+
+    case "dispatcher":
+      return {
+        allowed: false,
+        message:
+          "Dispatcher access is available through the ServicePilot web portal.",
+      };
 
     case "technician":
       if (
@@ -364,12 +382,18 @@ export function getMobileAccessDecision(
           "Your technician account is still under review. Please wait while we confirm your information. You will be able to sign in after approval.",
       };
 
-    case "admin":
     case "super_admin":
       return {
         allowed: false,
         message:
           "Super Admin access is available on the web portal only.",
+      };
+
+    case "admin":
+      return {
+        allowed: false,
+        message:
+          "This account role is available through the web portal only.",
       };
 
     default:

@@ -16,9 +16,22 @@ service cloud.firestore {
       ).data.role;
     }
 
-    function isDispatcher() {
+    function userAccountStatus(userId) {
+      return get(
+        /databases/$(database)/documents/users/$(userId)
+      ).data.accountStatus;
+    }
+
+    function isSuperAdmin() {
       return signedIn() &&
-        userRole(request.auth.uid) == "dispatcher";
+        userRole(request.auth.uid) == "super_admin" &&
+        userAccountStatus(request.auth.uid) == "active";
+    }
+
+    function isActiveDispatcher() {
+      return signedIn() &&
+        userRole(request.auth.uid) == "dispatcher" &&
+        userAccountStatus(request.auth.uid) == "active";
     }
 
     function isPublicRegistrationRole() {
@@ -114,6 +127,45 @@ service cloud.firestore {
         );
     }
 
+    function validSuperAdminDispatcherCreate(userId) {
+      return isSuperAdmin() &&
+        request.resource.data.keys().hasOnly([
+          "uid",
+          "dispatcherId",
+          "fullName",
+          "email",
+          "role",
+          "accountStatus",
+          "invitationStatus",
+          "createdBy",
+          "createdAt",
+          "updatedAt"
+        ]) &&
+        request.resource.data.keys().hasAll([
+          "uid",
+          "dispatcherId",
+          "fullName",
+          "email",
+          "role",
+          "accountStatus",
+          "invitationStatus",
+          "createdBy",
+          "createdAt",
+          "updatedAt"
+        ]) &&
+        request.resource.data.uid == userId &&
+        request.resource.data.dispatcherId is string &&
+        request.resource.data.dispatcherId.size() > 0 &&
+        request.resource.data.fullName is string &&
+        request.resource.data.fullName.size() > 0 &&
+        request.resource.data.email is string &&
+        request.resource.data.email.size() > 0 &&
+        request.resource.data.role == "dispatcher" &&
+        request.resource.data.accountStatus == "active" &&
+        request.resource.data.invitationStatus == "pending" &&
+        request.resource.data.createdBy == request.auth.uid;
+    }
+
     function ownerMutableFieldsOnly() {
       return request.resource.data
         .diff(resource.data)
@@ -163,8 +215,9 @@ service cloud.firestore {
     }
 
     function validDispatcherTechnicianReview() {
-      return isDispatcher() &&
+      return isActiveDispatcher() &&
         resource.data.role == "technician" &&
+        resource.data.technicianApprovalStatus == "pending" &&
         request.resource.data.role == resource.data.role &&
         request.resource.data
           .diff(resource.data)
@@ -180,7 +233,41 @@ service cloud.firestore {
           "approved",
           "rejected"
         ] &&
+        (
+          request.resource.data.technicianApprovalStatus == "approved" ||
+          (
+            request.resource.data.technicianApprovalStatus == "rejected" &&
+            request.resource.data.rejectionReason is string &&
+            request.resource.data.rejectionReason.size() > 0
+          )
+        ) &&
         request.resource.data.reviewedBy == request.auth.uid;
+    }
+
+    function validDispatcherInvitationAccept(userId) {
+      return isOwner(userId) &&
+        resource.data.role == "dispatcher" &&
+        resource.data.invitationStatus == "pending" &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.dispatcherId == resource.data.dispatcherId &&
+        request.resource.data.createdBy == resource.data.createdBy &&
+        request.resource.data.accountStatus == resource.data.accountStatus &&
+        request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            "invitationStatus",
+            "updatedAt"
+          ]) &&
+        request.resource.data.invitationStatus == "accepted";
+    }
+
+    function validSuperAdminFailedDispatcherCleanup(userId) {
+      return isSuperAdmin() &&
+        resource.data.role == "dispatcher" &&
+        resource.data.invitationStatus == "pending" &&
+        resource.data.createdBy == request.auth.uid;
     }
 
     function isApprovedTechnicianProfile() {
@@ -293,28 +380,6 @@ service cloud.firestore {
           ]);
     }
 
-    function validDispatcherRequestUpdate() {
-      return isDispatcher() &&
-        request.resource.data.customerId == resource.data.customerId &&
-        request.resource.data
-          .diff(resource.data)
-          .affectedKeys()
-          .hasOnly([
-            "status",
-            "assignedTechnicianId",
-            "assignedTechnicianName",
-            "assignedDispatcherId",
-            "updatedAt"
-          ]) &&
-        request.resource.data.status in [
-          "pending",
-          "assigned",
-          "in_progress",
-          "completed",
-          "cancelled"
-        ];
-    }
-
     function validTechnicianRequestStatusUpdate() {
       return signedIn() &&
         isApprovedTechnicianId(request.auth.uid) &&
@@ -409,10 +474,12 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow create: if validPublicUserCreate(userId);
+      allow create: if validPublicUserCreate(userId) ||
+        validSuperAdminDispatcherCreate(userId);
       allow read: if isOwner(userId) ||
+        isSuperAdmin() ||
         (
-          isDispatcher() &&
+          isActiveDispatcher() &&
           resource.data.role == "technician"
         ) ||
         (
@@ -420,23 +487,23 @@ service cloud.firestore {
           isApprovedTechnicianProfile()
         );
       allow update: if validOwnerUpdate(userId) ||
+        validDispatcherInvitationAccept(userId) ||
         validDispatcherTechnicianReview();
-      allow delete: if false;
+      allow delete: if validSuperAdminFailedDispatcherCleanup(userId);
     }
 
     match /service_requests/{requestId} {
       allow create: if validCustomerRequestCreate();
       allow read: if signedIn() &&
         (
+          isSuperAdmin() ||
           resource.data.customerId == request.auth.uid ||
           (
             resource.data.technicianId == request.auth.uid &&
             isApprovedTechnicianId(request.auth.uid)
-          ) ||
-          isDispatcher()
+          )
         );
       allow update: if validCustomerRequestCancel() ||
-        validDispatcherRequestUpdate() ||
         validTechnicianRequestStatusUpdate();
       allow delete: if false;
     }
@@ -452,8 +519,16 @@ service cloud.firestore {
     match /service_reviews/{reviewId} {
       allow create: if validReviewCreate(reviewId);
       allow read: if signedIn() &&
-        resource.data.customerId == request.auth.uid;
+        (
+          isSuperAdmin() ||
+          resource.data.customerId == request.auth.uid
+        );
       allow update, delete: if false;
+    }
+
+    match /audit_logs/{auditLogId} {
+      allow read: if isSuperAdmin();
+      allow create, update, delete: if false;
     }
   }
 }

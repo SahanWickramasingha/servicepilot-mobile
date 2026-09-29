@@ -1,107 +1,80 @@
 import {
+  ClipboardCheck,
   BarChart3,
-  Bell,
-  CalendarDays,
-  ChevronLeft,
-  ChevronRight,
   ClipboardList,
+  FileClock,
   LayoutDashboard,
-  MapPinned,
+  LogOut,
   Menu,
+  MessageSquareText,
   Settings,
+  ShieldCheck,
   UserCog,
   Users,
-  Wrench,
 } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import servicePilotLogo from "../assets/images/servicepilot-logo.png";
 
-const navigation = [
-  {
-    label: "Dashboard",
-    path: "/",
-    icon: LayoutDashboard,
-  },
-  {
-    label: "Service Requests",
-    path: "/requests",
-    icon: ClipboardList,
-  },
-  {
-    label: "Schedule",
-    path: "/schedule",
-    icon: CalendarDays,
-  },
-  {
-    label: "Technicians",
-    path: "/technicians",
-    icon: UserCog,
-  },
-  {
-    label: "Customers",
-    path: "/customers",
-    icon: Users,
-  },
-  {
-    label: "Services",
-    path: "/services",
-    icon: Wrench,
-  },
-  {
-    label: "Live Map",
-    path: "/live-map",
-    icon: MapPinned,
-  },
-  {
-    label: "Notifications",
-    path: "/notifications",
-    icon: Bell,
-  },
-  {
-    label: "Reports",
-    path: "/reports",
-    icon: BarChart3,
-  },
-  {
-    label: "Settings",
-    path: "/settings",
-    icon: Settings,
-  },
+import { useAdminAuth } from "../auth/AdminAuthContext";
+import servicePilotLogo from "../assets/images/servicepilot-logo.png";
+import { initials } from "../utils/format";
+
+const adminNavigation = [
+  { label: "Dashboard", path: "/admin/dashboard", icon: LayoutDashboard },
+  { label: "Dispatchers", path: "/admin/dispatchers", icon: ShieldCheck },
+  { label: "Technicians", path: "/admin/technicians", icon: UserCog },
+  { label: "Customers", path: "/admin/customers", icon: Users },
+  { label: "Service Requests", path: "/admin/requests", icon: ClipboardList },
+  { label: "Reviews", path: "/admin/reviews", icon: MessageSquareText },
+  { label: "Reports", path: "/admin/reports", icon: BarChart3 },
+  { label: "Audit Logs", path: "/admin/audit", icon: FileClock },
+  { label: "Settings", path: "/admin/settings", icon: Settings },
 ];
 
-export default function AdminLayout() {
-  const [collapsed, setCollapsed] = useState(false);
+const dispatcherNavigation = [
+  { label: "Dashboard", path: "/dispatcher/dashboard", icon: LayoutDashboard },
+  { label: "Applications", path: "/dispatcher/applications", icon: ClipboardCheck },
+  { label: "Technicians", path: "/dispatcher/technicians", icon: UserCog },
+  { label: "Profile", path: "/dispatcher/profile", icon: Users },
+];
+
+export default function AdminLayout({
+  portal,
+}: {
+  portal: "admin" | "dispatcher";
+}) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { profile, logout } = useAdminAuth();
+  const navigation =
+    portal === "admin" ? adminNavigation : dispatcherNavigation;
+  const portalLabel =
+    portal === "admin" ? "Super Admin" : "Dispatcher";
 
   return (
     <div className="admin-shell">
       {mobileOpen && (
-        <div className="sidebar-overlay" onClick={() => setMobileOpen(false)} />
+        <button
+          className="sidebar-overlay"
+          aria-label="Close navigation"
+          onClick={() => setMobileOpen(false)}
+        />
       )}
 
-      <aside
-        className={`sidebar ${collapsed ? "collapsed" : ""} ${
-          mobileOpen ? "mobile-open" : ""
-        }`}
-      >
-        {/* Brand */}
-        <div className="brand-logo">
-          <img
-            src={servicePilotLogo}
-            alt="ServicePilot"
-            className="brand-logo-image"
-          />
-        </div>
-
-        {!collapsed && (
+      <aside className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}>
+        <div className="brand-area">
+          <div className="brand-logo">
+            <img
+              src={servicePilotLogo}
+              alt="ServicePilot"
+              className="brand-logo-image"
+            />
+          </div>
           <div>
             <div className="brand-name">ServicePilot</div>
-            <div className="brand-subtitle">Admin Portal</div>
+            <div className="brand-subtitle">{portalLabel}</div>
           </div>
-        )}
+        </div>
 
-        {/* Navigation */}
         <nav className="sidebar-nav">
           {navigation.map((item) => {
             const Icon = item.icon;
@@ -116,66 +89,47 @@ export default function AdminLayout() {
                 }
                 onClick={() => setMobileOpen(false)}
               >
-                <Icon size={19} />
-
-                {!collapsed && <span>{item.label}</span>}
+                <Icon size={18} />
+                <span>{item.label}</span>
               </NavLink>
             );
           })}
         </nav>
 
-        {/* Collapse */}
-        <button
-          className="collapse-button"
-          onClick={() => setCollapsed((value) => !value)}
-        >
-          {collapsed ? (
-            <ChevronRight size={18} />
-          ) : (
-            <>
-              <ChevronLeft size={18} />
-              <span>Collapse Menu</span>
-            </>
-          )}
+        <button className="logout-button" onClick={logout}>
+          <LogOut size={17} />
+          Logout
         </button>
       </aside>
 
-      {/* Main */}
-      <div className={`admin-main ${collapsed ? "sidebar-collapsed" : ""}`}>
-        {/* Topbar */}
+      <div className="admin-main">
         <header className="topbar">
           <button
             className="mobile-menu-button"
+            aria-label="Open navigation"
             onClick={() => setMobileOpen(true)}
           >
             <Menu size={21} />
           </button>
 
-          <div className="topbar-search">
-            <input
-              type="text"
-              placeholder="Search requests, technicians, customers..."
-            />
+          <div className="topbar-title">
+            <strong>{portalLabel} Portal</strong>
+            <span>Real-time Firebase monitoring</span>
           </div>
 
           <div className="topbar-actions">
-            <button className="notification-button">
-              <Bell size={19} />
-              <span className="notification-dot" />
-            </button>
-
             <div className="admin-profile">
-              <div className="admin-avatar">SA</div>
-
+              <div className="admin-avatar">
+                {initials(profile?.fullName, profile?.email)}
+              </div>
               <div className="admin-info">
-                <strong>System Admin</strong>
-                <span>Administrator</span>
+                <strong>{profile?.fullName ?? "Super Admin"}</strong>
+                <span>{profile?.email}</span>
               </div>
             </div>
           </div>
         </header>
 
-        {/* Page content */}
         <main className="page-content">
           <Outlet />
         </main>
