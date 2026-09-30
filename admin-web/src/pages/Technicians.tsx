@@ -1,17 +1,36 @@
-import { Eye, Search, UserCog, X } from "lucide-react";
+import { Search, UserCog, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { useAdminAuth } from "../auth/AdminAuthContext";
+import {
+  AccountLifecycleActions,
+  AccountLifecycleDialog,
+  statusChipLabel,
+  statusChipTone,
+} from "../components/AccountLifecycleActions";
 import { DataState, StatusChip } from "../components/DataState";
 import { useCollectionData } from "../hooks/useCollectionData";
+import {
+  updateManagedAccountLifecycle,
+  type AccountLifecycleAction,
+} from "../services/accountLifecycleService";
 import type { UserRecord } from "../types";
 import { displayText, formatDateTime, statusLabel } from "../utils/format";
 
 export default function Technicians() {
+  const { firebaseUser } = useAdminAuth();
   const users = useCollectionData<UserRecord>("users");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedTechnician, setSelectedTechnician] =
     useState<UserRecord | null>(null);
+  const [lifecycleDialog, setLifecycleDialog] = useState<{
+    account: UserRecord;
+    action: AccountLifecycleAction;
+  } | null>(null);
+  const [savingLifecycle, setSavingLifecycle] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState("");
+  const [message, setMessage] = useState("");
 
   const technicians = useMemo(
     () =>
@@ -70,6 +89,8 @@ export default function Technicians() {
         </select>
       </div>
 
+      {message && <div className="form-success">{message}</div>}
+
       <section className="dashboard-card">
         <DataState
           loading={users.loading}
@@ -86,8 +107,9 @@ export default function Technicians() {
                   <th>Experience</th>
                   <th>Rating</th>
                   <th>Approval</th>
+                  <th>Account</th>
                   <th>Created</th>
-                  <th>Action</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -124,15 +146,24 @@ export default function Technicians() {
                           }
                         />
                       </td>
+                      <td>
+                        <StatusChip
+                          value={statusChipLabel(technician.accountStatus)}
+                          tone={statusChipTone(technician.accountStatus)}
+                        />
+                      </td>
                       <td>{formatDateTime(technician.createdAt)}</td>
                       <td>
-                        <button
-                          className="secondary-action"
-                          onClick={() => setSelectedTechnician(technician)}
-                        >
-                          <Eye size={15} />
-                          View
-                        </button>
+                        <AccountLifecycleActions
+                          account={technician}
+                          busy={savingLifecycle}
+                          onView={() => setSelectedTechnician(technician)}
+                          onAction={(action) => {
+                            setLifecycleError("");
+                            setMessage("");
+                            setLifecycleDialog({ account: technician, action });
+                          }}
+                        />
                       </td>
                     </tr>
                   );
@@ -192,9 +223,58 @@ export default function Technicians() {
                 label="Rejection Reason"
                 value={selectedTechnician.rejectionReason ?? undefined}
               />
+              <Detail
+                label="Account Status"
+                value={statusChipLabel(selectedTechnician.accountStatus)}
+              />
+              <Detail label="Disabled At" value={formatDateTime(selectedTechnician.disabledAt)} />
+              <Detail label="Deleted At" value={formatDateTime(selectedTechnician.deletedAt)} />
             </div>
           </div>
         </div>
+      )}
+
+      {lifecycleDialog && (
+        <AccountLifecycleDialog
+          action={lifecycleDialog.action}
+          account={lifecycleDialog.account}
+          busy={savingLifecycle}
+          error={lifecycleError}
+          onCancel={() => {
+            if (!savingLifecycle) {
+              setLifecycleDialog(null);
+              setLifecycleError("");
+            }
+          }}
+          onConfirm={async () => {
+            if (!firebaseUser) {
+              setLifecycleError("Please sign in as Super Admin first.");
+              return;
+            }
+
+            try {
+              setSavingLifecycle(true);
+              setLifecycleError("");
+              await updateManagedAccountLifecycle({
+                actorUid: firebaseUser.uid,
+                target: lifecycleDialog.account,
+                action: lifecycleDialog.action,
+              });
+              setMessage(
+                `Technician account ${lifecycleDialog.action === "enable" ? "enabled" : `${lifecycleDialog.action}d`}.`
+              );
+              setLifecycleDialog(null);
+            } catch (error) {
+              setLifecycleError(
+                error instanceof Error
+                  ? error.message
+                  : "Unable to update this account."
+              );
+            } finally {
+              setSavingLifecycle(false);
+            }
+          }}
+        />
       )}
     </>
   );

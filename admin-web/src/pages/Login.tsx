@@ -49,6 +49,15 @@ export default function Login() {
         setError(
           "Access denied. This portal is restricted to active Super Admin and Dispatcher accounts."
         );
+      } else if (
+        signInError instanceof Error &&
+        [
+          "Your ServicePilot account has been disabled. Please contact support.",
+          "This ServicePilot account is no longer active.",
+          "Admin profile not found.",
+        ].includes(signInError.message)
+      ) {
+        setError(signInError.message);
       } else {
         setError("Invalid email or password.");
       }

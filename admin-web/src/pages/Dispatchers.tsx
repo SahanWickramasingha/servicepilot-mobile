@@ -1,8 +1,19 @@
 import { Mail, Plus, Search, ShieldCheck, UserRound, X } from "lucide-react";
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 
+import { useAdminAuth } from "../auth/AdminAuthContext";
+import {
+  AccountLifecycleActions,
+  AccountLifecycleDialog,
+  statusChipLabel,
+  statusChipTone,
+} from "../components/AccountLifecycleActions";
 import { DataState, StatusChip } from "../components/DataState";
 import { useCollectionData } from "../hooks/useCollectionData";
+import {
+  updateManagedAccountLifecycle,
+  type AccountLifecycleAction,
+} from "../services/accountLifecycleService";
 import {
   createDispatcherInvitation,
   generateDispatcherId,
@@ -21,13 +32,22 @@ const emptyForm: DispatcherForm = {
 };
 
 export default function Dispatchers() {
+  const { firebaseUser } = useAdminAuth();
   const users = useCollectionData<UserRecord>("users");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
+  const [selectedDispatcher, setSelectedDispatcher] =
+    useState<UserRecord | null>(null);
+  const [lifecycleDialog, setLifecycleDialog] = useState<{
+    account: UserRecord;
+    action: AccountLifecycleAction;
+  } | null>(null);
   const [form, setForm] = useState<DispatcherForm>(emptyForm);
   const [previewId, setPreviewId] = useState(generateDispatcherId());
   const [saving, setSaving] = useState(false);
+  const [savingLifecycle, setSavingLifecycle] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState("");
   const [message, setMessage] = useState("");
   const [formError, setFormError] = useState("");
 
@@ -47,7 +67,9 @@ export default function Dispatchers() {
           .join(" ")
           .toLowerCase();
         const status =
-          user.accountStatus === "disabled"
+          user.accountStatus === "deleted"
+            ? "deleted"
+            : user.accountStatus === "disabled"
             ? "disabled"
             : user.invitationStatus === "pending"
               ? "invited"
@@ -68,9 +90,13 @@ export default function Dispatchers() {
   const disabledCount = allDispatchers.filter(
     (user) => user.accountStatus === "disabled"
   ).length;
+  const deletedCount = allDispatchers.filter(
+    (user) => user.accountStatus === "deleted"
+  ).length;
   const activeCount = allDispatchers.filter(
     (user) =>
       user.accountStatus !== "disabled" &&
+      user.accountStatus !== "deleted" &&
       user.invitationStatus !== "pending"
   ).length;
 
@@ -124,6 +150,7 @@ export default function Dispatchers() {
         <MiniStat label="Active Dispatchers" value={activeCount} icon={<ShieldCheck />} />
         <MiniStat label="Invited Dispatchers" value={invitedCount} icon={<Mail />} />
         <MiniStat label="Disabled Dispatchers" value={disabledCount} icon={<X />} />
+        <MiniStat label="Deleted Dispatchers" value={deletedCount} icon={<X />} />
       </div>
 
       {message && <div className="form-success">{message}</div>}
@@ -147,6 +174,7 @@ export default function Dispatchers() {
             <option value="active">Active</option>
             <option value="invited">Invited</option>
             <option value="disabled">Disabled</option>
+            <option value="deleted">Deleted</option>
           </select>
         </div>
 
@@ -165,11 +193,11 @@ export default function Dispatchers() {
                   <th>Invitation</th>
                   <th>Account</th>
                   <th>Created</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {dispatchers.map((dispatcher) => {
-                  const disabled = dispatcher.accountStatus === "disabled";
                   const pending = dispatcher.invitationStatus === "pending";
 
                   return (
@@ -188,11 +216,23 @@ export default function Dispatchers() {
                       </td>
                       <td>
                         <StatusChip
-                          value={disabled ? "Disabled" : "Active"}
-                          tone={disabled ? "neutral" : "green"}
+                          value={statusChipLabel(dispatcher.accountStatus)}
+                          tone={statusChipTone(dispatcher.accountStatus)}
                         />
                       </td>
                       <td>{formatDateTime(dispatcher.createdAt)}</td>
+                      <td>
+                        <AccountLifecycleActions
+                          account={dispatcher}
+                          busy={savingLifecycle}
+                          onView={() => setSelectedDispatcher(dispatcher)}
+                          onAction={(action) => {
+                            setLifecycleError("");
+                            setMessage("");
+                            setLifecycleDialog({ account: dispatcher, action });
+                          }}
+                        />
+                      </td>
                     </tr>
                   );
                 })}
@@ -267,7 +307,109 @@ export default function Dispatchers() {
           </form>
         </div>
       )}
+
+      {selectedDispatcher && (
+        <div className="admin-modal-overlay">
+          <div className="admin-modal">
+            <div className="admin-modal-header">
+              <div>
+                <h2>Dispatcher Profile</h2>
+                <span>{selectedDispatcher.uid ?? selectedDispatcher.id}</span>
+              </div>
+              <button
+                className="modal-close"
+                onClick={() => setSelectedDispatcher(null)}
+              >
+                <X size={19} />
+              </button>
+            </div>
+
+            <div className="modal-hero">
+              <div className="modal-avatar">
+                <ShieldCheck size={26} />
+              </div>
+              <div>
+                <strong>{displayText(selectedDispatcher.fullName)}</strong>
+                <span>{displayText(selectedDispatcher.email)}</span>
+              </div>
+            </div>
+
+            <div className="detail-grid">
+              <Detail label="Dispatcher ID" value={selectedDispatcher.dispatcherId} />
+              <Detail
+                label="Invitation"
+                value={
+                  selectedDispatcher.invitationStatus === "pending"
+                    ? "Invited"
+                    : "Accepted"
+                }
+              />
+              <Detail
+                label="Account Status"
+                value={statusChipLabel(selectedDispatcher.accountStatus)}
+              />
+              <Detail label="Created By" value={selectedDispatcher.createdBy} />
+              <Detail label="Created" value={formatDateTime(selectedDispatcher.createdAt)} />
+              <Detail label="Disabled At" value={formatDateTime(selectedDispatcher.disabledAt)} />
+              <Detail label="Enabled At" value={formatDateTime(selectedDispatcher.enabledAt)} />
+              <Detail label="Deleted At" value={formatDateTime(selectedDispatcher.deletedAt)} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lifecycleDialog && (
+        <AccountLifecycleDialog
+          action={lifecycleDialog.action}
+          account={lifecycleDialog.account}
+          busy={savingLifecycle}
+          error={lifecycleError}
+          onCancel={() => {
+            if (!savingLifecycle) {
+              setLifecycleDialog(null);
+              setLifecycleError("");
+            }
+          }}
+          onConfirm={async () => {
+            if (!firebaseUser) {
+              setLifecycleError("Please sign in as Super Admin first.");
+              return;
+            }
+
+            try {
+              setSavingLifecycle(true);
+              setLifecycleError("");
+              await updateManagedAccountLifecycle({
+                actorUid: firebaseUser.uid,
+                target: lifecycleDialog.account,
+                action: lifecycleDialog.action,
+              });
+              setMessage(
+                `Dispatcher account ${lifecycleDialog.action === "enable" ? "enabled" : `${lifecycleDialog.action}d`}.`
+              );
+              setLifecycleDialog(null);
+            } catch (error) {
+              setLifecycleError(
+                error instanceof Error
+                  ? error.message
+                  : "Unable to update this account."
+              );
+            } finally {
+              setSavingLifecycle(false);
+            }
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function Detail({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="detail-item">
+      <span>{label}</span>
+      <strong>{displayText(value)}</strong>
+    </div>
   );
 }
 

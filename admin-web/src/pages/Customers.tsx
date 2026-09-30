@@ -1,16 +1,35 @@
-import { Eye, Search, UserRound, X } from "lucide-react";
+import { Search, UserRound, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { useAdminAuth } from "../auth/AdminAuthContext";
+import {
+  AccountLifecycleActions,
+  AccountLifecycleDialog,
+  statusChipLabel,
+  statusChipTone,
+} from "../components/AccountLifecycleActions";
 import { DataState, StatusChip } from "../components/DataState";
 import { useCollectionData } from "../hooks/useCollectionData";
+import {
+  updateManagedAccountLifecycle,
+  type AccountLifecycleAction,
+} from "../services/accountLifecycleService";
 import type { ServiceRequestRecord, UserRecord } from "../types";
 import { displayText, formatDateTime } from "../utils/format";
 
 export default function Customers() {
+  const { firebaseUser } = useAdminAuth();
   const users = useCollectionData<UserRecord>("users");
   const requests = useCollectionData<ServiceRequestRecord>("service_requests");
   const [search, setSearch] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState<UserRecord | null>(null);
+  const [lifecycleDialog, setLifecycleDialog] = useState<{
+    account: UserRecord;
+    action: AccountLifecycleAction;
+  } | null>(null);
+  const [savingLifecycle, setSavingLifecycle] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState("");
+  const [message, setMessage] = useState("");
 
   const customers = useMemo(
     () =>
@@ -50,6 +69,8 @@ export default function Customers() {
         </div>
       </div>
 
+      {message && <div className="form-success">{message}</div>}
+
       <section className="dashboard-card">
         <DataState
           loading={users.loading || requests.loading}
@@ -64,9 +85,10 @@ export default function Customers() {
                   <th>Phone</th>
                   <th>Address</th>
                   <th>Requests</th>
+                  <th>Account</th>
                   <th>Email</th>
                   <th>Created</th>
-                  <th>Action</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -81,19 +103,28 @@ export default function Customers() {
                     <td>{requestCountFor(customer.uid ?? customer.id)}</td>
                     <td>
                       <StatusChip
+                        value={statusChipLabel(customer.accountStatus)}
+                        tone={statusChipTone(customer.accountStatus)}
+                      />
+                    </td>
+                    <td>
+                      <StatusChip
                         value={customer.emailVerified ? "Verified" : "Unverified"}
                         tone={customer.emailVerified ? "green" : "yellow"}
                       />
                     </td>
                     <td>{formatDateTime(customer.createdAt)}</td>
                     <td>
-                      <button
-                        className="secondary-action"
-                        onClick={() => setSelectedCustomer(customer)}
-                      >
-                        <Eye size={15} />
-                        View
-                      </button>
+                      <AccountLifecycleActions
+                        account={customer}
+                        busy={savingLifecycle}
+                        onView={() => setSelectedCustomer(customer)}
+                        onAction={(action) => {
+                          setLifecycleError("");
+                          setMessage("");
+                          setLifecycleDialog({ account: customer, action });
+                        }}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -140,10 +171,59 @@ export default function Customers() {
                 label="Email Status"
                 value={selectedCustomer.emailVerified ? "Verified" : "Unverified"}
               />
+              <Detail
+                label="Account Status"
+                value={statusChipLabel(selectedCustomer.accountStatus)}
+              />
               <Detail label="Created" value={formatDateTime(selectedCustomer.createdAt)} />
+              <Detail label="Disabled At" value={formatDateTime(selectedCustomer.disabledAt)} />
+              <Detail label="Deleted At" value={formatDateTime(selectedCustomer.deletedAt)} />
             </div>
           </div>
         </div>
+      )}
+
+      {lifecycleDialog && (
+        <AccountLifecycleDialog
+          action={lifecycleDialog.action}
+          account={lifecycleDialog.account}
+          busy={savingLifecycle}
+          error={lifecycleError}
+          onCancel={() => {
+            if (!savingLifecycle) {
+              setLifecycleDialog(null);
+              setLifecycleError("");
+            }
+          }}
+          onConfirm={async () => {
+            if (!firebaseUser) {
+              setLifecycleError("Please sign in as Super Admin first.");
+              return;
+            }
+
+            try {
+              setSavingLifecycle(true);
+              setLifecycleError("");
+              await updateManagedAccountLifecycle({
+                actorUid: firebaseUser.uid,
+                target: lifecycleDialog.account,
+                action: lifecycleDialog.action,
+              });
+              setMessage(
+                `Customer account ${lifecycleDialog.action === "enable" ? "enabled" : `${lifecycleDialog.action}d`}.`
+              );
+              setLifecycleDialog(null);
+            } catch (error) {
+              setLifecycleError(
+                error instanceof Error
+                  ? error.message
+                  : "Unable to update this account."
+              );
+            } finally {
+              setSavingLifecycle(false);
+            }
+          }}
+        />
       )}
     </>
   );

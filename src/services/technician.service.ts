@@ -63,6 +63,10 @@ function mapTechnician(
   };
 }
 
+function hasActiveAccount(data: UserProfile): boolean {
+  return !data.accountStatus || data.accountStatus === "active";
+}
+
 function matchesCategory(
   technician: PublicTechnicianProfile,
   category?: string
@@ -108,6 +112,9 @@ export function subscribeToApprovedTechnicians(
         .map((item) =>
           mapTechnician(item.data() as UserProfile)
         )
+        .filter((_, index) =>
+          hasActiveAccount(snapshot.docs[index].data() as UserProfile)
+        )
         .filter((technician) =>
           matchesCategory(technician, filters?.category)
         )
@@ -143,7 +150,8 @@ export async function getApprovedTechnician(
 
   if (
     data.role !== "technician" ||
-    data.technicianApprovalStatus !== "approved"
+    data.technicianApprovalStatus !== "approved" ||
+    !hasActiveAccount(data)
   ) {
     return null;
   }
@@ -191,4 +199,3 @@ export function subscribeToTechnicianReviews(
     onError
   );
 }
-

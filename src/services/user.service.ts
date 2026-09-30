@@ -59,7 +59,7 @@ export interface UserProfile {
   phone: string;
   address: string;
   role: UserRole;
-  accountStatus?: "active" | "disabled" | string;
+  accountStatus?: "active" | "disabled" | "deleted" | string;
   emailVerified?: boolean;
   technicianApprovalStatus?: TechnicianApprovalStatus;
   reviewedBy?: string | null;
@@ -119,6 +119,7 @@ export async function createUserProfile(
     phone: data.phone.trim(),
     address: data.address.trim(),
     role: data.role,
+    accountStatus: "active",
     emailVerified: false,
     ...(isTechnician
       ? {
@@ -326,6 +327,22 @@ export function getDashboardRouteForRole(
 export function getMobileAccessDecision(
   profile: UserProfile
 ): MobileAccessDecision {
+  if (profile.accountStatus === "disabled") {
+    return {
+      allowed: false,
+      message:
+        "Your ServicePilot account has been disabled. Please contact support.",
+    };
+  }
+
+  if (profile.accountStatus === "deleted") {
+    return {
+      allowed: false,
+      message:
+        "This ServicePilot account is no longer active.",
+    };
+  }
+
   if (
     profile.accountStatus &&
     profile.accountStatus !== "active"
@@ -333,7 +350,7 @@ export function getMobileAccessDecision(
     return {
       allowed: false,
       message:
-        "This account has been disabled. Please contact support.",
+        "This ServicePilot account is not active. Please contact support.",
     };
   }
 

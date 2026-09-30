@@ -106,15 +106,19 @@ export default function LoginScreen() {
         getMobileAccessDecision(profile);
 
       if (!accessDecision.allowed) {
+        const accountIsInactive =
+          profile.accountStatus === "disabled" ||
+          profile.accountStatus === "deleted";
+
         setErrorMessage(
           accessDecision.message ||
             "This account cannot access the mobile app."
         );
         setShowVerifyRecovery(
-          profile.emailVerified !== true
+          !accountIsInactive && profile.emailVerified !== true
         );
 
-        if (profile.emailVerified === true) {
+        if (profile.emailVerified === true || accountIsInactive) {
           await logoutUser();
         }
 

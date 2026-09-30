@@ -22,16 +22,28 @@ service cloud.firestore {
       ).data.accountStatus;
     }
 
+    function userHasActiveAccount(userId) {
+      return !get(
+        /databases/$(database)/documents/users/$(userId)
+      ).data.keys().hasAny(["accountStatus"]) ||
+        userAccountStatus(userId) == "active";
+    }
+
+    function profileHasActiveAccount(data) {
+      return !data.keys().hasAny(["accountStatus"]) ||
+        data.accountStatus == "active";
+    }
+
     function isSuperAdmin() {
       return signedIn() &&
         userRole(request.auth.uid) == "super_admin" &&
-        userAccountStatus(request.auth.uid) == "active";
+        userHasActiveAccount(request.auth.uid);
     }
 
     function isActiveDispatcher() {
       return signedIn() &&
         userRole(request.auth.uid) == "dispatcher" &&
-        userAccountStatus(request.auth.uid) == "active";
+        userHasActiveAccount(request.auth.uid);
     }
 
     function isPublicRegistrationRole() {
@@ -54,6 +66,7 @@ service cloud.firestore {
         "phone",
         "address",
         "role",
+        "accountStatus",
         "emailVerified",
         "createdAt",
         "updatedAt"
@@ -68,6 +81,7 @@ service cloud.firestore {
         "phone",
         "address",
         "role",
+        "accountStatus",
         "emailVerified",
         "createdAt",
         "updatedAt"
@@ -82,6 +96,7 @@ service cloud.firestore {
         "phone",
         "address",
         "role",
+        "accountStatus",
         "emailVerified",
         "specialization",
         "experience",
@@ -112,6 +127,7 @@ service cloud.firestore {
         request.resource.data.uid == userId &&
         authEmailMatchesProfile() &&
         isPublicRegistrationRole() &&
+        request.resource.data.accountStatus == "active" &&
         request.resource.data.emailVerified == false &&
         (
           (
@@ -214,6 +230,83 @@ service cloud.firestore {
           ]);
     }
 
+    function validSuperAdminAccountDisable() {
+      return profileHasActiveAccount(resource.data) &&
+        request.resource.data.accountStatus == "disabled" &&
+        request.resource.data.disabledBy == request.auth.uid &&
+        request.resource.data.disabledAt is timestamp &&
+        request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasAll([
+            "accountStatus",
+            "disabledAt",
+            "disabledBy",
+            "updatedAt"
+          ]);
+    }
+
+    function validSuperAdminAccountEnable() {
+      return resource.data.accountStatus == "disabled" &&
+        request.resource.data.accountStatus == "active" &&
+        request.resource.data.enabledBy == request.auth.uid &&
+        request.resource.data.enabledAt is timestamp &&
+        request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasAll([
+            "accountStatus",
+            "enabledAt",
+            "enabledBy",
+            "updatedAt"
+          ]);
+    }
+
+    function validSuperAdminAccountDelete() {
+      return resource.data.accountStatus != "deleted" &&
+        request.resource.data.accountStatus == "deleted" &&
+        request.resource.data.deletedBy == request.auth.uid &&
+        request.resource.data.deletedAt is timestamp &&
+        request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasAll([
+            "accountStatus",
+            "deletedAt",
+            "deletedBy",
+            "updatedAt"
+          ]);
+    }
+
+    function validSuperAdminAccountLifecycleUpdate() {
+      return isSuperAdmin() &&
+        resource.data.role in [
+          "customer",
+          "technician",
+          "dispatcher"
+        ] &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data
+          .diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            "accountStatus",
+            "disabledAt",
+            "disabledBy",
+            "enabledAt",
+            "enabledBy",
+            "deletedAt",
+            "deletedBy",
+            "updatedAt"
+          ]) &&
+        (
+          validSuperAdminAccountDisable() ||
+          validSuperAdminAccountEnable() ||
+          validSuperAdminAccountDelete()
+        );
+    }
+
     function validDispatcherTechnicianReview() {
       return isActiveDispatcher() &&
         resource.data.role == "technician" &&
@@ -263,7 +356,7 @@ service cloud.firestore {
         request.resource.data.invitationStatus == "accepted";
     }
 
-    function validSuperAdminFailedDispatcherCleanup(userId) {
+    function validSuperAdminFailedDispatcherCleanup() {
       return isSuperAdmin() &&
         resource.data.role == "dispatcher" &&
         resource.data.invitationStatus == "pending" &&
@@ -311,6 +404,7 @@ service cloud.firestore {
 
     function isVerifiedCustomer() {
       return isCustomer() &&
+        userHasActiveAccount(request.auth.uid) &&
         request.auth.token.email_verified == true;
     }
 
@@ -373,7 +467,79 @@ service cloud.firestore {
         ).data.role == "technician" &&
         get(
           /databases/$(database)/documents/users/$(technicianId)
-        ).data.technicianApprovalStatus == "approved";
+        ).data.technicianApprovalStatus == "approved" &&
+        profileHasActiveAccount(
+          get(
+            /databases/$(database)/documents/users/$(technicianId)
+          ).data
+        );
+    }
+
+    function validLifecycleAuditAction() {
+      return (
+        request.resource.data.targetRole == "customer" &&
+        request.resource.data.action in [
+          "SUPER_ADMIN_DISABLED_CUSTOMER",
+          "SUPER_ADMIN_ENABLED_CUSTOMER",
+          "SUPER_ADMIN_DELETED_CUSTOMER"
+        ]
+      ) ||
+      (
+        request.resource.data.targetRole == "technician" &&
+        request.resource.data.action in [
+          "SUPER_ADMIN_DISABLED_TECHNICIAN",
+          "SUPER_ADMIN_ENABLED_TECHNICIAN",
+          "SUPER_ADMIN_DELETED_TECHNICIAN"
+        ]
+      ) ||
+      (
+        request.resource.data.targetRole == "dispatcher" &&
+        request.resource.data.action in [
+          "SUPER_ADMIN_DISABLED_DISPATCHER",
+          "SUPER_ADMIN_ENABLED_DISPATCHER",
+          "SUPER_ADMIN_DELETED_DISPATCHER"
+        ]
+      );
+    }
+
+    function validSuperAdminLifecycleAuditCreate() {
+      return isSuperAdmin() &&
+        request.resource.data.keys().hasOnly([
+          "action",
+          "actorUid",
+          "actorRole",
+          "targetUid",
+          "targetRole",
+          "targetType",
+          "createdAt"
+        ]) &&
+        request.resource.data.keys().hasAll([
+          "action",
+          "actorUid",
+          "actorRole",
+          "targetUid",
+          "targetRole",
+          "targetType",
+          "createdAt"
+        ]) &&
+        request.resource.data.actorUid == request.auth.uid &&
+        request.resource.data.actorRole == "super_admin" &&
+        request.resource.data.targetUid is string &&
+        request.resource.data.targetUid.size() > 0 &&
+        exists(
+          /databases/$(database)/documents/users/$(request.resource.data.targetUid)
+        ) &&
+        get(
+          /databases/$(database)/documents/users/$(request.resource.data.targetUid)
+        ).data.role == request.resource.data.targetRole &&
+        request.resource.data.targetRole in [
+          "customer",
+          "technician",
+          "dispatcher"
+        ] &&
+        request.resource.data.targetType == "user" &&
+        request.resource.data.createdAt is timestamp &&
+        validLifecycleAuditAction();
     }
 
     function validCustomerRequestCreate() {
@@ -508,9 +674,10 @@ service cloud.firestore {
       allow get: if canGetUserProfile(userId);
       allow list: if canListUserProfiles();
       allow update: if validOwnerUpdate(userId) ||
+        validSuperAdminAccountLifecycleUpdate() ||
         validDispatcherInvitationAccept(userId) ||
         validDispatcherTechnicianReview();
-      allow delete: if validSuperAdminFailedDispatcherCleanup(userId);
+      allow delete: if validSuperAdminFailedDispatcherCleanup();
     }
 
     match /service_requests/{requestId} {
@@ -549,7 +716,8 @@ service cloud.firestore {
 
     match /audit_logs/{auditLogId} {
       allow read: if isSuperAdmin();
-      allow create, update, delete: if false;
+      allow create: if validSuperAdminLifecycleAuditCreate();
+      allow update, delete: if false;
     }
   }
 }

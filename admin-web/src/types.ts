@@ -5,7 +5,7 @@ export type UserRole =
   | "super_admin"
   | "admin";
 
-export type AccountStatus = "active" | "disabled" | string;
+export type AccountStatus = "active" | "disabled" | "deleted" | string;
 
 export type TechnicianApprovalStatus =
   | "pending"
@@ -26,6 +26,12 @@ export type UserRecord = {
   dispatcherId?: string;
   emailVerified?: boolean;
   createdBy?: string;
+  disabledAt?: unknown;
+  disabledBy?: string;
+  enabledAt?: unknown;
+  enabledBy?: string;
+  deletedAt?: unknown;
+  deletedBy?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
   technicianApprovalStatus?: TechnicianApprovalStatus;

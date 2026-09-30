@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import { useEffect } from "react";
 import {
   ActivityIndicator,
@@ -43,11 +43,20 @@ export default function Index() {
             getMobileAccessDecision(profile);
 
           if (!accessDecision.allowed) {
+            const accountIsInactive =
+              profile.accountStatus === "disabled" ||
+              profile.accountStatus === "deleted";
+
+            if (accountIsInactive) {
+              await signOut(auth).catch(() => undefined);
+            }
+
             router.replace({
               pathname: "/login",
               params: {
                 email: profile.email ?? user.email ?? "",
                 needsVerification:
+                  !accountIsInactive &&
                   profile.emailVerified !== true
                     ? "true"
                     : "false",

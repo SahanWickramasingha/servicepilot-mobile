@@ -16,6 +16,7 @@ import {
 } from "react";
 
 import { auth, db } from "../firebase/config";
+import { getEffectiveAccountStatus } from "../services/accountLifecycleService";
 import type { UserRecord } from "../types";
 
 type AdminAuthState = {
@@ -53,11 +54,20 @@ async function loadWebPortalProfile(uid: string) {
     ...snapshot.data(),
   } as UserRecord;
 
-  if (
-    !["super_admin", "dispatcher"].includes(profile.role ?? "") ||
-    profile.accountStatus !== "active"
-  ) {
+  if (!["super_admin", "dispatcher"].includes(profile.role ?? "")) {
     throw new Error("Access denied.");
+  }
+
+  const accountStatus = getEffectiveAccountStatus(profile.accountStatus);
+
+  if (accountStatus === "disabled") {
+    throw new Error(
+      "Your ServicePilot account has been disabled. Please contact support."
+    );
+  }
+
+  if (accountStatus === "deleted") {
+    throw new Error("This ServicePilot account is no longer active.");
   }
 
   if (
@@ -100,10 +110,12 @@ export function AdminAuthProvider({
       try {
         const adminProfile = await loadWebPortalProfile(user.uid);
         setProfile(adminProfile);
-      } catch {
+      } catch (error) {
         setProfile(null);
         setAccessDenied(
-          "Access denied. This portal is restricted to active Super Admin and Dispatcher accounts."
+          error instanceof Error
+            ? error.message
+            : "Access denied. This portal is restricted to active Super Admin and Dispatcher accounts."
         );
         await signOut(auth);
       } finally {
@@ -139,12 +151,11 @@ export function AdminAuthProvider({
           setProfile(null);
           await signOut(auth).catch(() => undefined);
 
-          if (
-            error instanceof Error &&
-            error.message === "Access denied."
-          ) {
+          if (error instanceof Error) {
             setAccessDenied(
-              "Access denied. This portal is restricted to active Super Admin and Dispatcher accounts."
+              error.message === "Access denied."
+                ? "Access denied. This portal is restricted to active Super Admin and Dispatcher accounts."
+                : error.message
             );
             throw error;
           }
