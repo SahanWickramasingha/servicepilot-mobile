@@ -43,6 +43,125 @@ import {
   logRegistrationError,
 } from "@/src/utils/registrationDebug";
 
+type RegistrationAlert = {
+  title: string;
+  message: string;
+};
+
+function isNetworkOrOfflineError(error: any): boolean {
+  const code = getFirebaseErrorCode(error);
+  const message =
+    getFirebaseErrorMessage(error)?.toLowerCase() ?? "";
+
+  return (
+    code === "auth/network-request-failed" ||
+    code === "unavailable" ||
+    code === "deadline-exceeded" ||
+    message.includes("client is offline") ||
+    message.includes("offline") ||
+    message.includes("network")
+  );
+}
+
+function isProfileCreationFailure(error: any): boolean {
+  const code = getFirebaseErrorCode(error);
+
+  return (
+    error?.partialAuthAccount === true ||
+    error?.registrationStep === "createUserProfile" ||
+    code === "firestore/profile-write-failed" ||
+    code === "firestore/profile-create-failed"
+  );
+}
+
+function getRegistrationAlert(error: any): RegistrationAlert {
+  if (error?.code === "auth/email-already-in-use") {
+    return {
+      title: "Account Already Exists",
+      message:
+        "This email address already has a Firebase account. If registration previously failed during profile setup, do not create another account. Sign in, reset your password if needed, or contact support with this email address.",
+    };
+  }
+
+  if (error?.code === "auth/invalid-email") {
+    return {
+      title: "Invalid Email",
+      message: "Please enter a valid email address.",
+    };
+  }
+
+  if (error?.code === "auth/weak-password") {
+    return {
+      title: "Weak Password",
+      message: "Please choose a stronger password.",
+    };
+  }
+
+  if (
+    error?.code === "auth/network-request-failed" &&
+    !isProfileCreationFailure(error)
+  ) {
+    return {
+      title: "Network Error",
+      message:
+        "Please check your internet connection and try again.",
+    };
+  }
+
+  if (
+    isProfileCreationFailure(error) &&
+    isNetworkOrOfflineError(error)
+  ) {
+    return {
+      title: "Account Created, Profile Not Saved",
+      message:
+        "Your Firebase account was created, but the app could not reach Firestore to save your profile. Do not create another account. Reconnect and sign in again; if access is blocked, contact support with this email address.",
+    };
+  }
+
+  if (
+    isProfileCreationFailure(error) &&
+    error?.code === "permission-denied"
+  ) {
+    return {
+      title: "Profile Permission Denied",
+      message:
+        "Your Firebase account was created, but Firestore rules blocked profile setup. Do not create another account. Please contact support with this email address.",
+    };
+  }
+
+  if (error?.code === "firestore/profile-already-exists") {
+    return {
+      title: "Profile Already Exists",
+      message:
+        "A profile already exists for this authenticated account. Sign in instead, or contact support if you did not create it.",
+    };
+  }
+
+  if (isProfileCreationFailure(error)) {
+    return {
+      title: "Profile Setup Failed",
+      message:
+        "Your Firebase account was created, but your Firestore profile could not be saved. Do not create another account. Sign-in may be blocked until this partial account is fixed. Please contact support with this email address.",
+    };
+  }
+
+  if (error?.code === "auth/verification-email-failed") {
+    return {
+      title: "Verification Email Failed",
+      message:
+        "Your account was created, but we could not send the verification email. Please sign in and use Verify Email.",
+    };
+  }
+
+  return {
+    title: "Registration Failed",
+    message:
+      error?.message ??
+      "Unable to create your account. Please try again.",
+  };
+}
+
 export default function RegisterScreen() {
   const params = useLocalSearchParams<{ role?: string }>();
   const selectedRole = isPublicRegistrationRole(params.role)
@@ -268,6 +387,7 @@ export default function RegisterScreen() {
           profileError?.registrationStep ||
           "createUserProfile";
         profileError.uid = credential.user.uid;
+        profileError.partialAuthAccount = true;
 
         logRegistrationError({
           step: "register-screen:profile-write:error",
@@ -344,65 +464,8 @@ export default function RegisterScreen() {
           error?.registrationStep ?? "unknown",
       });
 
-      switch (error?.code) {
-        case "auth/email-already-in-use":
-          Alert.alert(
-            "Account Already Exists",
-            "This email address is already registered. If you have not verified it yet, sign in and use Verify Email."
-          );
-          break;
-
-        case "auth/invalid-email":
-          Alert.alert(
-            "Invalid Email",
-            "Please enter a valid email address."
-          );
-          break;
-
-        case "auth/weak-password":
-          Alert.alert(
-            "Weak Password",
-            "Please choose a stronger password."
-          );
-          break;
-
-        case "auth/network-request-failed":
-          Alert.alert(
-            "Network Error",
-            "Please check your internet connection and try again."
-          );
-          break;
-
-        case "permission-denied":
-        case "firestore/profile-write-failed":
-        case "firestore/profile-create-failed":
-          Alert.alert(
-            "Profile Setup Failed",
-            "Your Firebase account was created, but your Firestore profile could not be saved. Sign-in may be blocked until this partial account is fixed. Please contact support with this email address."
-          );
-          break;
-
-        case "firestore/profile-already-exists":
-          Alert.alert(
-            "Profile Already Exists",
-            "A profile already exists for this authenticated account. Sign in instead, or contact support if you did not create it."
-          );
-          break;
-
-        case "auth/verification-email-failed":
-          Alert.alert(
-            "Verification Email Failed",
-            "Your account was created, but we could not send the verification email. Please sign in and use Verify Email."
-          );
-          break;
-
-        default:
-          Alert.alert(
-            "Registration Failed",
-            error?.message ??
-              "Unable to create your account. Please try again."
-          );
-      }
+      const alert = getRegistrationAlert(error);
+      Alert.alert(alert.title, alert.message);
     } finally {
       isSubmittingRef.current = false;
       setLoading(false);

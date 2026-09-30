@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { FirebaseError } from "firebase/app";
 import {
   ActivityIndicator,
   Alert,
@@ -51,10 +52,18 @@ export default function DispatcherDashboard() {
           : pendingTechnicians[0] ?? null
       );
     } catch (error) {
-      console.error(
-        "Load pending technicians error:",
-        error
-      );
+      if (__DEV__) {
+        const code =
+          error instanceof FirebaseError
+            ? error.code
+            : "unknown-firestore-error";
+        console.warn("Dispatcher Firestore query failed", {
+          page: "mobile/dispatcher/dashboard",
+          queryType: "pending-technician-applications",
+          code,
+        });
+      }
+
       Alert.alert(
         "Unable to Load",
         "Pending technicians could not be loaded."
@@ -110,10 +119,18 @@ export default function DispatcherDashboard() {
           : "The technician has been notified through their login status."
       );
     } catch (error) {
-      console.error(
-        "Technician review error:",
-        error
-      );
+      if (__DEV__) {
+        const code =
+          error instanceof FirebaseError
+            ? error.code
+            : "unknown-firestore-error";
+        console.warn("Dispatcher technician review failed", {
+          page: "mobile/dispatcher/dashboard",
+          queryType: "technician-approval-update",
+          code,
+        });
+      }
+
       Alert.alert(
         "Review Failed",
         "Unable to update this technician review."

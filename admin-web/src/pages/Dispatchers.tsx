@@ -89,9 +89,9 @@ export default function Dispatchers() {
 
     try {
       setSaving(true);
-      const result = await createDispatcherInvitation(form);
+      await createDispatcherInvitation(form);
       setMessage(
-        `Invitation sent. Dispatcher ID: ${result.dispatcherId}`
+        "Dispatcher account created successfully. A password setup link has been sent to the dispatcher's email."
       );
       setModalOpen(false);
       setForm(emptyForm);
@@ -100,7 +100,7 @@ export default function Dispatchers() {
       setFormError(
         error instanceof Error
           ? error.message
-          : "Unable to create dispatcher invitation."
+          : "Unable to create dispatcher account setup link."
       );
     } finally {
       setSaving(false);
@@ -112,7 +112,7 @@ export default function Dispatchers() {
       <div className="page-heading">
         <div>
           <h1>Dispatchers</h1>
-          <p>Create invitations and manage dispatcher access.</p>
+          <p>Create account setup links and manage dispatcher access.</p>
         </div>
         <button className="primary-action" onClick={openCreateModal}>
           <Plus size={16} />
@@ -208,7 +208,7 @@ export default function Dispatchers() {
             <div className="admin-modal-header">
               <div>
                 <h2>Create Dispatcher</h2>
-                <span>Send a Firebase password setup invitation.</span>
+                <span>Send a Firebase password setup link.</span>
               </div>
               <button
                 className="modal-close"
@@ -261,7 +261,7 @@ export default function Dispatchers() {
                 Cancel
               </button>
               <button className="primary-action" disabled={saving}>
-                {saving ? "Sending..." : "Send Invitation"}
+                {saving ? "Sending..." : "Send Account Setup Link"}
               </button>
             </div>
           </form>

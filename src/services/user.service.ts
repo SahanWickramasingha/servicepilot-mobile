@@ -270,16 +270,14 @@ export async function getPendingTechnicians(): Promise<
   const usersRef = collection(db, "users");
   const pendingTechniciansQuery = query(
     usersRef,
-    where("role", "==", "technician")
+    where("role", "==", "technician"),
+    where("technicianApprovalStatus", "==", "pending")
   );
   const snapshot = await getDocs(pendingTechniciansQuery);
 
-  return snapshot.docs
-    .map((item) => item.data() as UserProfile)
-    .filter(
-      (item) =>
-        item.technicianApprovalStatus === "pending"
-    );
+  return snapshot.docs.map(
+    (item) => item.data() as UserProfile
+  );
 }
 
 export async function updateTechnicianApprovalStatus({

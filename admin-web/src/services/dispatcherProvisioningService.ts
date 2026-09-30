@@ -96,7 +96,7 @@ function getProvisioningMessage(error: unknown): string {
 
   return error instanceof Error
     ? error.message
-    : "Unable to create dispatcher invitation.";
+    : "Unable to create dispatcher account setup link.";
 }
 
 export async function createDispatcherInvitation({

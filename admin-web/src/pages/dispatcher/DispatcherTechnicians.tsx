@@ -5,20 +5,26 @@ import { DataState, StatusChip } from "../../components/DataState";
 import { useTechnicianUsers } from "../../hooks/useTechnicianUsers";
 import { displayText, formatDateTime, statusLabel } from "../../utils/format";
 
+const technicianStatusFilters = ["pending", "approved", "rejected"] as const;
+type TechnicianStatusFilter = "all" | (typeof technicianStatusFilters)[number];
+
 export default function DispatcherTechnicians() {
-  const technicianQuery = useTechnicianUsers({
-    page: "dispatcher/technicians",
-    queryType: "all-technicians",
-  });
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] =
+    useState<TechnicianStatusFilter>("all");
+  const technicianQuery = useTechnicianUsers({
+    status: statusFilter === "all" ? undefined : statusFilter,
+    page: "dispatcher/technicians",
+    queryType:
+      statusFilter === "all"
+        ? "all-technicians"
+        : `${statusFilter}-technicians`,
+  });
 
   const technicians = useMemo(
     () =>
-      technicianQuery.data.filter((user) => {
-        const status = user.technicianApprovalStatus ?? "pending";
-        const matchesStatus = statusFilter === "all" || status === statusFilter;
-        const matchesSearch = [
+      technicianQuery.data.filter((user) =>
+        [
           user.fullName,
           user.email,
           user.specialization,
@@ -27,11 +33,9 @@ export default function DispatcherTechnicians() {
         ]
           .join(" ")
           .toLowerCase()
-          .includes(search.toLowerCase());
-
-        return matchesStatus && matchesSearch;
-      }),
-    [search, statusFilter, technicianQuery.data]
+          .includes(search.toLowerCase())
+      ),
+    [search, technicianQuery.data]
   );
 
   return (
@@ -55,7 +59,9 @@ export default function DispatcherTechnicians() {
         <select
           className="table-filter"
           value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value)}
+          onChange={(event) =>
+            setStatusFilter(event.target.value as TechnicianStatusFilter)
+          }
         >
           <option value="all">All</option>
           <option value="pending">Pending</option>

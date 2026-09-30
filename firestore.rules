@@ -275,6 +275,35 @@ service cloud.firestore {
         resource.data.technicianApprovalStatus == "approved";
     }
 
+    function isTechnicianProfile() {
+      return resource.data.role == "technician";
+    }
+
+    function canGetUserProfile(userId) {
+      return isOwner(userId) ||
+        isSuperAdmin() ||
+        (
+          isActiveDispatcher() &&
+          isTechnicianProfile()
+        ) ||
+        (
+          isVerifiedCustomer() &&
+          isApprovedTechnicianProfile()
+        );
+    }
+
+    function canListUserProfiles() {
+      return isSuperAdmin() ||
+        (
+          isActiveDispatcher() &&
+          isTechnicianProfile()
+        ) ||
+        (
+          isVerifiedCustomer() &&
+          isApprovedTechnicianProfile()
+        );
+    }
+
     function isCustomer() {
       return signedIn() &&
         userRole(request.auth.uid) == "customer";
@@ -476,16 +505,8 @@ service cloud.firestore {
     match /users/{userId} {
       allow create: if validPublicUserCreate(userId) ||
         validSuperAdminDispatcherCreate(userId);
-      allow read: if isOwner(userId) ||
-        isSuperAdmin() ||
-        (
-          isActiveDispatcher() &&
-          resource.data.role == "technician"
-        ) ||
-        (
-          isVerifiedCustomer() &&
-          isApprovedTechnicianProfile()
-        );
+      allow get: if canGetUserProfile(userId);
+      allow list: if canListUserProfiles();
       allow update: if validOwnerUpdate(userId) ||
         validDispatcherInvitationAccept(userId) ||
         validDispatcherTechnicianReview();
