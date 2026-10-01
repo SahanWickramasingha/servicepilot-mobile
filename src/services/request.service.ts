@@ -17,6 +17,7 @@ import {
   ServiceCategory,
 } from "@/src/constants/serviceRequests";
 import { auth, db } from "@/src/firebase/config";
+import { createPersonalNotification } from "@/src/services/notification.service";
 import { UserProfile } from "@/src/services/user.service";
 import {
   getApprovedTechnician,
@@ -202,6 +203,15 @@ export async function createServiceRequest(
     }
   );
 
+  await createPersonalNotification({
+    userId: approvedTechnician.uid,
+    type: "new_customer_request",
+    title: "New Customer Request",
+    message: `${input.profile.fullName.trim()} requested ${input.title.trim() || input.serviceCategory}.`,
+    requestId: requestRef.id,
+    priority: input.priority === "urgent" ? "important" : "normal",
+  });
+
   return requestRef.id;
 }
 
@@ -304,11 +314,26 @@ export async function cancelServiceRequest(
     throw new Error("You can only cancel your own request.");
   }
 
+  const request = await getServiceRequest(requestId);
+
+  if (!request || request.customerId !== customerId) {
+    throw new Error("Request not found.");
+  }
+
   await updateDoc(doc(db, "service_requests", requestId), {
     status: "cancelled",
     cancelledAt: serverTimestamp(),
     cancelledBy: "customer",
     updatedAt: serverTimestamp(),
+  });
+
+  await createPersonalNotification({
+    userId: request.technicianId,
+    type: "customer_cancelled_request",
+    title: "Customer Cancelled Request",
+    message: `${request.customerName || "A customer"} cancelled ${request.title || "a service request"}.`,
+    requestId,
+    priority: "important",
   });
 }
 
@@ -322,6 +347,18 @@ export async function updateTechnicianRequestStatus(
     | "cancelled",
   options: { reason?: string } = {}
 ): Promise<void> {
+  const currentUser = auth.currentUser;
+
+  if (!currentUser) {
+    throw new Error("Please sign in before updating this request.");
+  }
+
+  const request = await getServiceRequest(requestId);
+
+  if (!request || request.technicianId !== currentUser.uid) {
+    throw new Error("You can only update your assigned requests.");
+  }
+
   const reason = options.reason?.trim() ?? "";
 
   if (status === "rejected" && !reason) {
@@ -359,6 +396,45 @@ export async function updateTechnicianRequestStatus(
   }
 
   await updateDoc(doc(db, "service_requests", requestId), updatePayload);
+
+  const notificationByStatus = {
+    accepted: {
+      type: "technician_accepted_request" as const,
+      title: "Technician Accepted Request",
+      message: `${request.technicianName || "Your technician"} accepted ${request.title || "your service request"}.`,
+      priority: "normal" as const,
+    },
+    rejected: {
+      type: "technician_rejected_request" as const,
+      title: "Technician Rejected Request",
+      message: `${request.technicianName || "Your technician"} rejected ${request.title || "your service request"}.`,
+      priority: "important" as const,
+    },
+    in_progress: {
+      type: "job_started" as const,
+      title: "Job Started",
+      message: `${request.technicianName || "Your technician"} started your service job.`,
+      priority: "normal" as const,
+    },
+    completed: {
+      type: "job_completed" as const,
+      title: "Job Completed",
+      message: `${request.technicianName || "Your technician"} marked your service job complete.`,
+      priority: "important" as const,
+    },
+    cancelled: {
+      type: "technician_cancelled_job" as const,
+      title: "Technician Cancelled Job",
+      message: `${request.technicianName || "Your technician"} cancelled ${request.title || "your service job"}.`,
+      priority: "critical" as const,
+    },
+  }[status];
+
+  await createPersonalNotification({
+    userId: request.customerId,
+    ...notificationByStatus,
+    requestId,
+  });
 }
 
 export function formatRequestDate(

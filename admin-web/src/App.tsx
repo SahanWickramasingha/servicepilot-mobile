@@ -13,6 +13,7 @@ import Reports from "./pages/Reports";
 import Reviews from "./pages/Reviews";
 import ServiceRequests from "./pages/ServiceRequests";
 import Settings from "./pages/Settings";
+import SystemMessages from "./pages/SystemMessages";
 import Technicians from "./pages/Technicians";
 import DispatcherApplications from "./pages/dispatcher/DispatcherApplications";
 import DispatcherDashboard from "./pages/dispatcher/DispatcherDashboard";
@@ -38,6 +39,10 @@ export default function App() {
               <Route path="/admin/customers" element={<Customers />} />
               <Route path="/admin/requests" element={<ServiceRequests />} />
               <Route path="/admin/reviews" element={<Reviews />} />
+              <Route
+                path="/admin/messages"
+                element={<SystemMessages portal="admin" />}
+              />
               <Route path="/admin/reports" element={<Reports />} />
               <Route path="/admin/audit" element={<AuditLogs />} />
               <Route path="/admin/settings" element={<Settings />} />
@@ -60,6 +65,10 @@ export default function App() {
               <Route
                 path="/dispatcher/technicians"
                 element={<DispatcherTechnicians />}
+              />
+              <Route
+                path="/dispatcher/messages"
+                element={<SystemMessages portal="dispatcher" />}
               />
               <Route
                 path="/dispatcher/profile"

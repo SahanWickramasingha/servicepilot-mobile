@@ -17,6 +17,7 @@ export default function TechnicianLayout() {
           <Stack.Screen name="(tabs)" />
 
           <Stack.Screen name="job-details" />
+          <Stack.Screen name="notifications" />
           <Stack.Screen name="job-action" />
           <Stack.Screen name="navigation" />
           <Stack.Screen name="before-photos" />

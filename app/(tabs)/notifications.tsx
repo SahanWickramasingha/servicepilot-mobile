@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleAlert,
   Info,
+  Megaphone,
 } from "lucide-react-native";
 import {
   ActivityIndicator,
@@ -21,16 +22,20 @@ import {
 
 import { auth } from "@/src/firebase/config";
 import {
-  CustomerNotification,
+  NotificationCenterItem,
   markNotificationRead,
   NotificationType,
   subscribeToCustomerNotifications,
 } from "@/src/services/notification.service";
+import { getUserProfile } from "@/src/services/user.service";
+
+type FilterKey = "all" | "unread" | "important" | "system";
 
 export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<
-    CustomerNotification[]
+    NotificationCenterItem[]
   >([]);
+  const [filter, setFilter] = useState<FilterKey>("all");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -43,40 +48,96 @@ export default function NotificationsScreen() {
       return;
     }
 
-    return subscribeToCustomerNotifications(
-      currentUser.uid,
-      (items) => {
-        setNotifications(items);
-        setLoading(false);
-      },
-      (error) => {
-        console.error("Notifications subscription error:", error);
+    const currentUserId = currentUser.uid;
+    let unsubscribe: (() => void) | undefined;
+
+    async function loadNotifications() {
+      try {
+        const profile = await getUserProfile(currentUserId);
+
+        if (!profile) {
+          setErrorMessage("Profile not found.");
+          setLoading(false);
+          return;
+        }
+
+        unsubscribe = subscribeToCustomerNotifications(
+          {
+            userId: currentUserId,
+            role: profile.role,
+          },
+          (items) => {
+            setNotifications(items);
+            setLoading(false);
+          },
+          (error, context) => {
+            console.error("Notifications subscription error:", error);
+            setErrorMessage(
+              context.queryType === "system-messages"
+                ? "Unable to load system messages."
+                : context.queryType === "personal-notifications"
+                  ? "Unable to load personal notifications."
+                  : "Unable to load message read status."
+            );
+            setLoading(false);
+          }
+        );
+      } catch (error) {
+        console.error("Notifications profile load error:", error);
         setErrorMessage("Unable to load notifications.");
         setLoading(false);
       }
-    );
+    }
+
+    loadNotifications();
+
+    return () => unsubscribe?.();
   }, []);
 
   const unreadCount = notifications.filter(
     (item) => !item.read
   ).length;
+  const hasLoadError = errorMessage.length > 0;
+  const visibleNotifications = notifications.filter((item) => {
+    if (filter === "unread") {
+      return !item.read;
+    }
+
+    if (filter === "important") {
+      return item.priority === "important" || item.priority === "critical";
+    }
+
+    if (filter === "system") {
+      return item.source === "system";
+    }
+
+    return true;
+  });
 
   const markAllAsRead = async () => {
+    const currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      return;
+    }
+
     await Promise.all(
       notifications
         .filter((item) => !item.read)
-        .map((item) => markNotificationRead(item.id))
+        .map((item) => markNotificationRead(item, currentUser.uid))
     );
   };
 
   const openNotification = async (
-    item: CustomerNotification
+    item: NotificationCenterItem
   ) => {
+    const currentUser = auth.currentUser;
+
     if (!item.read) {
-      await markNotificationRead(item.id);
+      await markNotificationRead(item, currentUser?.uid);
     }
 
-    if (item.relatedRequestId) {
+    if (item.source === "personal" && item.relatedRequestId) {
       router.push({
         pathname: "/request-details",
         params: { id: item.relatedRequestId },
@@ -107,7 +168,9 @@ export default function NotificationsScreen() {
           <View style={styles.headerText}>
             <Text style={styles.title}>Notifications</Text>
             <Text style={styles.subtitle}>
-              {unreadCount > 0
+              {hasLoadError
+                ? "Some notifications couldn't load"
+                : unreadCount > 0
                 ? `${unreadCount} unread notification${
                     unreadCount > 1 ? "s" : ""
                   }`
@@ -137,15 +200,41 @@ export default function NotificationsScreen() {
           </View>
         )}
 
-        {notifications.length > 0 ? (
-          <View style={styles.list}>
-            {notifications.map((item) => (
+        <View style={styles.filterRow}>
+          {(["all", "unread", "important", "system"] as FilterKey[]).map(
+            (item) => (
               <TouchableOpacity
-                key={item.id}
+                key={item}
+                style={[
+                  styles.filterChip,
+                  filter === item && styles.filterChipActive,
+                ]}
+                activeOpacity={0.8}
+                onPress={() => setFilter(item)}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    filter === item && styles.filterChipTextActive,
+                  ]}
+                >
+                  {item.charAt(0).toUpperCase() + item.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            )
+          )}
+        </View>
+
+        {visibleNotifications.length > 0 ? (
+          <View style={styles.list}>
+            {visibleNotifications.map((item) => (
+              <TouchableOpacity
+                key={`${item.source}-${item.id}`}
                 style={[
                   styles.notificationCard,
                   !item.read &&
                     styles.notificationCardUnread,
+                  item.priority === "critical" && styles.notificationCardCritical,
                 ]}
                 activeOpacity={0.8}
                 onPress={() => openNotification(item)}
@@ -153,10 +242,10 @@ export default function NotificationsScreen() {
                 <View
                   style={[
                     styles.iconBox,
-                    getTypeBackground(item.type),
+                    getTypeBackground(item),
                   ]}
                 >
-                  {getTypeIcon(item.type)}
+                  {getTypeIcon(item)}
                 </View>
 
                 <View style={styles.notificationContent}>
@@ -172,6 +261,14 @@ export default function NotificationsScreen() {
                   <Text style={styles.notificationMessage}>
                     {item.message}
                   </Text>
+                  <View style={styles.metaRow}>
+                    <PriorityBadge priority={item.priority} />
+                    <Text style={styles.sourceText}>
+                      {item.source === "system"
+                        ? `${item.senderName} (${item.senderRole})`
+                        : "Service update"}
+                    </Text>
+                  </View>
                   <Text style={styles.notificationTime}>
                     {item.createdAt
                       ? item.createdAt
@@ -181,7 +278,7 @@ export default function NotificationsScreen() {
                   </Text>
                 </View>
 
-                {!!item.relatedRequestId && (
+                {item.source === "personal" && !!item.relatedRequestId && (
                   <ChevronRight
                     size={18}
                     color="#475569"
@@ -196,11 +293,12 @@ export default function NotificationsScreen() {
               <Bell size={38} color="#64748B" />
             </View>
             <Text style={styles.emptyTitle}>
-              No Notifications
+              {hasLoadError ? "Notifications unavailable" : "No Notifications"}
             </Text>
             <Text style={styles.emptyText}>
-              New service updates and important alerts will
-              appear here.
+              {hasLoadError
+                ? "We couldn't load every notification source. Please try again in a moment."
+                : "New service updates and important alerts will appear here."}
             </Text>
           </View>
         )}
@@ -209,7 +307,41 @@ export default function NotificationsScreen() {
   );
 }
 
-function getTypeIcon(type: NotificationType) {
+function PriorityBadge({
+  priority,
+}: {
+  priority: NotificationCenterItem["priority"];
+}) {
+  return (
+    <View style={[styles.priorityBadge, getPriorityStyle(priority)]}>
+      <Text style={styles.priorityText}>{priority.toUpperCase()}</Text>
+    </View>
+  );
+}
+
+function getPriorityStyle(priority: NotificationCenterItem["priority"]) {
+  if (priority === "critical") {
+    return styles.priority_critical;
+  }
+
+  if (priority === "important") {
+    return styles.priority_important;
+  }
+
+  return styles.priority_normal;
+}
+
+function getTypeIcon(item: NotificationCenterItem) {
+  if (item.source === "system") {
+    if (item.priority === "critical") {
+      return <CircleAlert size={21} color="#FCA5A5" />;
+    }
+
+    return <Megaphone size={21} color="#38BDF8" />;
+  }
+
+  const type = item.type as NotificationType;
+
   switch (type) {
     case "request_submitted":
     case "technician_assigned":
@@ -227,7 +359,21 @@ function getTypeIcon(type: NotificationType) {
   }
 }
 
-function getTypeBackground(type: NotificationType) {
+function getTypeBackground(item: NotificationCenterItem) {
+  if (item.priority === "critical") {
+    return { backgroundColor: "rgba(239,68,68,0.13)" };
+  }
+
+  if (item.priority === "important") {
+    return { backgroundColor: "rgba(245,158,11,0.12)" };
+  }
+
+  if (item.source === "system") {
+    return { backgroundColor: "rgba(14,165,233,0.12)" };
+  }
+
+  const type = item.type as NotificationType;
+
   switch (type) {
     case "request_cancelled":
       return { backgroundColor: "rgba(239,68,68,0.10)" };
@@ -303,6 +449,31 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: "center",
   },
+  filterRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 14,
+    flexWrap: "wrap",
+  },
+  filterChip: {
+    height: 35,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#17263A",
+    backgroundColor: "#0D1B2A",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+  },
+  filterChipActive: {
+    backgroundColor: "#2563EB",
+    borderColor: "#2563EB",
+  },
+  filterChipText: {
+    color: "#94A3B8",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  filterChipTextActive: { color: "#FFFFFF" },
   list: { gap: 12 },
   notificationCard: {
     minHeight: 108,
@@ -318,6 +489,9 @@ const styles = StyleSheet.create({
   notificationCardUnread: {
     borderColor: "rgba(37,99,235,0.38)",
     backgroundColor: "#0D1D30",
+  },
+  notificationCardCritical: {
+    borderColor: "rgba(239,68,68,0.42)",
   },
   iconBox: {
     width: 46,
@@ -351,6 +525,38 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 6,
     paddingRight: 8,
+  },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    marginTop: 8,
+    flexWrap: "wrap",
+  },
+  priorityBadge: {
+    minHeight: 22,
+    borderRadius: 7,
+    justifyContent: "center",
+    paddingHorizontal: 7,
+  },
+  priority_normal: {
+    backgroundColor: "rgba(59,130,246,0.12)",
+  },
+  priority_important: {
+    backgroundColor: "rgba(245,158,11,0.14)",
+  },
+  priority_critical: {
+    backgroundColor: "rgba(239,68,68,0.16)",
+  },
+  priorityText: {
+    color: "#E2E8F0",
+    fontSize: 8,
+    fontWeight: "900",
+  },
+  sourceText: {
+    color: "#64748B",
+    fontSize: 9,
+    flexShrink: 1,
   },
   notificationTime: {
     color: "#475569",

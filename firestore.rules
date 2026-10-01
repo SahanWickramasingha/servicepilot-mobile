@@ -40,6 +40,12 @@ service cloud.firestore {
         userHasActiveAccount(request.auth.uid);
     }
 
+    function isActiveSuperAdmin() {
+      return signedIn() &&
+        userRole(request.auth.uid) == "super_admin" &&
+        userAccountStatus(request.auth.uid) == "active";
+    }
+
     function isActiveDispatcher() {
       return signedIn() &&
         userRole(request.auth.uid) == "dispatcher" &&
@@ -402,9 +408,19 @@ service cloud.firestore {
         userRole(request.auth.uid) == "customer";
     }
 
-    function isVerifiedCustomer() {
+    function isActiveCustomer() {
       return isCustomer() &&
-        userHasActiveAccount(request.auth.uid) &&
+        userHasActiveAccount(request.auth.uid);
+    }
+
+    function isActiveTechnician() {
+      return signedIn() &&
+        userRole(request.auth.uid) == "technician" &&
+        userHasActiveAccount(request.auth.uid);
+    }
+
+    function isVerifiedCustomer() {
+      return isActiveCustomer() &&
         request.auth.token.email_verified == true;
     }
 
@@ -542,6 +558,80 @@ service cloud.firestore {
         validLifecycleAuditAction();
     }
 
+    function validSystemMessageAuditCreate() {
+      return signedIn() &&
+        request.resource.data.keys().hasOnly([
+          "action",
+          "actorUid",
+          "actorRole",
+          "targetUid",
+          "targetType",
+          "messageId",
+          "metadata",
+          "createdAt"
+        ]) &&
+        request.resource.data.keys().hasAll([
+          "action",
+          "actorUid",
+          "actorRole",
+          "targetUid",
+          "targetType",
+          "messageId",
+          "metadata",
+          "createdAt"
+        ]) &&
+        request.resource.data.actorUid == request.auth.uid &&
+        request.resource.data.actorRole == userRole(request.auth.uid) &&
+        (
+          (
+            isActiveSuperAdmin() &&
+            request.resource.data.actorRole == "super_admin" &&
+            request.resource.data.action == "SUPER_ADMIN_SENT_SYSTEM_MESSAGE"
+          ) ||
+          (
+            isActiveDispatcher() &&
+            request.resource.data.actorRole == "dispatcher" &&
+            request.resource.data.action == "DISPATCHER_SENT_SYSTEM_MESSAGE"
+          )
+        ) &&
+        request.resource.data.targetType == "system_message" &&
+        request.resource.data.targetUid is string &&
+        request.resource.data.targetUid.size() > 0 &&
+        request.resource.data.messageId == request.resource.data.targetUid &&
+        request.resource.data.metadata.keys().hasOnly([
+          "messageId",
+          "audienceRoles",
+          "priority"
+        ]) &&
+        request.resource.data.metadata.messageId ==
+          request.resource.data.messageId &&
+        request.resource.data.metadata.audienceRoles is list &&
+        request.resource.data.metadata.audienceRoles.size() > 0 &&
+        request.resource.data.metadata.priority in [
+          "normal",
+          "important",
+          "critical"
+        ] &&
+        request.resource.data.createdAt is timestamp &&
+        (
+          (
+            request.resource.data.actorRole == "super_admin" &&
+            request.resource.data.metadata.audienceRoles.hasOnly([
+              "customer",
+              "technician",
+              "dispatcher"
+            ])
+          ) ||
+          (
+            request.resource.data.actorRole == "dispatcher" &&
+            request.resource.data.metadata.audienceRoles.hasOnly([
+              "technician",
+              "super_admin"
+            ])
+          )
+        );
+    }
+
     function validCustomerRequestCreate() {
       return isVerifiedCustomer() &&
         hasRequiredRequestCreateFields() &&
@@ -636,6 +726,113 @@ service cloud.firestore {
         request.resource.data.read == true;
     }
 
+    function validNotificationBaseCreate() {
+      return signedIn() &&
+        request.resource.data.keys().hasOnly([
+          "userId",
+          "type",
+          "title",
+          "message",
+          "requestId",
+          "priority",
+          "read",
+          "createdAt"
+        ]) &&
+        request.resource.data.keys().hasAll([
+          "userId",
+          "type",
+          "title",
+          "message",
+          "requestId",
+          "priority",
+          "read",
+          "createdAt"
+        ]) &&
+        request.resource.data.userId is string &&
+        request.resource.data.userId.size() > 0 &&
+        request.resource.data.title is string &&
+        request.resource.data.title.size() > 0 &&
+        request.resource.data.message is string &&
+        request.resource.data.message.size() > 0 &&
+        request.resource.data.requestId is string &&
+        request.resource.data.requestId.size() > 0 &&
+        request.resource.data.priority in [
+          "normal",
+          "important",
+          "critical"
+        ] &&
+        request.resource.data.read == false &&
+        request.resource.data.createdAt is timestamp &&
+        exists(
+          /databases/$(database)/documents/service_requests/$(request.resource.data.requestId)
+        );
+    }
+
+    function notificationRequest() {
+      return get(
+        /databases/$(database)/documents/service_requests/$(request.resource.data.requestId)
+      ).data;
+    }
+
+    function validRequestNotificationCreate() {
+      return validNotificationBaseCreate() &&
+        (
+          (
+            request.resource.data.type == "new_customer_request" &&
+            notificationRequest().customerId == request.auth.uid &&
+            notificationRequest().technicianId == request.resource.data.userId
+          ) ||
+          (
+            request.resource.data.type == "customer_cancelled_request" &&
+            notificationRequest().customerId == request.auth.uid &&
+            notificationRequest().technicianId == request.resource.data.userId &&
+            notificationRequest().status == "cancelled"
+          ) ||
+          (
+            request.resource.data.type in [
+              "technician_accepted_request",
+              "technician_rejected_request",
+              "job_started",
+              "technician_cancelled_job",
+              "job_completed"
+            ] &&
+            notificationRequest().technicianId == request.auth.uid &&
+            notificationRequest().customerId == request.resource.data.userId &&
+            (
+              (
+                request.resource.data.type == "technician_accepted_request" &&
+                notificationRequest().status == "accepted"
+              ) ||
+              (
+                request.resource.data.type == "technician_rejected_request" &&
+                notificationRequest().status == "rejected"
+              ) ||
+              (
+                request.resource.data.type == "job_started" &&
+                notificationRequest().status == "in_progress"
+              ) ||
+              (
+                request.resource.data.type == "technician_cancelled_job" &&
+                notificationRequest().status == "cancelled" &&
+                notificationRequest().cancelledBy == "technician"
+              ) ||
+              (
+                request.resource.data.type == "job_completed" &&
+                notificationRequest().status == "completed"
+              )
+            )
+          ) ||
+          (
+            request.resource.data.type == "new_review" &&
+            notificationRequest().customerId == request.auth.uid &&
+            notificationRequest().technicianId == request.resource.data.userId &&
+            exists(
+              /databases/$(database)/documents/service_reviews/$(request.resource.data.requestId + "_" + request.auth.uid)
+            )
+          )
+        );
+    }
+
     function isOwnCompletedRequest(requestId) {
       return exists(
         /databases/$(database)/documents/service_requests/$(requestId)
@@ -668,6 +865,154 @@ service cloud.firestore {
         isOwnCompletedRequest(request.resource.data.requestId);
     }
 
+    function validSystemMessageFields() {
+      return request.resource.data.keys().hasOnly([
+        "senderId",
+        "senderName",
+        "senderRole",
+        "audienceRoles",
+        "title",
+        "message",
+        "priority",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]) &&
+      request.resource.data.keys().hasAll([
+        "senderId",
+        "senderName",
+        "senderRole",
+        "audienceRoles",
+        "title",
+        "message",
+        "priority",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]) &&
+      request.resource.data.senderId == request.auth.uid &&
+      request.resource.data.senderRole == userRole(request.auth.uid) &&
+      request.resource.data.senderName ==
+        get(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.fullName &&
+      request.resource.data.audienceRoles is list &&
+      request.resource.data.audienceRoles.size() > 0 &&
+      request.resource.data.title is string &&
+      request.resource.data.title.size() > 0 &&
+      request.resource.data.message is string &&
+      request.resource.data.message.size() > 0 &&
+      request.resource.data.priority in [
+        "normal",
+        "important",
+        "critical"
+      ] &&
+      request.resource.data.status in [
+        "active",
+        "sent"
+      ] &&
+      request.resource.data.createdAt is timestamp &&
+      request.resource.data.updatedAt is timestamp;
+    }
+
+    function validSystemMessageCreate() {
+      return validSystemMessageFields() &&
+        (
+          (
+            isActiveSuperAdmin() &&
+            request.resource.data.audienceRoles.hasOnly([
+              "customer",
+              "technician",
+              "dispatcher"
+            ])
+          ) ||
+          (
+            isActiveDispatcher() &&
+            request.resource.data.audienceRoles.hasOnly([
+              "technician",
+              "super_admin"
+            ])
+          )
+        );
+    }
+
+    function isPublishedSystemMessage(data) {
+      return data.status == "active" ||
+        data.status == "sent";
+    }
+
+    function isCustomerSystemMessageRecipient(data) {
+      return isActiveCustomer() &&
+        isPublishedSystemMessage(data) &&
+        data.audienceRoles.hasAny(["customer"]);
+    }
+
+    function isTechnicianSystemMessageRecipient(data) {
+      return isActiveTechnician() &&
+        isPublishedSystemMessage(data) &&
+        data.audienceRoles.hasAny(["technician"]);
+    }
+
+    function isDispatcherSystemMessageRecipient(data) {
+      return isActiveDispatcher() &&
+        isPublishedSystemMessage(data) &&
+        data.audienceRoles.hasAny(["dispatcher"]);
+    }
+
+    function canReadSystemMessageAsRecipient(data) {
+      return signedIn() &&
+        (
+          isCustomerSystemMessageRecipient(data) ||
+          isTechnicianSystemMessageRecipient(data) ||
+          isDispatcherSystemMessageRecipient(data)
+        );
+    }
+
+    function canReadOwnDispatcherSystemMessage(data) {
+      return isActiveDispatcher() &&
+        isPublishedSystemMessage(data) &&
+        data.senderId == request.auth.uid &&
+        data.senderRole == "dispatcher";
+    }
+
+    function canReadSystemMessage() {
+      return isActiveSuperAdmin() ||
+        canReadSystemMessageAsRecipient(resource.data) ||
+        canReadOwnDispatcherSystemMessage(resource.data);
+    }
+
+    function canReadReferencedSystemMessage(messageId) {
+      return signedIn() &&
+        exists(
+          /databases/$(database)/documents/system_messages/$(messageId)
+        ) &&
+        canReadSystemMessageAsRecipient(
+          get(
+            /databases/$(database)/documents/system_messages/$(messageId)
+          ).data
+        );
+    }
+
+    function validMessageReadWrite(readId) {
+      return signedIn() &&
+        request.resource.data.keys().hasOnly([
+          "userId",
+          "messageId",
+          "readAt"
+        ]) &&
+        request.resource.data.keys().hasAll([
+          "userId",
+          "messageId",
+          "readAt"
+        ]) &&
+        request.resource.data.userId == request.auth.uid &&
+        readId == request.auth.uid + "_" + request.resource.data.messageId &&
+        request.resource.data.messageId is string &&
+        request.resource.data.messageId.size() > 0 &&
+        request.resource.data.readAt is timestamp &&
+        canReadReferencedSystemMessage(request.resource.data.messageId);
+    }
+
     match /users/{userId} {
       allow create: if validPublicUserCreate(userId) ||
         validSuperAdminDispatcherCreate(userId);
@@ -697,10 +1042,23 @@ service cloud.firestore {
     }
 
     match /notifications/{notificationId} {
-      allow create: if false;
+      allow create: if validRequestNotificationCreate();
       allow read: if signedIn() &&
         resource.data.userId == request.auth.uid;
       allow update: if validNotificationReadUpdate();
+      allow delete: if false;
+    }
+
+    match /system_messages/{messageId} {
+      allow create: if validSystemMessageCreate();
+      allow read: if canReadSystemMessage();
+      allow update, delete: if false;
+    }
+
+    match /message_reads/{readId} {
+      allow read: if signedIn() &&
+        resource.data.userId == request.auth.uid;
+      allow create, update: if validMessageReadWrite(readId);
       allow delete: if false;
     }
 
@@ -716,7 +1074,8 @@ service cloud.firestore {
 
     match /audit_logs/{auditLogId} {
       allow read: if isSuperAdmin();
-      allow create: if validSuperAdminLifecycleAuditCreate();
+      allow create: if validSuperAdminLifecycleAuditCreate() ||
+        validSystemMessageAuditCreate();
       allow update, delete: if false;
     }
   }

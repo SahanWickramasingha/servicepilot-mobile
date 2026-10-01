@@ -7,6 +7,7 @@ import {
 } from "firebase/firestore";
 
 import { db } from "@/src/firebase/config";
+import { createPersonalNotification } from "@/src/services/notification.service";
 
 export interface ServiceReview {
   id: string;
@@ -73,5 +74,14 @@ export async function submitServiceReview({
     rating,
     comment: comment.trim(),
     createdAt: serverTimestamp(),
+  });
+
+  await createPersonalNotification({
+    userId: technicianId,
+    type: "new_review",
+    title: "New Customer Review",
+    message: `You received a ${rating}-star review.`,
+    requestId,
+    priority: "normal",
   });
 }

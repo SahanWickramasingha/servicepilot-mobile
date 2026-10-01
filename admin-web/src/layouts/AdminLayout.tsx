@@ -7,6 +7,7 @@ import {
   LogOut,
   Menu,
   MessageSquareText,
+  Megaphone,
   Settings,
   ShieldCheck,
   UserCog,
@@ -26,6 +27,7 @@ const adminNavigation = [
   { label: "Customers", path: "/admin/customers", icon: Users },
   { label: "Service Requests", path: "/admin/requests", icon: ClipboardList },
   { label: "Reviews", path: "/admin/reviews", icon: MessageSquareText },
+  { label: "System Messages", path: "/admin/messages", icon: Megaphone },
   { label: "Reports", path: "/admin/reports", icon: BarChart3 },
   { label: "Audit Logs", path: "/admin/audit", icon: FileClock },
   { label: "Settings", path: "/admin/settings", icon: Settings },
@@ -35,6 +37,7 @@ const dispatcherNavigation = [
   { label: "Dashboard", path: "/dispatcher/dashboard", icon: LayoutDashboard },
   { label: "Applications", path: "/dispatcher/applications", icon: ClipboardCheck },
   { label: "Technicians", path: "/dispatcher/technicians", icon: UserCog },
+  { label: "Messages", path: "/dispatcher/messages", icon: Megaphone },
   { label: "Profile", path: "/dispatcher/profile", icon: Users },
 ];
 

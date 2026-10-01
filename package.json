@@ -5,6 +5,7 @@
   "scripts": {
     "start": "expo start",
     "bootstrap:super-admin": "node scripts/bootstrap-super-admin.mjs",
+    "migrate:account-status": "node scripts/migrate-account-status.mjs",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",

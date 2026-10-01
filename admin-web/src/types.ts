@@ -102,3 +102,19 @@ export type AuditLogRecord = {
   metadata?: Record<string, unknown>;
   createdAt?: unknown;
 };
+
+export type MessagePriority = "normal" | "important" | "critical" | string;
+
+export type SystemMessageRecord = {
+  id: string;
+  senderId?: string;
+  senderName?: string;
+  senderRole?: UserRole;
+  audienceRoles?: UserRole[];
+  title?: string;
+  message?: string;
+  priority?: MessagePriority;
+  status?: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+};

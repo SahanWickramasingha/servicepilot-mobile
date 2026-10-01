@@ -5963,6 +5963,7 @@ a {
 
 .auth-field input,
 .admin-field input,
+.admin-field select,
 .table-search input {
   min-width: 0;
   flex: 1;
@@ -5971,6 +5972,15 @@ a {
   background: transparent;
   color: #ffffff;
   font-size: 11px;
+}
+
+.admin-field select option {
+  background: #0d1b2a;
+  color: #ffffff;
+}
+
+.message-compose {
+  margin-bottom: 16px;
 }
 
 .auth-error,

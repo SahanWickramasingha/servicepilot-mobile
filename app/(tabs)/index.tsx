@@ -113,11 +113,15 @@ export default function HomeScreen() {
 
         unsubscribeNotifications =
           subscribeToCustomerNotifications(
-            customerId,
+            {
+              userId: customerId,
+              role: userProfile.role,
+            },
             setNotifications,
-            (error) => {
+            (error, context) => {
               console.error(
                 "Dashboard notifications subscription error:",
+                context.queryType,
                 error
               );
             }

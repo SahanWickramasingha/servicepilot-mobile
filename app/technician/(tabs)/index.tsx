@@ -1,4 +1,5 @@
 import { router } from "expo-router";
+import { useEffect, useState } from "react";
 import {
   Bell,
   BriefcaseBusiness,
@@ -22,11 +23,17 @@ import {
 } from "react-native";
 
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
+import { auth } from "@/src/firebase/config";
+import {
+  NotificationCenterItem,
+  subscribeToNotificationCenter,
+} from "@/src/services/notification.service";
 import { ServiceRequest } from "@/src/services/request.service";
 import {
   getActiveTechnicianRequests,
   getCompletedTechnicianRequests,
   getRequestDisplayTitle,
+  getRequestScheduleDate,
   getRequestTimeLabel,
   getRatingLabel,
   getStatusUi,
@@ -39,6 +46,31 @@ import {
 export default function TechnicianDashboard() {
   const { profile, requests, loading, errorMessage } =
     useTechnicianWorkspace();
+  const [notifications, setNotifications] = useState<NotificationCenterItem[]>(
+    []
+  );
+
+  useEffect(() => {
+    const currentUser = auth.currentUser;
+
+    if (!currentUser || !profile || profile.role !== "technician") {
+      return;
+    }
+
+    return subscribeToNotificationCenter(
+      {
+        userId: currentUser.uid,
+        role: "technician",
+      },
+      setNotifications,
+      (error, context) =>
+        console.error(
+          "Technician notification badge error:",
+          context.queryType,
+          error
+        )
+    );
+  }, [profile]);
 
   const activeRequests = getActiveTechnicianRequests(requests);
   const todayRequests = sortRequestsBySchedule(
@@ -53,6 +85,21 @@ export default function TechnicianDashboard() {
     (request) => request.status === "in_progress"
   ).length;
   const nextJob = nextJobRequests[0] ?? null;
+  const pendingRequests = requests.filter(
+    (request) => request.status === "requested"
+  );
+  const unreadCount = notifications.filter((item) => !item.read).length;
+  const upcomingSoon = nextJobRequests.find((request) => {
+    const scheduleDate = getRequestScheduleDate(request);
+
+    if (!scheduleDate) {
+      return false;
+    }
+
+    const minutesUntil =
+      (scheduleDate.getTime() - Date.now()) / (1000 * 60);
+    return minutesUntil > 0 && minutesUntil <= 60;
+  });
 
   if (loading) {
     return <LoadingState />;
@@ -111,10 +158,76 @@ export default function TechnicianDashboard() {
           <TouchableOpacity
             style={styles.notificationButton}
             activeOpacity={0.8}
+            onPress={() =>
+              router.push("/technician/notifications" as never)
+            }
           >
             <Bell size={20} color="#FFFFFF" />
+            {unreadCount > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
+
+        {pendingRequests.length > 0 && (
+          <ReminderCard
+            tone="warning"
+            title="Request Response Needed"
+            message={`${pendingRequests.length} service request${
+              pendingRequests.length === 1 ? " is" : "s are"
+            } waiting for your response.`}
+            buttonLabel="Review Request"
+            onPress={() =>
+              router.push({
+                pathname: "/technician/job-details",
+                params: { id: pendingRequests[0].id },
+              })
+            }
+          />
+        )}
+
+        {todayRequests.length > 0 && (
+          <ReminderCard
+            tone="info"
+            title="Today's Service Reminder"
+            message={`You have a service scheduled for ${getRequestTimeLabel(
+              todayRequests[0]
+            )} today.`}
+            buttonLabel="View Job"
+            onPress={() =>
+              router.push({
+                pathname: "/technician/job-details",
+                params: { id: todayRequests[0].id },
+              })
+            }
+          />
+        )}
+
+        {upcomingSoon && (
+          <ReminderCard
+            tone="success"
+            title="Upcoming Service"
+            message={`Your scheduled service begins in ${Math.max(
+              1,
+              Math.round(
+                ((getRequestScheduleDate(upcomingSoon)?.getTime() ?? Date.now()) -
+                  Date.now()) /
+                  (1000 * 60)
+              )
+            )} minutes.`}
+            buttonLabel="Open Job"
+            onPress={() =>
+              router.push({
+                pathname: "/technician/job-details",
+                params: { id: upcomingSoon.id },
+              })
+            }
+          />
+        )}
 
         <Text style={styles.sectionTitle}>Today&apos;s Overview</Text>
 
@@ -470,6 +583,44 @@ function QuickAction({
   );
 }
 
+function ReminderCard({
+  tone,
+  title,
+  message,
+  buttonLabel,
+  onPress,
+}: {
+  tone: "warning" | "info" | "success";
+  title: string;
+  message: string;
+  buttonLabel: string;
+  onPress: () => void;
+}) {
+  return (
+    <View style={[styles.reminderCard, getReminderStyle(tone)]}>
+      <View style={styles.reminderContent}>
+        <Text style={styles.reminderTitle}>{title}</Text>
+        <Text style={styles.reminderMessage}>{message}</Text>
+      </View>
+      <TouchableOpacity style={styles.reminderButton} onPress={onPress}>
+        <Text style={styles.reminderButtonText}>{buttonLabel}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function getReminderStyle(tone: "warning" | "info" | "success") {
+  if (tone === "warning") {
+    return styles.reminder_warning;
+  }
+
+  if (tone === "success") {
+    return styles.reminder_success;
+  }
+
+  return styles.reminder_info;
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#06101D" },
   stateScreen: {
@@ -540,6 +691,69 @@ const styles = StyleSheet.create({
     borderColor: "#17263A",
     alignItems: "center",
     justifyContent: "center",
+  },
+  notificationBadge: {
+    position: "absolute",
+    top: 5,
+    right: 5,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#EF4444",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  notificationBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: "800",
+  },
+  reminderCard: {
+    minHeight: 92,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+    marginBottom: 14,
+  },
+  reminder_warning: {
+    backgroundColor: "rgba(245,158,11,0.08)",
+    borderColor: "rgba(245,158,11,0.24)",
+  },
+  reminder_info: {
+    backgroundColor: "rgba(59,130,246,0.08)",
+    borderColor: "rgba(59,130,246,0.22)",
+  },
+  reminder_success: {
+    backgroundColor: "rgba(34,197,94,0.07)",
+    borderColor: "rgba(34,197,94,0.20)",
+  },
+  reminderContent: { flex: 1 },
+  reminderTitle: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  reminderMessage: {
+    color: "#CBD5E1",
+    fontSize: 10,
+    lineHeight: 16,
+    marginTop: 5,
+  },
+  reminderButton: {
+    minHeight: 38,
+    borderRadius: 10,
+    backgroundColor: "#101F30",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  reminderButtonText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    fontWeight: "800",
   },
   sectionTitle: {
     color: "#F8FAFC",
