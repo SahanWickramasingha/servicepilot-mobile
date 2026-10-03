@@ -1,6 +1,23 @@
 {
   "indexes": [
     {
+      "collectionGroup": "technician_map_profiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "approved", "order": "ASCENDING" },
+        { "fieldPath": "serviceDistrictIds", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    {
+      "collectionGroup": "technician_map_profiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "approved", "order": "ASCENDING" },
+        { "fieldPath": "serviceCategory", "order": "ASCENDING" },
+        { "fieldPath": "serviceDistrictIds", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    {
       "collectionGroup": "system_messages",
       "queryScope": "COLLECTION",
       "fields": [
