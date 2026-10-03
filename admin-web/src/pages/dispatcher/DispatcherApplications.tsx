@@ -1,16 +1,10 @@
 import { CheckCircle2, Eye, Search, X, XCircle } from "lucide-react";
 import { FirebaseError } from "firebase/app";
 import { useMemo, useState } from "react";
-import {
-  deleteField,
-  doc,
-  serverTimestamp,
-  updateDoc,
-} from "firebase/firestore";
 
 import { useAdminAuth } from "../../auth/AdminAuthContext";
 import { DataState, StatusChip } from "../../components/DataState";
-import { db } from "../../firebase/config";
+import { reviewTechnicianApplication } from "../../services/technicianApprovalService";
 import { useTechnicianUsers } from "../../hooks/useTechnicianUsers";
 import type { UserRecord } from "../../types";
 import { displayText, formatDateTime, statusLabel } from "../../utils/format";
@@ -64,12 +58,11 @@ export default function DispatcherApplications() {
       setError("");
       setMessage("");
 
-      await updateDoc(doc(db, "users", selectedTechnician.uid ?? selectedTechnician.id), {
-        technicianApprovalStatus: status,
-        reviewedBy: firebaseUser.uid,
-        reviewedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        rejectionReason: status === "rejected" ? reason : deleteField(),
+      await reviewTechnicianApplication({
+        technicianUid: selectedTechnician.uid ?? selectedTechnician.id,
+        dispatcherUid: firebaseUser.uid,
+        status,
+        rejectionReason: reason,
       });
 
       setMessage(
