@@ -1,12 +1,14 @@
 import {
   collection,
   doc,
+  getDoc,
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
 
 import { db } from "../firebase/config";
 import type { UserRecord } from "../types";
+import { buildMapProfile } from "../../../functions/src/domain/mapProjection";
 
 export type ManagedAccountRole = "customer" | "technician" | "dispatcher";
 export type AccountLifecycleStatus = "active" | "disabled" | "deleted";
@@ -100,6 +102,14 @@ export async function updateManagedAccountLifecycle({
     [actorField]: actorUid,
     updatedAt: serverTimestamp(),
   });
+
+  if (targetRole === "technician") {
+    const authoritative = (await getDoc(userRef)).data();
+    if (!authoritative) throw new Error("Technician profile unavailable.");
+    batch.set(doc(db, "technician_map_profiles", targetUid), {
+      ...buildMapProfile(targetUid, { ...authoritative, accountStatus }), updatedAt: serverTimestamp(),
+    });
+  }
 
   batch.set(auditRef, {
     action: actionAuditName(action, targetRole),
