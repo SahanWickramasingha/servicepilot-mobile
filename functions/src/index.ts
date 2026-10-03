@@ -7,7 +7,9 @@ import {
 } from "firebase-admin/firestore";
 
 import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { setGlobalOptions } from "firebase-functions/v2";
+import { readMapTechnicians, readJobTechnicianLocation } from "./services/map.service";
 
 import {
   buildVerificationEmailHtml,
@@ -29,6 +31,14 @@ setGlobalOptions({
 });
 
 const VERIFICATION_EMAIL_COOLDOWN_SECONDS = 60;
+
+export const getMapTechnicians = onCall((request) =>
+  readMapTechnicians(db, request.auth, request.data ?? {})
+);
+
+export const getJobTechnicianLocation = onCall((request) =>
+  readJobTechnicianLocation(db, request.auth, request.data ?? {})
+);
 
 export const sendServicePilotVerificationEmail = onCall(
   {
@@ -150,5 +160,57 @@ export const sendServicePilotVerificationEmail = onCall(
       alreadyVerified: false,
       message: "Verification email sent.",
     };
+  }
+);
+
+export const updateTechnicianReviewAggregate = onDocumentCreated(
+  "service_reviews/{reviewId}",
+  async (event) => {
+    const review = event.data?.data();
+
+    if (!review) {
+      return;
+    }
+
+    const technicianId =
+      typeof review.technicianId === "string"
+        ? review.technicianId.trim()
+        : "";
+
+    if (!technicianId) {
+      return;
+    }
+
+    const reviewsSnapshot = await db
+      .collection("service_reviews")
+      .where("technicianId", "==", technicianId)
+      .get();
+
+    let totalRating = 0;
+    let reviewCount = 0;
+
+    reviewsSnapshot.forEach((reviewDocument) => {
+      const rating = Number(reviewDocument.data().rating ?? 0);
+
+      if (Number.isInteger(rating) && rating >= 1 && rating <= 5) {
+        totalRating += rating;
+        reviewCount += 1;
+      }
+    });
+
+    await db
+      .collection("users")
+      .doc(technicianId)
+      .set(
+        {
+          averageRating:
+            reviewCount > 0 ? totalRating / reviewCount : 0,
+          reviewCount,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        {
+          merge: true,
+        }
+      );
   }
 );
