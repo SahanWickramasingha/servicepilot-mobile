@@ -202,6 +202,7 @@ service cloud.firestore {
           "certifications",
           "serviceAreas",
           "serviceDivision",
+          "serviceDistrictIds",
           "emailVerified",
           "updatedAt"
         ]);
@@ -210,6 +211,10 @@ service cloud.firestore {
     function validOwnerUpdate(userId) {
       return isOwner(userId) &&
         ownerMutableFieldsOnly() &&
+        (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(["serviceDistrictIds"]) ||
+          (resource.data.role == "technician" && validServiceDistrictIds(request.resource.data.serviceDistrictIds))
+        ) &&
         request.resource.data.uid == resource.data.uid &&
         request.resource.data.role == resource.data.role &&
         (
@@ -774,6 +779,45 @@ service cloud.firestore {
       ).data;
     }
 
+    function serviceRequestData(requestId) {
+      return get(
+        /databases/$(database)/documents/service_requests/$(requestId)
+      ).data;
+    }
+
+    function requestHasCurrentTechnicianId(data) {
+      return data.keys().hasAny(["technicianId"]) &&
+        data.technicianId is string &&
+        data.technicianId.size() > 0;
+    }
+
+    function requestHasLegacyTechnicianId(data) {
+      return data.keys().hasAny(["assignedTechnicianId"]) &&
+        data.assignedTechnicianId is string &&
+        data.assignedTechnicianId.size() > 0;
+    }
+
+    function requestHasConflictingTechnicianIds(data) {
+      return requestHasCurrentTechnicianId(data) &&
+        requestHasLegacyTechnicianId(data) &&
+        data.technicianId != data.assignedTechnicianId;
+    }
+
+    function requestTechnicianMatches(data, technicianId) {
+      return !requestHasConflictingTechnicianIds(data) &&
+        (
+          (
+            requestHasCurrentTechnicianId(data) &&
+            data.technicianId == technicianId
+          ) ||
+          (
+            !requestHasCurrentTechnicianId(data) &&
+            requestHasLegacyTechnicianId(data) &&
+            data.assignedTechnicianId == technicianId
+          )
+        );
+    }
+
     function validRequestNotificationCreate() {
       return validNotificationBaseCreate() &&
         (
@@ -825,7 +869,10 @@ service cloud.firestore {
           (
             request.resource.data.type == "new_review" &&
             notificationRequest().customerId == request.auth.uid &&
-            notificationRequest().technicianId == request.resource.data.userId &&
+            requestTechnicianMatches(
+              notificationRequest(),
+              request.resource.data.userId
+            ) &&
             exists(
               /databases/$(database)/documents/service_reviews/$(request.resource.data.requestId + "_" + request.auth.uid)
             )
@@ -837,12 +884,8 @@ service cloud.firestore {
       return exists(
         /databases/$(database)/documents/service_requests/$(requestId)
       ) &&
-        get(
-          /databases/$(database)/documents/service_requests/$(requestId)
-        ).data.customerId == request.auth.uid &&
-        get(
-          /databases/$(database)/documents/service_requests/$(requestId)
-        ).data.status == "completed";
+        serviceRequestData(requestId).customerId == request.auth.uid &&
+        serviceRequestData(requestId).status == "completed";
     }
 
     function validReviewCreate(reviewId) {
@@ -851,10 +894,34 @@ service cloud.firestore {
           "requestId",
           "customerId",
           "technicianId",
+          "customerName",
           "rating",
           "comment",
           "createdAt"
         ]) &&
+        request.resource.data.keys().hasAll([
+          "requestId",
+          "customerId",
+          "technicianId",
+          "customerName",
+          "rating",
+          "comment",
+          "createdAt"
+        ]) &&
+        (
+          request.resource.data.customerName is string &&
+          request.resource.data.customerName.size() > 0 &&
+          request.resource.data.customerName.size() <= 80 &&
+          !request.resource.data.customerName.matches("(?i)\\s*customer\\s*") &&
+          request.resource.data.customerName.matches(".*\\S.*") &&
+          get(
+            /databases/$(database)/documents/users/$(request.auth.uid)
+          ).data.fullName is string &&
+          request.resource.data.customerName ==
+            get(
+              /databases/$(database)/documents/users/$(request.auth.uid)
+            ).data.fullName
+        ) &&
         request.resource.data.customerId == request.auth.uid &&
         reviewId ==
           request.resource.data.requestId + "_" + request.auth.uid &&
@@ -862,7 +929,35 @@ service cloud.firestore {
         request.resource.data.rating >= 1 &&
         request.resource.data.rating <= 5 &&
         request.resource.data.technicianId is string &&
-        isOwnCompletedRequest(request.resource.data.requestId);
+        request.resource.data.technicianId.size() > 0 &&
+        isApprovedTechnicianId(request.resource.data.technicianId) &&
+        isOwnCompletedRequest(request.resource.data.requestId) &&
+        requestTechnicianMatches(
+          serviceRequestData(request.resource.data.requestId),
+          request.resource.data.technicianId
+        );
+    }
+
+    function isVerifiedApprovedTechnician() {
+      return isActiveTechnician() &&
+        request.auth.token.email_verified == true &&
+        isApprovedTechnicianId(request.auth.uid);
+    }
+
+    function canReadServiceReview() {
+      return signedIn() &&
+        (
+          isSuperAdmin() ||
+          resource.data.customerId == request.auth.uid ||
+          (
+            isVerifiedApprovedTechnician() &&
+            resource.data.technicianId == request.auth.uid
+          ) ||
+          (
+            isVerifiedCustomer() &&
+            isApprovedTechnicianId(resource.data.technicianId)
+          )
+        );
     }
 
     function validSystemMessageFields() {
@@ -959,12 +1054,19 @@ service cloud.firestore {
         data.audienceRoles.hasAny(["dispatcher"]);
     }
 
+    function isSuperAdminSystemMessageRecipient(data) {
+      return isActiveSuperAdmin() &&
+        isPublishedSystemMessage(data) &&
+        data.audienceRoles.hasAny(["super_admin"]);
+    }
+
     function canReadSystemMessageAsRecipient(data) {
       return signedIn() &&
         (
           isCustomerSystemMessageRecipient(data) ||
           isTechnicianSystemMessageRecipient(data) ||
-          isDispatcherSystemMessageRecipient(data)
+          isDispatcherSystemMessageRecipient(data) ||
+          isSuperAdminSystemMessageRecipient(data)
         );
     }
 
@@ -1013,15 +1115,156 @@ service cloud.firestore {
         canReadReferencedSystemMessage(request.resource.data.messageId);
     }
 
+    function validServiceDistrictIds(ids) {
+      return ids is list && ids.size() <= 25 && ids.toSet().size() == ids.size() && ids.hasOnly([
+        "ampara", "anuradhapura", "badulla", "batticaloa", "colombo", "galle", "gampaha",
+        "hambantota", "jaffna", "kalutara", "kandy", "kegalle", "kilinochchi", "kurunegala",
+        "mannar", "matale", "matara", "monaragala", "mullaitivu", "nuwara-eliya",
+        "polonnaruwa", "puttalam", "ratnapura", "trincomalee", "vavuniya"
+      ]);
+    }
+
+    function ownsTechnicianLocation(technicianId) {
+      return isOwner(technicianId) && userRole(technicianId) == "technician";
+    }
+
+    function mapCategory(profile) {
+      let category = profile.get("specialization", "").lower();
+      return category.matches('.*electrical.*') ? "Electrical" :
+        category.matches('.*plumbing.*') ? "Plumbing" :
+        category.matches('.*air conditioning.*') ? "Air Conditioning" :
+        category.matches('.*appliance repair.*') ? "Appliance Repair" :
+        category.matches('.*it / computer support.*') ? "IT / Computer Support" :
+        category.matches('.*general maintenance.*') ? "General Maintenance" :
+        category.matches('.*other.*') ? "Other" : "";
+    }
+
+    function validMapProfile(technicianId) {
+      let data = request.resource.data;
+      let profile = getAfter(/databases/$(database)/documents/users/$(technicianId)).data;
+      return (ownsTechnicianLocation(technicianId) && userHasActiveAccount(technicianId) && request.auth.token.email_verified == true ||
+          isActiveDispatcher() || isSuperAdmin()) &&
+        profile.role == "technician" &&
+        data.keys().hasAll(["technicianId", "fullName", "specialization", "serviceCategory", "serviceDistrictIds", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
+        data.keys().hasOnly(["technicianId", "fullName", "specialization", "serviceCategory", "serviceDistrictIds", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
+        data.technicianId == technicianId && data.fullName is string && data.fullName.size() > 0 && data.fullName == profile.fullName &&
+        data.specialization is string && data.specialization == profile.get("specialization", "") &&
+        data.serviceCategory == mapCategory(profile) && validServiceDistrictIds(data.serviceDistrictIds) &&
+        data.serviceDistrictIds == profile.get("serviceDistrictIds", []) &&
+        data.approved is bool && data.approved == (profile.technicianApprovalStatus == "approved" && profileHasActiveAccount(profile)) &&
+        data.averageRating is number && data.averageRating >= 0 && data.averageRating <= 5 && data.averageRating == profile.get("averageRating", 0) &&
+        data.reviewCount is int && data.reviewCount >= 0 && data.reviewCount == profile.get("reviewCount", 0) && data.updatedAt == request.time;
+    }
+
+    match /technician_map_profiles/{technicianId} {
+      allow get: if ownsTechnicianLocation(technicianId) || isSuperAdmin() || isActiveDispatcher() ||
+        (isVerifiedCustomer() && resource.data.approved == true && isApprovedTechnicianId(technicianId));
+      // Query snapshot approval; validate current approval with the get above before display.
+      // No private profile or coordinates are exposed through this display-only query.
+      allow list: if isVerifiedCustomer() && request.query.limit != null && request.query.limit <= 8 &&
+        resource.data.approved == true;
+      allow create, update: if validMapProfile(technicianId);
+      allow delete: if false;
+    }
+
+    function eligibleLocationRequest(requestId, technicianId, customerId) {
+      let job = get(/databases/$(database)/documents/service_requests/$(requestId)).data;
+      return job.customerId == customerId && job.status in ["accepted", "assigned", "in_progress"] &&
+        requestTechnicianMatches(job, technicianId);
+    }
+
+    match /technician_location_access/{technicianId}/customers/{customerId} {
+      // A Customer may provide their own job reference, never an arbitrary grant.
+      allow get: if isOwner(customerId) && isVerifiedCustomer();
+      allow list, delete: if false;
+      allow create, update: if isOwner(customerId) && isVerifiedCustomer() &&
+        request.resource.data.keys().hasAll(["requestId", "technicianId", "customerId", "updatedAt"]) &&
+        request.resource.data.keys().hasOnly(["requestId", "technicianId", "customerId", "updatedAt"]) &&
+        request.resource.data.customerId == customerId && request.resource.data.technicianId == technicianId &&
+        request.resource.data.requestId is string && request.resource.data.requestId.size() > 0 &&
+        request.resource.data.updatedAt == request.time && isApprovedTechnicianId(technicianId) &&
+        eligibleLocationRequest(request.resource.data.requestId, technicianId, customerId);
+    }
+
+    function canGetJobLocation(technicianId) {
+      let proof = get(/databases/$(database)/documents/technician_location_access/$(technicianId)/customers/$(request.auth.uid)).data;
+      return isVerifiedCustomer() && isApprovedTechnicianId(technicianId) &&
+        resource.data.technicianId == technicianId && resource.data.sharingEnabled == true &&
+        resource.data.updatedAt is timestamp && resource.data.updatedAt <= request.time + duration.value(5, 's') &&
+        resource.data.updatedAt >= request.time - duration.value(120, 's') &&
+        eligibleLocationRequest(proof.requestId, technicianId, request.auth.uid);
+    }
+
+    function validPrivateLocation(technicianId) {
+      let data = request.resource.data;
+      let publicData = getAfter(/databases/$(database)/documents/technician_map_locations/$(technicianId)).data;
+      return ownsTechnicianLocation(technicianId) &&
+        data.keys().hasAll(["technicianId", "sharingEnabled", "updatedAt"]) &&
+        data.keys().hasOnly(["technicianId", "sharingEnabled", "updatedAt", "latitude", "longitude", "sampledAt"]) &&
+        data.technicianId == technicianId && data.sharingEnabled is bool && data.updatedAt == request.time &&
+        publicData.sharingEnabled == data.sharingEnabled && publicData.updatedAt == request.time &&
+        (
+          (data.sharingEnabled == false && !data.keys().hasAny(["latitude", "longitude", "sampledAt"])) ||
+          (isVerifiedApprovedTechnician() && data.sharingEnabled == true &&
+            data.sampledAt is timestamp &&
+            data.sampledAt >= request.time - duration.value(60, 's') &&
+            data.sampledAt <= request.time + duration.value(5, 's') &&
+            data.latitude is number && data.longitude is number &&
+            data.latitude >= -90 && data.latitude <= 90 && data.longitude >= -180 && data.longitude <= 180)
+        );
+    }
+
+    function validApproximateLocation(technicianId) {
+      let data = request.resource.data;
+      let precise = getAfter(/databases/$(database)/documents/technician_locations/$(technicianId)).data;
+      return ownsTechnicianLocation(technicianId) &&
+        data.keys().hasAll(["technicianId", "sharingEnabled", "updatedAt"]) &&
+        data.keys().hasOnly(["technicianId", "sharingEnabled", "updatedAt", "latCell", "lngCell"]) &&
+        data.technicianId == technicianId && data.sharingEnabled is bool && data.updatedAt == request.time &&
+        precise.sharingEnabled == data.sharingEnabled && precise.updatedAt == request.time &&
+        (
+          (data.sharingEnabled == false && !data.keys().hasAny(["latCell", "lngCell"])) ||
+          (isVerifiedApprovedTechnician() && data.sharingEnabled == true &&
+            data.latCell is int && data.lngCell is int &&
+            data.latCell >= -9000 && data.latCell <= 9000 && data.lngCell >= -18000 && data.lngCell <= 18000 &&
+            precise.latitude >= data.latCell / 100.0 && precise.latitude < (data.latCell + 1) / 100.0 &&
+            precise.longitude >= data.lngCell / 100.0 && precise.longitude < (data.lngCell + 1) / 100.0)
+        );
+    }
+
+    match /technician_locations/{technicianId} {
+      // Single-document access rechecks the authoritative job on every server read.
+      allow get: if ownsTechnicianLocation(technicianId) || (signedIn() && canGetJobLocation(technicianId));
+      allow list, delete: if false;
+      allow create, update: if validPrivateLocation(technicianId);
+    }
+
+    match /technician_map_locations/{technicianId} {
+      // Only fixed approved Technician IDs from the safe map directory; no broad query.
+      allow get: if ownsTechnicianLocation(technicianId) ||
+        (isVerifiedCustomer() && isApprovedTechnicianId(technicianId));
+      allow list, delete: if false;
+      allow create, update: if validApproximateLocation(technicianId);
+    }
+
+    function mapApprovalFollowsUser(userId) {
+      // Trusted client lifecycle/approval updates must revoke the display snapshot atomically.
+      let projection = /databases/$(database)/documents/technician_map_profiles/$(userId);
+      return resource.data.role != "technician" ||
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(["accountStatus", "technicianApprovalStatus"]) ||
+        (getAfter(projection).data.technicianId == userId && getAfter(projection).data.updatedAt == request.time &&
+          getAfter(projection).data.approved == (request.resource.data.technicianApprovalStatus == "approved" && profileHasActiveAccount(request.resource.data)));
+    }
+
     match /users/{userId} {
       allow create: if validPublicUserCreate(userId) ||
         validSuperAdminDispatcherCreate(userId);
       allow get: if canGetUserProfile(userId);
       allow list: if canListUserProfiles();
-      allow update: if validOwnerUpdate(userId) ||
+      allow update: if (validOwnerUpdate(userId) ||
         validSuperAdminAccountLifecycleUpdate() ||
         validDispatcherInvitationAccept(userId) ||
-        validDispatcherTechnicianReview();
+        validDispatcherTechnicianReview()) && mapApprovalFollowsUser(userId);
       allow delete: if validSuperAdminFailedDispatcherCleanup();
     }
 
@@ -1064,11 +1307,7 @@ service cloud.firestore {
 
     match /service_reviews/{reviewId} {
       allow create: if validReviewCreate(reviewId);
-      allow read: if signedIn() &&
-        (
-          isSuperAdmin() ||
-          resource.data.customerId == request.auth.uid
-        );
+      allow read: if canReadServiceReview();
       allow update, delete: if false;
     }
 
