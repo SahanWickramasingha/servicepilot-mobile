@@ -37,6 +37,7 @@ export interface TechnicianReviewSummary {
   requestId: string;
   customerId: string;
   technicianId: string;
+  customerName?: string;
   rating: number;
   comment: string;
   createdAt?: Timestamp;
@@ -181,6 +182,10 @@ export function subscribeToTechnicianReviews(
             requestId: String(data.requestId ?? ""),
             customerId: String(data.customerId ?? ""),
             technicianId: String(data.technicianId ?? ""),
+            customerName:
+              typeof data.customerName === "string"
+                ? data.customerName
+                : undefined,
             rating: Number(data.rating ?? 0),
             comment: String(data.comment ?? ""),
             createdAt: data.createdAt as Timestamp | undefined,
