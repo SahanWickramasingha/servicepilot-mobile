@@ -26,6 +26,29 @@ import {
   TechnicianReviewSummary,
 } from "@/src/services/technician.service";
 
+import {
+  getReviewDisplayName,
+  getReviewerInitials,
+} from "@/src/utils/reviewAuthor";
+
+function formatReviewDate(
+  review: TechnicianReviewSummary
+): string {
+  if (!review.createdAt) {
+    return "Recent";
+  }
+
+  return review.createdAt.toDate().toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getReviewCountLabel(count: number): string {
+  return `${count} review${count === 1 ? "" : "s"}`;
+}
+
 export default function TechnicianProfileScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const technicianId = String(params.id ?? "");
@@ -167,7 +190,7 @@ export default function TechnicianProfileScreen() {
                 : "New"}
             </Text>
             <Text style={styles.reviewCount}>
-              ({ratingSummary.count} reviews)
+              ({getReviewCountLabel(ratingSummary.count)})
             </Text>
           </View>
           <TouchableOpacity
@@ -217,40 +240,69 @@ export default function TechnicianProfileScreen() {
         <Text style={styles.sectionTitle}>Customer Reviews</Text>
         {reviews.length > 0 ? (
           <View style={styles.reviewList}>
-            {reviews.slice(0, 5).map((review) => (
-              <View key={review.id} style={styles.reviewCard}>
-                <View style={styles.reviewTopRow}>
-                  <View style={styles.reviewStars}>
-                    {Array.from({ length: 5 }).map((_, index) => (
-                      <Star
-                        key={index}
-                        size={13}
-                        color={
-                          index < review.rating
-                            ? "#F59E0B"
-                            : "#475569"
-                        }
-                        fill={
-                          index < review.rating
-                            ? "#F59E0B"
-                            : "transparent"
-                        }
-                      />
-                    ))}
+            {reviews.slice(0, 5).map((review) => {
+              const reviewerName = getReviewDisplayName(review);
+              const ratingValue = Math.max(
+                0,
+                Math.min(5, review.rating)
+              );
+
+              return (
+                <View key={review.id} style={styles.reviewCard}>
+                  <View style={styles.reviewerHeader}>
+                    <View style={styles.reviewerAvatar}>
+                      <Text style={styles.reviewerInitials}>
+                        {getReviewerInitials(reviewerName)}
+                      </Text>
+                    </View>
+                    <View style={styles.reviewerInfo}>
+                      <Text style={styles.reviewedByLabel}>
+                        Reviewed by
+                      </Text>
+                      <Text
+                        style={styles.reviewerName}
+                        numberOfLines={2}
+                      >
+                        {reviewerName ?? "Reviewer name unavailable"}
+                      </Text>
+                    </View>
+                    <Text style={styles.reviewDate}>
+                      {formatReviewDate(review)}
+                    </Text>
                   </View>
-                  <Text style={styles.reviewDate}>
-                    {review.createdAt
-                      ? review.createdAt
-                          .toDate()
-                          .toLocaleDateString()
-                      : "Recent"}
-                  </Text>
+
+                  <View style={styles.reviewMetaRow}>
+                    <View style={styles.reviewStars}>
+                      {Array.from({ length: 5 }).map((_, index) => (
+                        <Star
+                          key={index}
+                          size={14}
+                          color={
+                            index < ratingValue
+                              ? "#F59E0B"
+                              : "#475569"
+                          }
+                          fill={
+                            index < ratingValue
+                              ? "#F59E0B"
+                              : "transparent"
+                          }
+                        />
+                      ))}
+                    </View>
+                    <Text style={styles.reviewRatingValue}>
+                      {ratingValue.toFixed(1)}/5
+                    </Text>
+                  </View>
+
+                  <View style={styles.reviewCommentBox}>
+                    <Text style={styles.reviewText}>
+                      {review.comment || "No written comment."}
+                    </Text>
+                  </View>
                 </View>
-                <Text style={styles.reviewText}>
-                  {review.comment || "No written comment."}
-                </Text>
-              </View>
-            ))}
+              );
+            })}
           </View>
         ) : (
           <View style={styles.noReviewsCard}>
@@ -435,26 +487,79 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginTop: 4,
   },
-  reviewList: { gap: 11 },
+  reviewList: { gap: 12 },
   reviewCard: {
-    borderRadius: 16,
+    borderRadius: 17,
     backgroundColor: "#0D1B2A",
     borderWidth: 1,
     borderColor: "#17263A",
-    padding: 14,
+    padding: 15,
   },
-  reviewTopRow: {
+  reviewerHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  reviewerAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#16345A",
+    borderWidth: 1,
+    borderColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reviewerInitials: {
+    color: "#DBEAFE",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  reviewerInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  reviewedByLabel: {
+    color: "#64748B",
+    fontSize: 9,
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+  reviewerName: {
+    color: "#F8FAFC",
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 3,
+  },
+  reviewDate: {
+    color: "#94A3B8",
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 2,
+    marginLeft: 8,
+  },
+  reviewMetaRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    marginTop: 13,
   },
   reviewStars: { flexDirection: "row", gap: 3 },
-  reviewDate: { color: "#64748B", fontSize: 9 },
+  reviewRatingValue: {
+    color: "#F8FAFC",
+    fontSize: 11,
+    fontWeight: "800",
+    marginLeft: 8,
+  },
+  reviewCommentBox: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#17263A",
+  },
   reviewText: {
-    color: "#CBD5E1",
+    color: "#D7E0EA",
     fontSize: 12,
-    lineHeight: 19,
-    marginTop: 10,
+    lineHeight: 20,
   },
   noReviewsCard: {
     borderRadius: 16,
@@ -473,4 +578,3 @@ const styles = StyleSheet.create({
     marginTop: 7,
   },
 });
-
