@@ -1,11 +1,13 @@
 import { Stack } from "expo-router";
 import { ProtectedRoute } from "@/src/components/auth/ProtectedRoute";
 import { ServiceProgressProvider } from "../../src/context/ServiceProgressContext";
+import { TechnicianLocationLifecycle } from "@/src/components/maps/TechnicianLocationLifecycle";
 
 export default function TechnicianLayout() {
   return (
     <ProtectedRoute allowedRoles={["technician"]}>
       <ServiceProgressProvider>
+        <TechnicianLocationLifecycle />
         <Stack
           screenOptions={{
             headerShown: false,
