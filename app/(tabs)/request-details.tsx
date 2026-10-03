@@ -29,6 +29,7 @@ import {
   normalizeRequestStatus,
 } from "@/src/constants/serviceRequests";
 import { auth } from "@/src/firebase/config";
+import { JobTechnicianLocation } from "@/src/components/maps/JobTechnicianLocation";
 import {
   cancelServiceRequest,
   formatRequestDate,
@@ -385,6 +386,8 @@ export default function RequestDetailsScreen() {
             value={formatRequestDate(request.createdAt)}
           />
         </View>
+
+        <JobTechnicianLocation request={request} />
 
         <View style={styles.statusPriorityRow}>
           <View
