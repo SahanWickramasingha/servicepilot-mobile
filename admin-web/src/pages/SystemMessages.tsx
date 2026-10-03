@@ -1,4 +1,4 @@
-import { Megaphone, Search, Send } from "lucide-react";
+import { CheckCheck, Eye, Megaphone, Search, Send, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   collection,
@@ -10,10 +10,16 @@ import {
   type DocumentData,
 } from "firebase/firestore";
 import { FirebaseError } from "firebase/app";
+import { useSearchParams } from "react-router-dom";
 
 import { useAdminAuth } from "../auth/AdminAuthContext";
 import { DataState, StatusChip } from "../components/DataState";
 import { db } from "../firebase/config";
+import { useReceivedSystemMessages } from "../hooks/useReceivedSystemMessages";
+import {
+  markSystemMessageRead,
+  type ReceivedSystemMessage,
+} from "../services/receivedMessageService";
 import {
   audienceLabel,
   audienceRolesForOption,
@@ -38,6 +44,8 @@ export default function SystemMessages({
 }) {
   const { profile } = useAdminAuth();
   const messages = useSystemMessages(portal, profile?.uid ?? profile?.id);
+  const receivedMessages = useReceivedSystemMessages(profile);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
   const [senderFilter, setSenderFilter] = useState("all");
   const [audienceFilter, setAudienceFilter] = useState("all");
@@ -51,6 +59,16 @@ export default function SystemMessages({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [success, setSuccess] = useState("");
+  const [selectedMessage, setSelectedMessage] =
+    useState<SystemMessageRecord | null>(null);
+  const userId = profile?.uid ?? profile?.id;
+  const messageView =
+    searchParams.get("view") === "received" ? "received" : "history";
+  const activeMessages =
+    messageView === "received" ? receivedMessages.data : messages.data;
+  const activeState =
+    messageView === "received" ? receivedMessages : messages;
+  const unreadReceived = receivedMessages.data.filter((item) => !item.read);
 
   const audienceOptions =
     portal === "admin"
@@ -59,7 +77,7 @@ export default function SystemMessages({
 
   const filteredMessages = useMemo(
     () =>
-      messages.data.filter((item) => {
+      activeMessages.filter((item) => {
         const haystack = [
           item.senderName,
           item.senderRole,
@@ -88,8 +106,44 @@ export default function SystemMessages({
           audienceMatch
         );
       }),
-    [audienceFilter, messages.data, priorityFilter, search, senderFilter]
+    [activeMessages, audienceFilter, priorityFilter, search, senderFilter]
   );
+
+  const switchView = (view: "history" | "received") => {
+    setSearchParams(view === "received" ? { view } : {});
+    setSelectedMessage(null);
+  };
+
+  const openMessage = async (item: SystemMessageRecord) => {
+    setSelectedMessage(item);
+
+    if (
+      messageView === "received" &&
+      userId &&
+      "read" in item &&
+      !item.read
+    ) {
+      await markSystemMessageRead({
+        userId,
+        messageId: item.id,
+      });
+    }
+  };
+
+  const markAllReceivedRead = async () => {
+    if (!userId || unreadReceived.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      unreadReceived.map((item) =>
+        markSystemMessageRead({
+          userId,
+          messageId: item.id,
+        })
+      )
+    );
+  };
 
   const submitMessage = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -220,6 +274,28 @@ export default function SystemMessages({
       </form>
 
       <section className="dashboard-card">
+        <div className="message-view-tabs" aria-label="Message views">
+          <button
+            type="button"
+            className={messageView === "history" ? "active" : ""}
+            onClick={() => switchView("history")}
+          >
+            Message History
+          </button>
+          <button
+            type="button"
+            className={messageView === "received" ? "active" : ""}
+            onClick={() => switchView("received")}
+          >
+            Received Inbox
+            {unreadReceived.length > 0 && (
+              <span>
+                {unreadReceived.length > 99 ? "99+" : unreadReceived.length}
+              </span>
+            )}
+          </button>
+        </div>
+
         <div className="table-toolbar">
           <div className="table-search">
             <Search size={17} />
@@ -259,11 +335,26 @@ export default function SystemMessages({
             <option value="important">Important</option>
             <option value="critical">Critical</option>
           </select>
+          {messageView === "received" && (
+            <button
+              type="button"
+              className="mark-all-button"
+              disabled={
+                unreadReceived.length === 0 ||
+                receivedMessages.loading ||
+                Boolean(receivedMessages.error)
+              }
+              onClick={markAllReceivedRead}
+            >
+              <CheckCheck size={15} />
+              Mark all read
+            </button>
+          )}
         </div>
 
         <DataState
-          loading={messages.loading}
-          error={messages.error}
+          loading={activeState.loading}
+          error={activeState.error}
           empty={filteredMessages.length === 0}
         >
           <div className="table-wrapper">
@@ -276,11 +367,21 @@ export default function SystemMessages({
                   <th>Priority</th>
                   <th>Status</th>
                   <th>Created</th>
+                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredMessages.map((item) => (
-                  <tr key={item.id}>
+                  <tr
+                    key={item.id}
+                    className={
+                      messageView === "received" &&
+                      "read" in item &&
+                      !item.read
+                        ? "message-row-unread"
+                        : ""
+                    }
+                  >
                     <td>
                       <strong>{displayText(item.senderName, "Unknown Sender")}</strong>
                       <span>{statusLabel(item.senderRole)}</span>
@@ -296,8 +397,24 @@ export default function SystemMessages({
                         tone={priorityTone(item.priority)}
                       />
                     </td>
-                    <td>{displayText(item.status, "sent")}</td>
+                    <td>
+                      {messageView === "received" && "read" in item
+                        ? item.read
+                          ? "Read"
+                          : "Unread"
+                        : displayText(item.status, "sent")}
+                    </td>
                     <td>{formatDateTime(item.createdAt)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="table-icon-action"
+                        aria-label="Open message"
+                        onClick={() => openMessage(item)}
+                      >
+                        <Eye size={15} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -305,7 +422,74 @@ export default function SystemMessages({
           </div>
         </DataState>
       </section>
+
+      {selectedMessage && (
+        <SystemMessageModal
+          message={selectedMessage}
+          received={
+            messageView === "received" && isReceivedMessage(selectedMessage)
+              ? selectedMessage
+              : undefined
+          }
+          onClose={() => setSelectedMessage(null)}
+        />
+      )}
     </>
+  );
+}
+
+function isReceivedMessage(
+  message: SystemMessageRecord
+): message is ReceivedSystemMessage {
+  return "read" in message && typeof message.read === "boolean";
+}
+
+function SystemMessageModal({
+  message,
+  received,
+  onClose,
+}: {
+  message: SystemMessageRecord;
+  received?: ReceivedSystemMessage;
+  onClose: () => void;
+}) {
+  return (
+    <div className="admin-modal-overlay" role="dialog" aria-modal="true">
+      <div className="admin-modal message-detail-modal">
+        <div className="admin-modal-header">
+          <div>
+            <h2>{displayText(message.title, "System Message")}</h2>
+            <span>
+              From {displayText(message.senderName, "Unknown Sender")} -{" "}
+              {statusLabel(message.senderRole)} -{" "}
+              {formatDateTime(message.createdAt)}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="modal-close"
+            aria-label="Close message"
+            onClick={onClose}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="message-detail-meta">
+          <StatusChip
+            value={statusLabel(message.priority ?? "normal")}
+            tone={priorityTone(message.priority)}
+          />
+          <span>{audienceLabel(message.audienceRoles)}</span>
+          {received && <span>{received.read ? "Read" : "Unread"}</span>}
+        </div>
+
+        <div className="message-detail-body">
+          <Megaphone size={22} />
+          <p>{displayText(message.message, "No message body.")}</p>
+        </div>
+      </div>
+    </div>
   );
 }
 
