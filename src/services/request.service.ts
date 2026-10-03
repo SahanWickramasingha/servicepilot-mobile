@@ -61,6 +61,19 @@ export interface ServiceRequest {
   customerCancellationReason?: string;
 }
 
+export type RequestTechnicianReviewTarget =
+  | {
+      ok: true;
+      technicianId: string;
+      technicianName: string;
+      source: "technicianId" | "assignedTechnicianId";
+    }
+  | {
+      ok: false;
+      reason: "missing" | "conflict";
+      message: string;
+    };
+
 export type CreateServiceRequestInput = {
   profile: UserProfile;
   technician: PublicTechnicianProfile;
@@ -284,6 +297,58 @@ export function subscribeToServiceRequest(
     },
     onError
   );
+}
+
+export function getRequestTechnicianReviewTarget(
+  request: ServiceRequest
+): RequestTechnicianReviewTarget {
+  const technicianId = request.technicianId?.trim();
+  const assignedTechnicianId =
+    request.assignedTechnicianId?.trim() ?? "";
+
+  if (
+    technicianId &&
+    assignedTechnicianId &&
+    technicianId !== assignedTechnicianId
+  ) {
+    return {
+      ok: false,
+      reason: "conflict",
+      message:
+        "This request has conflicting technician records and cannot be reviewed. Please contact support.",
+    };
+  }
+
+  if (technicianId) {
+    return {
+      ok: true,
+      technicianId,
+      technicianName:
+        request.technicianName ||
+        request.assignedTechnicianName ||
+        "Service Technician",
+      source: "technicianId",
+    };
+  }
+
+  if (assignedTechnicianId) {
+    return {
+      ok: true,
+      technicianId: assignedTechnicianId,
+      technicianName:
+        request.assignedTechnicianName ||
+        request.technicianName ||
+        "Service Technician",
+      source: "assignedTechnicianId",
+    };
+  }
+
+  return {
+    ok: false,
+    reason: "missing",
+    message:
+      "This request has no technician identity available to review.",
+  };
 }
 
 export async function getServiceRequest(
