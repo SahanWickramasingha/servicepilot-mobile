@@ -148,5 +148,8 @@ export async function sendVerificationEmail(
 }
 
 export async function logoutUser(): Promise<void> {
+  // Confirm marker removal before invalidating the session that authorizes it.
+  const { foregroundSharing } = await import("@/src/services/foreground-location.service");
+  await foregroundSharing.stop();
   await signOut(auth);
 }
