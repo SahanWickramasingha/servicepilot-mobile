@@ -39,6 +39,12 @@
         }
       ],
       "expo-font",
+      ["expo-location", {
+        "locationWhenInUsePermission": "Share your location while using ServicePilot. Customers see an approximate area; your active job Customer can see your precise location.",
+        "isIosBackgroundLocationEnabled": false,
+        "isAndroidBackgroundLocationEnabled": false,
+        "isAndroidForegroundServiceEnabled": false
+      }],
       "@react-native-community/datetimepicker"
     ],
     "experiments": {
