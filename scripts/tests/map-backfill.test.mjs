@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import { test, after } from "node:test";
+import { createRequire } from "node:module";
+import { backfillMapProfile } from "../lib/map-profile-backfill.mjs";
+const require = createRequire(new URL("../../functions/package.json", import.meta.url));
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore, Timestamp } = require("firebase-admin/firestore");
+if (!/^(127\.0\.0\.1|localhost):\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST ?? "")) throw new Error("Use only local Firestore emulator");
+const db = getFirestore(initializeApp({ projectId: "demo-servicepilot-review-author" }, "map-backfill-fixture"));
+after(() => db.terminate());
+test("migration defaults to dry-run, is minimal/idempotent and preserves private data", async () => {
+  const uid = "map-migrate", timestamp = Timestamp.fromMillis(1790800000000);
+  const source = { uid, role: "technician", fullName: "Map Fixture", specialization: "Electrical", technicianApprovalStatus: "approved", accountStatus: "active",
+    serviceDivision: "Badulla District", address: "Private", phone: "Private", averageRating: 4, reviewCount: 3, updatedAt: timestamp, createdAt: timestamp };
+  await db.doc(`users/${uid}`).set(source);
+  await db.doc(`technician_locations/${uid}`).set({ sharingEnabled: true, latitude: 7.290612, longitude: 80.633701, updatedAt: timestamp });
+  await db.doc("service_reviews/map-migration-preserve").set({ technicianId: uid, rating: 4, comment: "Preserve", createdAt: timestamp });
+  const precise = (await db.doc(`technician_locations/${uid}`).get()).data(), review = (await db.doc("service_reviews/map-migration-preserve").get()).data();
+  const proposal = await backfillMapProfile(db, uid);
+  assert.deepEqual(proposal.serviceDistrictIdsChange.to, ["badulla"]);
+  assert.deepEqual((await db.doc(`users/${uid}`).get()).data(), source);
+  assert.equal((await db.doc(`technician_map_profiles/${uid}`).get()).exists, false);
+  assert.equal(JSON.stringify(proposal).includes("Private"), false);
+  await backfillMapProfile(db, uid, true);
+  assert.deepEqual((await db.doc(`users/${uid}`).get()).data(), { ...source, serviceDistrictIds: ["badulla"] });
+  const projection = (await db.doc(`technician_map_profiles/${uid}`).get()).data();
+  assert.equal(projection.fullName, "Map Fixture"); assert.equal(projection.averageRating, 4); assert.equal(projection.reviewCount, 3);
+  assert.equal(projection.latitude, undefined); assert.equal(projection.phone, undefined);
+  assert.equal(await backfillMapProfile(db, uid), null); assert.equal(await backfillMapProfile(db, uid, true), null);
+  assert.deepEqual((await db.doc(`technician_map_profiles/${uid}`).get()).data(), projection);
+  assert.deepEqual((await db.doc(`technician_locations/${uid}`).get()).data(), precise);
+  assert.deepEqual((await db.doc("service_reviews/map-migration-preserve").get()).data(), review);
+});
