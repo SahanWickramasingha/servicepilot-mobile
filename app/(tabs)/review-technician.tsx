@@ -21,7 +21,9 @@ import {
 
 import { auth } from "@/src/firebase/config";
 import {
+  getRequestTechnicianReviewTarget,
   getServiceRequest,
+  RequestTechnicianReviewTarget,
   ServiceRequest,
 } from "@/src/services/request.service";
 import {
@@ -34,6 +36,8 @@ export default function ReviewTechnicianScreen() {
   const requestId = String(params.id ?? "");
   const [request, setRequest] =
     useState<ServiceRequest | null>(null);
+  const [reviewTarget, setReviewTarget] =
+    useState<RequestTechnicianReviewTarget | null>(null);
   const [rating, setRating] = useState(0);
   const [review, setReview] = useState("");
   const [loading, setLoading] = useState(true);
@@ -77,10 +81,11 @@ export default function ReviewTechnicianScreen() {
           return;
         }
 
-        if (!serviceRequest.assignedTechnicianId) {
-          setErrorMessage(
-            "This request has no assigned technician to review."
-          );
+        const target =
+          getRequestTechnicianReviewTarget(serviceRequest);
+
+        if (!target.ok) {
+          setErrorMessage(target.message);
           return;
         }
 
@@ -95,6 +100,7 @@ export default function ReviewTechnicianScreen() {
         }
 
         setRequest(serviceRequest);
+        setReviewTarget(target);
       } catch (error) {
         console.error("Review load error:", error);
         setErrorMessage("Unable to load review details.");
@@ -125,7 +131,7 @@ export default function ReviewTechnicianScreen() {
 
   const canSubmit =
     rating > 0 &&
-    !!request?.assignedTechnicianId &&
+    reviewTarget?.ok === true &&
     !submitted &&
     !submitting;
 
@@ -135,7 +141,7 @@ export default function ReviewTechnicianScreen() {
     if (
       !currentUser ||
       !request ||
-      !request.assignedTechnicianId ||
+      reviewTarget?.ok !== true ||
       !canSubmit
     ) {
       return;
@@ -148,7 +154,7 @@ export default function ReviewTechnicianScreen() {
       await submitServiceReview({
         requestId: request.id,
         customerId: currentUser.uid,
-        technicianId: request.assignedTechnicianId,
+        technicianId: reviewTarget.technicianId,
         rating,
         comment: review,
       });
@@ -261,7 +267,9 @@ export default function ReviewTechnicianScreen() {
                 />
               </View>
               <Text style={styles.technicianName}>
-                {request.assignedTechnicianName}
+                {reviewTarget?.ok
+                  ? reviewTarget.technicianName
+                  : "Service Technician"}
               </Text>
               <Text style={styles.technicianRole}>
                 Service Technician
