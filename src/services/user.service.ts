@@ -10,7 +10,10 @@ import {
   setDoc,
   updateDoc,
   where,
+  runTransaction,
+  writeBatch,
 } from "firebase/firestore";
+import { buildMapProfile } from "@/functions/src/domain/mapProjection";
 
 import { db } from "@/src/firebase/config";
 import {
@@ -72,6 +75,7 @@ export interface UserProfile {
   serviceAreas?: string;
   serviceDivision?: string;
   profilePhotoUrl?: string;
+  serviceDistrictIds?: string[];
   averageRating?: number;
   reviewCount?: number;
   completedJobs?: number;
@@ -257,11 +261,13 @@ export async function updateUserProfileSafe(
 ): Promise<void> {
   const userRef = doc(db, "users", uid);
 
-  await updateDoc(userRef, {
-    fullName: data.fullName.trim(),
-    phone: data.phone.trim(),
-    address: data.address.trim(),
-    updatedAt: serverTimestamp(),
+  await runTransaction(db, async (transaction) => {
+    const profile = (await transaction.get(userRef)).data();
+    const changes = { fullName: data.fullName.trim(), phone: data.phone.trim(), address: data.address.trim(), updatedAt: serverTimestamp() };
+    transaction.update(userRef, changes);
+    if (profile?.role === "technician") transaction.set(doc(db, "technician_map_profiles", uid), {
+      ...buildMapProfile(uid, { ...profile, ...changes }), updatedAt: serverTimestamp(),
+    });
   });
 }
 
@@ -296,8 +302,10 @@ export async function updateTechnicianApprovalStatus({
   rejectionReason?: string;
 }): Promise<void> {
   const technicianRef = doc(db, "users", technicianUid);
-
-  await updateDoc(technicianRef, {
+  const profile = (await getDoc(technicianRef)).data();
+  if (!profile) throw new Error("Technician profile unavailable.");
+  const batch = writeBatch(db);
+  batch.update(technicianRef, {
     technicianApprovalStatus: status,
     reviewedBy: dispatcherUid,
     reviewedAt: serverTimestamp(),
@@ -308,6 +316,10 @@ export async function updateTechnicianApprovalStatus({
           "Application was not approved."
         : deleteField(),
   });
+  batch.set(doc(db, "technician_map_profiles", technicianUid), {
+    ...buildMapProfile(technicianUid, { ...profile, technicianApprovalStatus: status }), updatedAt: serverTimestamp(),
+  });
+  await batch.commit();
 }
 
 export function getDashboardRouteForRole(
