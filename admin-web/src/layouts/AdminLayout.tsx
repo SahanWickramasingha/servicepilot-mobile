@@ -18,6 +18,7 @@ import { NavLink, Outlet } from "react-router-dom";
 
 import { useAdminAuth } from "../auth/AdminAuthContext";
 import servicePilotLogo from "../assets/images/servicepilot-logo.png";
+import WebNotificationBell from "../components/WebNotificationBell";
 import { initials } from "../utils/format";
 
 const adminNavigation = [
@@ -121,6 +122,7 @@ export default function AdminLayout({
           </div>
 
           <div className="topbar-actions">
+            <WebNotificationBell portal={portal} />
             <div className="admin-profile">
               <div className="admin-avatar">
                 {initials(profile?.fullName, profile?.email)}
