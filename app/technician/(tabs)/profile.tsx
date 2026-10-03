@@ -12,6 +12,7 @@ import {
 } from "lucide-react-native";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   ScrollView,
   StatusBar,
@@ -24,6 +25,8 @@ import {
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
 import { logoutUser } from "@/src/services/auth.service";
 import { getCompletedTechnicianRequests } from "@/src/utils/technicianRequests";
+import { TechnicianSharingPanel } from "@/src/components/maps/TechnicianSharingPanel";
+import { DISTRICTS, resolveServiceDistrictIds } from "@/functions/src/domain/map";
 
 export default function TechnicianProfileScreen() {
   const { profile, requests, loading, errorMessage } =
@@ -31,8 +34,8 @@ export default function TechnicianProfileScreen() {
   const completedJobs = getCompletedTechnicianRequests(requests).length;
 
   const handleLogout = async () => {
-    await logoutUser();
-    router.replace("/login");
+    try { await logoutUser(); router.replace("/login"); }
+    catch { Alert.alert("Unable to sign out", "Please retry so your shared location can be removed before signing out."); }
   };
 
   if (loading) {
@@ -56,7 +59,9 @@ export default function TechnicianProfileScreen() {
   const specialization =
     profile.specialization || "Specialization not provided";
   const serviceDivision =
-    profile.serviceDivision || profile.serviceAreas || "Division not set";
+    profile.serviceDistrictIds !== undefined
+      ? resolveServiceDistrictIds(profile).map((id) => DISTRICTS.find((district) => district.id === id)?.name).join(", ") || "Service districts not set"
+      : profile.serviceDivision || profile.serviceAreas || "Division not set";
 
   return (
     <View style={styles.container}>
@@ -122,6 +127,8 @@ export default function TechnicianProfileScreen() {
         </View>
 
         <Text style={styles.sectionTitle}>Technician</Text>
+
+        <TechnicianSharingPanel profile={profile} />
 
         <View style={styles.menuCard}>
           <MenuRow
