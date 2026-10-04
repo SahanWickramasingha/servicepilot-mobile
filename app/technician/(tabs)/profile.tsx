@@ -23,14 +23,19 @@ import {
 } from "react-native";
 
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
+import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
+import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
 import { logoutUser } from "@/src/services/auth.service";
 import { getCompletedTechnicianRequests } from "@/src/utils/technicianRequests";
 import { TechnicianSharingPanel } from "@/src/components/maps/TechnicianSharingPanel";
-import { DISTRICTS, resolveServiceDistrictIds } from "@/functions/src/domain/map";
+import { resolveServiceDistrictIds } from "@/functions/src/domain/map";
+import { declaredServiceAreaLabel } from "@/functions/src/domain/serviceAreas";
 
 export default function TechnicianProfileScreen() {
-  const { profile, requests, loading, errorMessage } =
+  const { uid, profile, requests, loading, errorMessage } =
     useTechnicianWorkspace();
+  const ratings = useTechnicianReviews(profile ? uid : null);
+  const ratingDisplay = getTechnicianRatingDisplay(ratings);
   const completedJobs = getCompletedTechnicianRequests(requests).length;
 
   const handleLogout = async () => {
@@ -51,16 +56,11 @@ export default function TechnicianProfileScreen() {
     );
   }
 
-  const rating =
-    Number(profile.averageRating ?? 0) > 0
-      ? Number(profile.averageRating).toFixed(1)
-      : "No ratings yet";
-  const reviewCount = Number(profile.reviewCount ?? 0);
   const specialization =
     profile.specialization || "Specialization not provided";
   const serviceDivision =
     profile.serviceDistrictIds !== undefined
-      ? resolveServiceDistrictIds(profile).map((id) => DISTRICTS.find((district) => district.id === id)?.name).join(", ") || "Service districts not set"
+      ? resolveServiceDistrictIds(profile).map((id) => declaredServiceAreaLabel(id, profile.serviceAreasByDistrict)).join("; ") || "Service districts not set"
       : profile.serviceDivision || profile.serviceAreas || "Division not set";
 
   return (
@@ -104,22 +104,26 @@ export default function TechnicianProfileScreen() {
             <Star
               size={17}
               color="#F59E0B"
-              fill={reviewCount > 0 ? "#F59E0B" : "transparent"}
+              fill={ratingDisplay.hasRatings ? "#F59E0B" : "transparent"}
             />
 
-            <Text style={styles.ratingValue}>{rating}</Text>
+            <Text style={styles.ratingValue}>{ratingDisplay.value}</Text>
 
-            {reviewCount > 0 && (
+            {ratingDisplay.hasRatings && (
               <Text style={styles.ratingCount}>
-                - {reviewCount} review{reviewCount === 1 ? "" : "s"}
+                - {ratingDisplay.countLabel}
               </Text>
             )}
           </View>
         </View>
 
+        {ratings.status === "error" && (
+          <Text accessibilityRole="alert" style={styles.subtitle}>{ratings.errorMessage}</Text>
+        )}
+
         <View style={styles.statsRow}>
           <StatCard value={String(completedJobs)} label="Jobs" />
-          <StatCard value={rating} label="Rating" />
+          <StatCard value={ratingDisplay.value} label="Rating" />
           <StatCard
             value={profile.experience || "Not set"}
             label="Experience"
@@ -154,6 +158,7 @@ export default function TechnicianProfileScreen() {
             icon={<UserRound size={19} color="#A78BFA" />}
             title="Personal Information"
             subtitle={profile.email || "Email not available"}
+            onPress={() => router.push("/technician/personal-information")}
           />
 
           <View style={styles.divider} />
