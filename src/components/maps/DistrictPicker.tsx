@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { DISTRICTS } from "@/functions/src/domain/map";
 
 export function DistrictPicker({ selected, onChange, multiple = false, disabled = false }: {
@@ -15,11 +15,11 @@ export function DistrictPicker({ selected, onChange, multiple = false, disabled 
       <Text style={styles.hint}>Choose {multiple ? "districts" : "district"} ›</Text>
     </Pressable>
     <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
-      <View style={styles.overlay}><View style={styles.sheet}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.overlay}><View style={styles.sheet}>
         <Text style={styles.title}>{multiple ? "Districts you serve" : "Choose a service district"}</Text>
         <TextInput accessibilityLabel="Search districts" value={search} onChangeText={setSearch}
           placeholder="Search all 25 districts" placeholderTextColor="#64748B" style={styles.search} />
-        <ScrollView>{DISTRICTS.filter((district) => district.name.toLowerCase().includes(search.toLowerCase())).map((district) =>
+        <ScrollView keyboardShouldPersistTaps="handled">{DISTRICTS.filter((district) => district.name.toLowerCase().includes(search.toLowerCase())).map((district) =>
           <Pressable key={district.id} accessibilityRole={multiple ? "checkbox" : "radio"}
             accessibilityState={{ checked: selected.includes(district.id) }} style={styles.row} onPress={() => {
               onChange(multiple ? (selected.includes(district.id) ? selected.filter((id) => id !== district.id) : [...selected, district.id]) : [district.id]);
@@ -28,7 +28,7 @@ export function DistrictPicker({ selected, onChange, multiple = false, disabled 
             <Text style={styles.check}>{selected.includes(district.id) ? "✓" : "○"}</Text>
           </Pressable>)}</ScrollView>
         <Pressable style={styles.done} onPress={() => setOpen(false)}><Text style={styles.label}>Done</Text></Pressable>
-      </View></View>
+      </View></KeyboardAvoidingView>
     </Modal>
   </>;
 }
