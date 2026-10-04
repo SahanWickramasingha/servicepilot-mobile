@@ -12,8 +12,9 @@ export type SharingAdapter = {
   prepare?: (uid: string) => Promise<void>;
   current: (signal?: AbortSignal) => Promise<DeviceFix>;
   watch: (next: (point: DeviceFix) => void, error: (cause?: unknown) => void) => Promise<() => void>;
-  publish: (uid: string, point?: Coordinate) => Promise<void>;
+  publish: (uid: string, point?: DeviceFix) => Promise<void>;
   every: (callback: () => void, interval: number) => () => void;
+  after?: (callback: () => void, delay: number) => () => void;
   now: () => number;
 };
 
@@ -34,6 +35,8 @@ export class ForegroundSharing {
   private acquisition?: AbortController;
   private removeWatch?: () => void;
   private removeHeartbeat?: () => void;
+  private removePendingWrite?: () => void;
+  private latest?: DeviceFix;
   private last?: DeviceFix;
   private lastWrite = -Infinity;
   private tail: Promise<void> = Promise.resolve();
@@ -53,6 +56,9 @@ export class ForegroundSharing {
     this.removeWatch = undefined;
     this.removeHeartbeat?.();
     this.removeHeartbeat = undefined;
+    this.removePendingWrite?.();
+    this.removePendingWrite = undefined;
+    this.latest = undefined;
   }
   private revoke(uid: string): Promise<void> {
     const operation = this.tail.catch(() => undefined).then(() => this.adapter.publish(uid));
@@ -91,22 +97,44 @@ export class ForegroundSharing {
   }
   private async offer(point: DeviceFix, generation: number): Promise<void> {
     if (generation !== this.generation || !this.active || !this.optedIn || !this.uid) return;
+    if (this.latest && Number.isFinite(point.sampledAt) && point.sampledAt < this.latest.sampledAt) return;
     if (!validCoordinate(point) || !Number.isFinite(point.sampledAt) ||
         this.adapter.now() - point.sampledAt > 60000 || point.sampledAt > this.adapter.now() + 5000 ||
         (point.accuracy != null && point.accuracy > 2000)) {
       throw new LocationSharingError("acquisition", "location/invalid-fix", "A recent, usable GPS fix is unavailable. Check location services and retry.");
     }
+    // Android can deliver an older fused/cached callback after a newer GPS fix.
+    this.latest = point;
     const uid = this.uid;
     const operation = this.tail.catch(() => undefined).then(async () => {
       if (generation !== this.generation || !this.active || !this.optedIn) return;
+      const candidate = this.latest!;
       const elapsed = this.adapter.now() - this.lastWrite;
-      if (elapsed < MIN_LOCATION_WRITE_MS || (this.last && elapsed < LOCATION_HEARTBEAT_MS && metres(this.last, point) < LOCATION_MOVEMENT_METRES)) return;
-      if (this.adapter.now() - point.sampledAt > 60000) throw new LocationSharingError("acquisition", "location/stale-fix", "The GPS fix is no longer recent. Retry.");
-      try { await this.adapter.publish(uid, point); }
+      const moved = !this.last || metres(this.last, candidate) >= LOCATION_MOVEMENT_METRES;
+      if (elapsed < MIN_LOCATION_WRITE_MS || (!moved && elapsed < LOCATION_HEARTBEAT_MS)) {
+        // Retain movement seen during an in-flight first save, without a write per callback.
+        if (moved && !this.removePendingWrite) {
+          const callback = () => {
+            this.removePendingWrite = undefined;
+            const latest = this.latest;
+            if (generation !== this.generation || !latest || this.adapter.now() - latest.sampledAt > 60000) return;
+            void this.offer(latest, generation).catch((cause) => this.fail(cause, generation, "publish"));
+          };
+          const delay = Math.max(1, MIN_LOCATION_WRITE_MS - elapsed);
+          if (this.adapter.after) this.removePendingWrite = this.adapter.after(callback, delay);
+          else { const timer = setTimeout(callback, delay); this.removePendingWrite = () => clearTimeout(timer); }
+        }
+        return;
+      }
+      if (this.adapter.now() - candidate.sampledAt > 60000) throw new LocationSharingError("acquisition", "location/stale-fix", "The GPS fix is no longer recent. Retry.");
+      this.removePendingWrite?.(); this.removePendingWrite = undefined;
+      try { await this.adapter.publish(uid, candidate); }
       catch (cause) { throw locationSharingError(cause, "publish"); }
-      this.last = point;
-      this.lastWrite = this.adapter.now();
-      if (generation === this.generation) this.update({ enabled: true, status: "sharing", error: "", revokeFailed: false });
+      if (generation === this.generation) {
+        this.last = candidate;
+        this.lastWrite = this.adapter.now();
+        this.update({ enabled: true, status: "sharing", error: "", revokeFailed: false });
+      }
     });
     this.tail = operation;
     await operation;
@@ -133,15 +161,16 @@ export class ForegroundSharing {
       this.acquisition = new AbortController();
       const point = await this.adapter.current(this.acquisition.signal);
       if (generation !== this.generation) return;
+      this.latest = point;
       step = "watch";
       const remove = await this.adapter.watch((point) => {
-        if (this.state.status !== "sharing") return;
+        if (!["starting", "sharing"].includes(this.state.status)) return;
         void this.offer(point, generation).catch((error) => this.fail(error, generation, "publish"));
       }, (cause) => { void this.fail(cause, generation, "watch"); });
       if (generation !== this.generation) { remove(); return; }
       this.removeWatch = remove;
       step = "publish";
-      await this.offer(point, generation);
+      await this.offer(this.latest ?? point, generation);
       if (generation !== this.generation) return;
       this.removeHeartbeat = this.adapter.every(() => {
         void this.adapter.current(this.acquisition?.signal).then((point) => this.offer(point, generation))
