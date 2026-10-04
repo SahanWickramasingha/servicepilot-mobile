@@ -17,15 +17,18 @@ import {
 } from "react-native";
 
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
+import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
+import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
 import {
   getCompletedTechnicianRequests,
-  getRatingLabel,
   getUpcomingTechnicianRequests,
 } from "@/src/utils/technicianRequests";
 
 export default function TechnicianPerformanceScreen() {
-  const { profile, requests, loading, errorMessage } =
+  const { uid, profile, requests, loading, errorMessage } =
     useTechnicianWorkspace();
+  const ratings = useTechnicianReviews(profile ? uid : null);
+  const ratingDisplay = getTechnicianRatingDisplay(ratings);
 
   if (loading) {
     return <StateScreen message="Loading performance..." />;
@@ -45,8 +48,6 @@ export default function TechnicianPerformanceScreen() {
   const inProgressJobs = requests.filter(
     (request) => request.status === "in_progress"
   ).length;
-  const averageRating = Number(profile.averageRating ?? 0);
-  const reviewCount = Number(profile.reviewCount ?? 0);
 
   return (
     <View style={styles.container}>
@@ -81,18 +82,18 @@ export default function TechnicianPerformanceScreen() {
             <Star
               size={34}
               color="#F59E0B"
-              fill={averageRating > 0 ? "#F59E0B" : "transparent"}
+              fill={ratingDisplay.hasRatings ? "#F59E0B" : "transparent"}
             />
           </View>
 
           <Text style={styles.ratingValue}>
-            {averageRating > 0 ? averageRating.toFixed(1) : "0"}
+            {ratingDisplay.value}
           </Text>
 
           <Text style={styles.ratingLabel}>Overall Rating</Text>
 
           <Text style={styles.reviewCount}>
-            {getRatingLabel(averageRating, reviewCount)}
+            {ratingDisplay.label}
           </Text>
         </View>
 
@@ -117,7 +118,7 @@ export default function TechnicianPerformanceScreen() {
 
           <StatCard
             icon={<Star size={21} color="#F59E0B" />}
-            value={String(reviewCount)}
+            value={ratingDisplay.countValue}
             label="Reviews"
           />
         </View>
