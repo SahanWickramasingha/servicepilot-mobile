@@ -5,6 +5,14 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "approved", "order": "ASCENDING" },
+        { "fieldPath": "serviceCategory", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "technician_map_profiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "approved", "order": "ASCENDING" },
         { "fieldPath": "serviceDistrictIds", "arrayConfig": "CONTAINS" }
       ]
     },
