@@ -1,29 +1,18 @@
-import { useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
+import { router } from "expo-router";
 import { Linking, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { UserProfile } from "@/src/services/user.service";
 import { foregroundSharing } from "@/src/services/foreground-location.service";
-import { updateServiceDistricts } from "@/src/services/location.service";
-import { resolveServiceDistrictIds } from "@/functions/src/domain/map";
-import { DistrictPicker } from "./DistrictPicker";
 
-export function TechnicianSharingPanel({ profile }: { profile: UserProfile }) {
+export function TechnicianSharingPanel({ profile: _profile }: { profile: UserProfile }) {
   const sharing = useSyncExternalStore(foregroundSharing.subscribe, foregroundSharing.getSnapshot, foregroundSharing.getSnapshot);
-  const [districts, setDistricts] = useState(() => resolveServiceDistrictIds(profile));
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
   const busy = ["starting", "stopping"].includes(sharing.status);
   const toggle = (enabled: boolean) => { void (enabled ? foregroundSharing.enable() : foregroundSharing.stop()).catch(() => undefined); };
   return <View style={styles.card}>
     <Text style={styles.title}>Map & location sharing</Text>
-    <Text style={styles.text}>Choose districts you serve. Your service area is separate from where you currently are.</Text>
-    <DistrictPicker selected={districts} onChange={setDistricts} multiple disabled={saving} />
-    <Pressable disabled={saving} style={styles.button} onPress={async () => {
-      setSaving(true); setMessage("");
-      try { await updateServiceDistricts(profile.uid, districts); setMessage("Service districts saved."); }
-      catch { setMessage("Unable to save districts. Please retry."); }
-      finally { setSaving(false); }
-    }}><Text style={styles.buttonText}>{saving ? "Saving…" : "Save service districts"}</Text></Pressable>
-    {!!message && <Text accessibilityRole="alert" style={styles.text}>{message}</Text>}
+    <Text style={styles.text}>Service districts and towns are saved in Personal Information, separately from current GPS.</Text>
+    <Pressable accessibilityRole="button" style={styles.button} onPress={() => router.push("/technician/personal-information")}>
+      <Text style={styles.buttonText}>Edit Service Area</Text></Pressable>
     <View style={styles.toggleRow}><View style={{ flex: 1 }}>
       <Text style={styles.title}>Share current location</Text>
       <Text style={styles.text}>{sharing.status === "sharing" ? "Sharing while the app is active" :
