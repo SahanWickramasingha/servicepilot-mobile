@@ -14,8 +14,9 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { buildMapProfile } from "@/functions/src/domain/mapProjection";
+import { ServiceAreasByDistrict, StoredServiceAreasByDistrict, encodeServiceAreas } from "@/functions/src/domain/serviceAreas";
 
-import { db } from "@/src/firebase/config";
+import { auth, db } from "@/src/firebase/config";
 import {
   getFirebaseErrorCode,
   getFirebaseErrorMessage,
@@ -76,6 +77,7 @@ export interface UserProfile {
   serviceDivision?: string;
   profilePhotoUrl?: string;
   serviceDistrictIds?: string[];
+  serviceAreasByDistrict?: StoredServiceAreasByDistrict;
   averageRating?: number;
   reviewCount?: number;
   completedJobs?: number;
@@ -257,13 +259,23 @@ export async function updateUserProfileSafe(
     fullName: string;
     phone: string;
     address: string;
+    serviceDistrictIds?: string[];
+    serviceAreasByDistrict?: ServiceAreasByDistrict;
   }
 ): Promise<void> {
+  if (auth.currentUser?.uid !== uid) throw new Error("Update your own account only.");
+  if (!data.fullName.trim() || !data.phone.trim() || !data.address.trim()) throw new Error("Full name, phone, and address are required.");
   const userRef = doc(db, "users", uid);
 
   await runTransaction(db, async (transaction) => {
     const profile = (await transaction.get(userRef)).data();
-    const changes = { fullName: data.fullName.trim(), phone: data.phone.trim(), address: data.address.trim(), updatedAt: serverTimestamp() };
+    if (!profile) throw new Error("Profile unavailable.");
+    const hasCoverage = data.serviceDistrictIds !== undefined || data.serviceAreasByDistrict !== undefined;
+    if (hasCoverage && (profile.role !== "technician" || !data.serviceDistrictIds || !data.serviceAreasByDistrict)) {
+      throw new Error("Service areas require a Technician and selected districts.");
+    }
+    const changes = { fullName: data.fullName.trim(), phone: data.phone.trim(), address: data.address.trim(), updatedAt: serverTimestamp(),
+      ...(hasCoverage ? { serviceDistrictIds: data.serviceDistrictIds!, serviceAreasByDistrict: encodeServiceAreas(data.serviceDistrictIds!, data.serviceAreasByDistrict!) } : {}) };
     transaction.update(userRef, changes);
     if (profile?.role === "technician") transaction.set(doc(db, "technician_map_profiles", uid), {
       ...buildMapProfile(uid, { ...profile, ...changes }), updatedAt: serverTimestamp(),
