@@ -203,6 +203,7 @@ service cloud.firestore {
           "serviceAreas",
           "serviceDivision",
           "serviceDistrictIds",
+          "serviceAreasByDistrict",
           "emailVerified",
           "updatedAt"
         ]);
@@ -211,6 +212,10 @@ service cloud.firestore {
     function validOwnerUpdate(userId) {
       return isOwner(userId) &&
         ownerMutableFieldsOnly() &&
+        (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(["serviceDistrictIds", "serviceAreasByDistrict"]) ||
+          (resource.data.role == "technician" && validServiceAreas(request.resource.data.get("serviceAreasByDistrict", {}), request.resource.data.get("serviceDistrictIds", [])))
+        ) &&
         (
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(["serviceDistrictIds"]) ||
           (resource.data.role == "technician" && validServiceDistrictIds(request.resource.data.serviceDistrictIds))
@@ -374,11 +379,6 @@ service cloud.firestore {
         resource.data.createdBy == request.auth.uid;
     }
 
-    function isApprovedTechnicianProfile() {
-      return resource.data.role == "technician" &&
-        resource.data.technicianApprovalStatus == "approved";
-    }
-
     function isTechnicianProfile() {
       return resource.data.role == "technician";
     }
@@ -389,10 +389,6 @@ service cloud.firestore {
         (
           isActiveDispatcher() &&
           isTechnicianProfile()
-        ) ||
-        (
-          isVerifiedCustomer() &&
-          isApprovedTechnicianProfile()
         );
     }
 
@@ -401,10 +397,6 @@ service cloud.firestore {
         (
           isActiveDispatcher() &&
           isTechnicianProfile()
-        ) ||
-        (
-          isVerifiedCustomer() &&
-          isApprovedTechnicianProfile()
         );
     }
 
@@ -1128,6 +1120,31 @@ service cloud.firestore {
       return isOwner(technicianId) && userRole(technicianId) == "technician";
     }
 
+    function validDistrictArea(areas, districtId) {
+      let area = areas.get(districtId, "");
+      return !(districtId in areas) ||
+        (area is string && area.matches('other:[^ <>\\x00-\\x1f\\x7f][^<>\\x00-\\x1f\\x7f]{0,78}[^ <>\\x00-\\x1f\\x7f]')) ||
+        (districtId == "kandy" && area in [
+          "lk-postal-20400-peradeniya", "lk-postal-20800-katugastota", "lk-postal-20168-kundasale", "lk-postal-20500-gampola"]);
+    }
+
+    function validServiceAreas(areas, ids) {
+      return areas is map && validServiceDistrictIds(ids) && areas.keys().hasOnly(ids) &&
+        validDistrictArea(areas, "ampara") && validDistrictArea(areas, "anuradhapura") &&
+        validDistrictArea(areas, "badulla") && validDistrictArea(areas, "batticaloa") &&
+        validDistrictArea(areas, "colombo") && validDistrictArea(areas, "galle") &&
+        validDistrictArea(areas, "gampaha") && validDistrictArea(areas, "hambantota") &&
+        validDistrictArea(areas, "jaffna") && validDistrictArea(areas, "kalutara") &&
+        validDistrictArea(areas, "kandy") && validDistrictArea(areas, "kegalle") &&
+        validDistrictArea(areas, "kilinochchi") && validDistrictArea(areas, "kurunegala") &&
+        validDistrictArea(areas, "mannar") && validDistrictArea(areas, "matale") &&
+        validDistrictArea(areas, "matara") && validDistrictArea(areas, "monaragala") &&
+        validDistrictArea(areas, "mullaitivu") && validDistrictArea(areas, "nuwara-eliya") &&
+        validDistrictArea(areas, "polonnaruwa") && validDistrictArea(areas, "puttalam") &&
+        validDistrictArea(areas, "ratnapura") && validDistrictArea(areas, "trincomalee") &&
+        validDistrictArea(areas, "vavuniya");
+    }
+
     function mapCategory(profile) {
       let category = profile.get("specialization", "").lower();
       return category.matches('.*electrical.*') ? "Electrical" :
@@ -1146,11 +1163,17 @@ service cloud.firestore {
           isActiveDispatcher() || isSuperAdmin()) &&
         profile.role == "technician" &&
         data.keys().hasAll(["technicianId", "fullName", "specialization", "serviceCategory", "serviceDistrictIds", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
-        data.keys().hasOnly(["technicianId", "fullName", "specialization", "serviceCategory", "serviceDistrictIds", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
+        data.keys().hasOnly(["technicianId", "fullName", "specialization", "serviceCategory", "serviceDistrictIds", "serviceAreasByDistrict", "publicDetails", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
         data.technicianId == technicianId && data.fullName is string && data.fullName.size() > 0 && data.fullName == profile.fullName &&
         data.specialization is string && data.specialization == profile.get("specialization", "") &&
         data.serviceCategory == mapCategory(profile) && validServiceDistrictIds(data.serviceDistrictIds) &&
         data.serviceDistrictIds == profile.get("serviceDistrictIds", []) &&
+        data.get("serviceAreasByDistrict", {}) == profile.get("serviceAreasByDistrict", {}) &&
+        (!data.keys().hasAny(["publicDetails"]) || data.publicDetails == {
+          "experience": profile.get("experience", ""), "qualifications": profile.get("qualifications", ""),
+          "certifications": profile.get("certifications", ""), "profilePhotoUrl": profile.get("profilePhotoUrl", ""),
+          "completedJobs": profile.get("completedJobs", 0)
+        }) &&
         data.approved is bool && data.approved == (profile.technicianApprovalStatus == "approved" && profileHasActiveAccount(profile)) &&
         data.averageRating is number && data.averageRating >= 0 && data.averageRating <= 5 && data.averageRating == profile.get("averageRating", 0) &&
         data.reviewCount is int && data.reviewCount >= 0 && data.reviewCount == profile.get("reviewCount", 0) && data.updatedAt == request.time;
@@ -1161,7 +1184,7 @@ service cloud.firestore {
         (isVerifiedCustomer() && resource.data.approved == true && isApprovedTechnicianId(technicianId));
       // Query snapshot approval; validate current approval with the get above before display.
       // No private profile or coordinates are exposed through this display-only query.
-      allow list: if isVerifiedCustomer() && request.query.limit != null && request.query.limit <= 8 &&
+      allow list: if isVerifiedCustomer() && request.query.limit != null && request.query.limit <= 24 &&
         resource.data.approved == true;
       allow create, update: if validMapProfile(technicianId);
       allow delete: if false;
