@@ -2,16 +2,55 @@ import { collection, doc, documentId, getDocFromServer, getDocsFromServer, limit
   query, runTransaction, serverTimestamp, setDoc, startAfter, Timestamp, where, writeBatch } from "firebase/firestore";
 import { auth, db } from "@/src/firebase/config";
 import { approximateCoordinate, DISTRICTS, locationIsFresh, resolveServiceDistrictIds, validCoordinate } from "@/functions/src/domain/map";
-import { buildMapProfile, MAP_PAGE_SIZE } from "@/functions/src/domain/mapProjection";
+import { buildMapProfile, mapServiceCategory, MAP_MAX_ITEMS, MAP_PAGE_SIZE } from "@/functions/src/domain/mapProjection";
+import { StoredServiceAreasByDistrict, encodeServiceAreas, readServiceAreas, retainServiceAreas } from "@/functions/src/domain/serviceAreas";
 import { classifyMapServiceError, MapServiceError } from "@/src/utils/mapServiceError";
 export type MapTechnician = {
   uid: string; fullName: string; specialization: string; serviceDistrictIds: string[];
   averageRating: number; reviewCount: number;
+  serviceAreasByDistrict?: StoredServiceAreasByDistrict;
 };
 export type SharedMapLocation = { latitude: number; longitude: number; updatedAtMs?: number };
+export type PublicMapLocationSnapshot = { location: SharedMapLocation | null; updatedAtMs?: number };
 export type MapPage = { items: MapTechnician[]; cursor?: string; hasMore: boolean };
 export type JobLocation = { status: "available"; technicianId: string; latitude: number; longitude: number; updatedAtMs: number } |
   { status: "not-sharing" | "stale" };
+
+function mapProfile(uid: string, data: Record<string, any> | undefined): MapTechnician {
+  if (!data) throw new MapServiceError("service", "failed-precondition");
+  return { uid, fullName: data.fullName, specialization: data.specialization,
+    serviceDistrictIds: data.serviceDistrictIds, averageRating: data.averageRating, reviewCount: data.reviewCount,
+    ...(data.serviceAreasByDistrict !== undefined ? { serviceAreasByDistrict: data.serviceAreasByDistrict } : {}) };
+}
+
+/** Bounded public projection listener. Every emission rechecks authoritative approval via server gets. */
+export function subscribeToMapTechnicians(districtId: string, category: string | undefined, pageCount: number,
+  onNext: (page: MapPage) => void, onError: (error: Error) => void): () => void {
+  if (!DISTRICTS.some((district) => district.id === districtId)) throw new Error("Select a valid service district.");
+  const count = Math.min(MAP_MAX_ITEMS, Math.max(1, pageCount) * MAP_PAGE_SIZE);
+  const directory = query(collection(db, "technician_map_profiles"), where("approved", "==", true),
+    where("serviceDistrictIds", "array-contains", districtId), ...(category ? [where("serviceCategory", "==", category)] : []),
+    orderBy(documentId()), limit(count));
+  let alive = true, generation = 0;
+  const fail = async (cause: unknown, version: number) => {
+    const error = await classifyMapServiceError(cause);
+    if (alive && generation === version) onError(error);
+  };
+  const unsubscribe = onSnapshot(directory, { includeMetadataChanges: true }, (snapshot) => {
+    const version = ++generation;
+    if (snapshot.metadata.fromCache) { void fail(new MapServiceError("network", "unavailable"), version); return; }
+    // Reads are limited to this page (8/16/24), never private users or GPS documents.
+    void Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref))).then((verified) => {
+      if (!alive || generation !== version) return;
+      const items = verified.map((item) => mapProfile(item.id, item.data()))
+        .filter((item) => item.serviceDistrictIds.includes(districtId) &&
+          (!category || mapServiceCategory(item.specialization) === category));
+      items.sort((a, b) => b.averageRating - a.averageRating || a.fullName.localeCompare(b.fullName));
+      onNext({ items, cursor: snapshot.docs.at(-1)?.id, hasMore: snapshot.size === count && count < MAP_MAX_ITEMS });
+    }).catch((cause) => { void fail(cause, version); });
+  }, (cause) => { void fail(cause, ++generation); });
+  return () => { alive = false; generation++; unsubscribe(); };
+}
 
 export async function getMapTechnicianPage(districtId: string, category?: string, cursor?: string): Promise<MapPage> {
   if (!DISTRICTS.some((district) => district.id === districtId)) throw new Error("Select a valid service district.");
@@ -22,12 +61,8 @@ export async function getMapTechnicianPage(districtId: string, category?: string
     const snapshot = await getDocsFromServer(directory);
     // Each get independently checks CURRENT authoritative approval. Never swallow denied gets.
     const verified = await Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref)));
-    return { items: verified.map((item) => {
-      const data = item.data();
-      if (!data) throw new MapServiceError("service", "failed-precondition");
-      return { uid: item.id, fullName: data.fullName, specialization: data.specialization,
-        serviceDistrictIds: data.serviceDistrictIds, averageRating: data.averageRating, reviewCount: data.reviewCount };
-    }), cursor: snapshot.docs.at(-1)?.id, hasMore: snapshot.size === MAP_PAGE_SIZE };
+    return { items: verified.map((item) => mapProfile(item.id, item.data())),
+      cursor: snapshot.docs.at(-1)?.id, hasMore: snapshot.size === MAP_PAGE_SIZE };
   } catch (cause) { throw await classifyMapServiceError(cause); }
 }
 
@@ -102,16 +137,33 @@ export async function publishTechnicianLocation(uid: string, point?: { latitude:
   } finally { clearTimeout(timer); }
 }
 
-export function subscribeToMapLocation(uid: string, onNext: (location: SharedMapLocation | null) => void, onError: (error: Error) => void) {
+function readPublicMapLocation(uid: string, data: Record<string, any> | undefined): PublicMapLocationSnapshot {
+  const updatedAtMs = data?.updatedAt?.toMillis?.();
+  if (!data || data.technicianId !== uid || data.sharingEnabled !== true || !Number.isInteger(data.latCell) || !Number.isInteger(data.lngCell) ||
+      data.latCell < -9000 || data.latCell > 9000 || data.lngCell < -18000 || data.lngCell > 18000) return { location: null, updatedAtMs };
+  const point = approximateCoordinate(data.latCell, data.lngCell);
+  return { location: validCoordinate(point) ? { ...point, updatedAtMs } : null, updatedAtMs };
+}
+
+/** One explicit server read per location action. Never returns private GPS or a cached fallback. */
+export async function getLatestMapLocation(uid: string): Promise<PublicMapLocationSnapshot> {
+  if (!uid.trim() || uid.includes("/")) throw new Error("Select a valid Technician.");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const snapshot = await Promise.race([getDocFromServer(doc(db, "technician_map_locations", uid)),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new MapServiceError("network", "deadline-exceeded")), 12000); })]);
+    if (snapshot.metadata?.fromCache) throw new MapServiceError("network", "unavailable");
+    const result = readPublicMapLocation(uid, snapshot.data());
+    return result;
+  } catch (cause) { throw await classifyMapServiceError(cause); }
+  finally { clearTimeout(timer); }
+}
+
+export function subscribeToMapLocation(uid: string, onNext: (location: SharedMapLocation | null, updatedAtMs?: number) => void, onError: (error: Error) => void) {
   return onSnapshot(doc(db, "technician_map_locations", uid), { includeMetadataChanges: true }, (snapshot) => {
-    const data = snapshot.data();
     if (snapshot.metadata.fromCache) { onError(new MapServiceError("network", "unavailable")); return; }
-    if (!data || data.sharingEnabled !== true || !Number.isInteger(data.latCell) || !Number.isInteger(data.lngCell)) {
-      onNext(null);
-      return;
-    }
-    const point = approximateCoordinate(data.latCell, data.lngCell);
-    onNext(validCoordinate(point) ? { ...point, updatedAtMs: data.updatedAt?.toMillis() } : null);
+    const result = readPublicMapLocation(uid, snapshot.data());
+    onNext(result.location, result.updatedAtMs);
   }, (cause) => { void classifyMapServiceError(cause).then(onError); });
 }
 
@@ -124,9 +176,10 @@ export async function updateServiceDistricts(uid: string, ids: string[]): Promis
     const profile = (await transaction.get(userRef)).data();
     if (!profile) throw new Error("Technician profile unavailable.");
     const serviceDistrictIds = [...new Set(ids)];
-    transaction.update(userRef, { serviceDistrictIds, updatedAt: serverTimestamp() });
+    const areas = profile.serviceAreasByDistrict !== undefined ? { serviceAreasByDistrict: encodeServiceAreas(serviceDistrictIds, retainServiceAreas(serviceDistrictIds, readServiceAreas(profile.serviceAreasByDistrict))) } : {};
+    transaction.update(userRef, { serviceDistrictIds, ...areas, updatedAt: serverTimestamp() });
     transaction.set(doc(db, "technician_map_profiles", uid), {
-      ...buildMapProfile(uid, { ...profile, serviceDistrictIds }), updatedAt: serverTimestamp(),
+      ...buildMapProfile(uid, { ...profile, serviceDistrictIds, ...areas }), updatedAt: serverTimestamp(),
     });
   });
 }
