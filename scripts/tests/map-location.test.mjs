@@ -32,6 +32,7 @@ function loadService(session) {
     "@/src/firebase/config": { default: session.app, auth: session.auth, db: session.db }, "@/functions/src/domain/map": domain,
     "@/src/utils/mapServiceError": errorExports };
   deps["@/functions/src/domain/mapProjection"] = projection;
+  deps["@/functions/src/domain/serviceAreas"] = requireFunctions("./lib/domain/serviceAreas.js");
   new Function("exports", "require", "__DEV__", output)(exports, (id) => deps[id] ?? requireRoot(id), false);
   return exports;
 }
@@ -129,6 +130,10 @@ test("sharing ON publishes exact private and coarse public data; OFF removes bot
   });
   assert.equal(mapped.latitude, 7.295); assert.equal(mapped.longitude, 80.635);
   assert.notEqual(mapped.latitude, point.latitude);
+  const explicit = await customer().service.getLatestMapLocation("map-tech");
+  assert.deepEqual(explicit.location, mapped);
+  assert.equal(explicit.updatedAtMs, data.updatedAt.toMillis());
+  await denied(other().service.getLatestMapLocation("map-pending"));
   await tech().service.publishTechnicianLocation("map-tech");
   assert.equal((await firestore.getDoc(publicRef)).data().sharingEnabled, false);
   const raw = (await admin.doc("technician_locations/map-tech").get()).data();
@@ -137,6 +142,8 @@ test("sharing ON publishes exact private and coarse public data; OFF removes bot
     const unsubscribe = customer().service.subscribeToMapLocation("map-tech", (location) => { if (!location) { unsubscribe(); resolve(location); } }, (error) => { if (error.kind !== "network") reject(error); });
   });
   assert.equal(hidden, null);
+  const stopped = await customer().service.getLatestMapLocation("map-tech");
+  assert.equal(stopped.location, null); assert.ok(stopped.updatedAtMs >= explicit.updatedAtMs);
 });
 
 test("matching Kandy filter includes the approved Technician; Kurunegala does not, and OFF hides its marker", async () => {
@@ -240,7 +247,7 @@ test("bounded query pagination and verified gets work; broad/unconstrained queri
   assert.equal(new Set([...first.items, ...last.items].map((t) => t.uid)).size, 9);
   const directory = firestore.collection(customer().db, "technician_map_profiles");
   await denied(firestore.getDocs(firestore.query(directory, firestore.limit(8))));
-  await denied(firestore.getDocs(firestore.query(directory, firestore.where("approved", "==", true), firestore.limit(9))));
+  await denied(firestore.getDocs(firestore.query(directory, firestore.where("approved", "==", true), firestore.limit(25))));
   // Even a trusted out-of-band change cannot leave a revoked Technician readable.
   await admin.doc("users/map-page-0").update({ technicianApprovalStatus: "rejected" });
   await denied(firestore.getDocFromServer(firestore.doc(customer().db, "technician_map_profiles", "map-page-0")));
@@ -271,4 +278,136 @@ test("actual Admin Web Dispatcher service publishes approval/rejection snapshots
   await exports.reviewTechnicianApplication({ technicianUid: "map-rejection", dispatcherUid: "map-dispatcher", status: "rejected", rejectionReason: "Fixture rejection" });
   assert.equal((await admin.doc("technician_map_profiles/map-rejection").get()).data().approved, false);
   await denied(firestore.getDocFromServer(firestore.doc(other().db, "users", "map-customer-a")));
+});
+
+test("Personal Information persists district areas atomically without changing GPS, sharing, ratings or private access", async () => {
+  const areaDomain = requireFunctions("./lib/domain/serviceAreas.js");
+  const loadProfileService = (session) => {
+    const code = ts.transpileModule(readFileSync(new URL("../../src/services/user.service.ts", import.meta.url), "utf8"),
+      { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+    const exports = {}, deps = { "firebase/firestore": firestore, "@/src/firebase/config": session,
+      "@/src/utils/registrationDebug": {}, "@/functions/src/domain/mapProjection": projection, "@/functions/src/domain/serviceAreas": areaDomain };
+    new Function("exports", "require", code)(exports, (id) => deps[id] ?? requireRoot(id)); return exports;
+  };
+  const userService = loadProfileService(tech());
+  const peradeniya = areaDomain.SERVICE_AREA_CATALOGUE.kandy.find((a) => a.label === "Peradeniya");
+  const privateBefore = (await admin.doc("technician_locations/map-tech").get()).data();
+  const publicBefore = (await admin.doc("technician_map_locations/map-tech").get()).data();
+  const fields = { fullName: "Map Technician", phone: "private", address: "private", serviceDistrictIds: ["kandy", "colombo"],
+    serviceAreasByDistrict: { kandy: peradeniya, colombo: { id: "other", label: "Local town", source: "technician" } } };
+  await userService.updateUserProfileSafe("map-tech", fields);
+  const reopened = await userService.getUserProfile("map-tech");
+  const encoded = areaDomain.encodeServiceAreas(fields.serviceDistrictIds, fields.serviceAreasByDistrict);
+  assert.deepEqual(reopened.serviceAreasByDistrict, encoded);
+  assert.equal(reopened.averageRating, 4); assert.equal(reopened.reviewCount, 3);
+  const directory = await customer().service.getMapTechnicians("kandy");
+  assert.deepEqual(directory.find((t) => t.uid === "map-tech").serviceAreasByDistrict, encoded);
+  // Keep the customer's subscription open during repeated authoritative profile saves.
+  const waiters = [];
+  const stop = customer().service.subscribeToMapTechnicians("kandy", "Electrical", 1, (page) => {
+    const area = page.items.find((t) => t.uid === "map-tech")?.serviceAreasByDistrict?.kandy;
+    for (const waiter of [...waiters]) if (waiter.id === area) waiter.resolve();
+  }, (error) => { if (error.kind !== "network") for (const waiter of waiters) waiter.reject(error); });
+  const waitFor = (id) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Timed out waiting for saved area ${id}`)), 10000);
+    waiters.push({ id, resolve: () => { clearTimeout(timer); resolve(); }, reject: (error) => { clearTimeout(timer); reject(error); } });
+  });
+  try {
+    await waitFor(peradeniya.id);
+    const katugastota = areaDomain.SERVICE_AREA_CATALOGUE.kandy.find((a) => a.label === "Katugastota");
+    for (const area of [katugastota, peradeniya, katugastota]) {
+      const received = waitFor(area.id);
+      await userService.updateUserProfileSafe("map-tech", { ...fields, serviceAreasByDistrict: { ...fields.serviceAreasByDistrict, kandy: area } });
+      await received;
+      assert.equal((await userService.getUserProfile("map-tech")).serviceAreasByDistrict.kandy, area.id);
+    }
+  } finally { stop(); }
+  assert.deepEqual((await admin.doc("technician_locations/map-tech").get()).data(), privateBefore);
+  assert.deepEqual((await admin.doc("technician_map_locations/map-tech").get()).data(), publicBefore);
+  const mapCard = directory.find((t) => t.uid === "map-tech");
+  for (const privateField of ["address", "phone", "email", "latitude", "longitude"]) assert.equal(privateField in mapCard, false);
+  await denied(firestore.getDocFromServer(firestore.doc(customer().db, "users", "map-tech")));
+  await denied(firestore.getDocs(firestore.query(firestore.collection(customer().db, "users"), firestore.where("role", "==", "technician"), firestore.where("technicianApprovalStatus", "==", "approved"))));
+  await assert.rejects(userService.updateUserProfileSafe("map-tech", { ...fields, serviceDistrictIds: ["colombo"] }), /selected district/);
+  await tech().service.updateServiceDistricts("map-tech", ["colombo"]);
+  assert.deepEqual((await userService.getUserProfile("map-tech")).serviceAreasByDistrict, { colombo: encoded.colombo });
+  // Old district-only profiles remain valid and can be saved without recreation.
+  await userService.updateUserProfileSafe("map-tech", { ...fields, serviceAreasByDistrict: {} });
+});
+
+test("rules reject area spoofing, mismatched districts, extra fields and non-Technician area writes", async () => {
+  const areaDomain = requireFunctions("./lib/domain/serviceAreas.js");
+  const peradeniya = areaDomain.SERVICE_AREA_CATALOGUE.kandy.find((a) => a.label === "Peradeniya");
+  const ref = firestore.doc(tech().db, "users", "map-tech");
+  for (const areas of [{ colombo: peradeniya.id }, { kandy: "lk-postal-20400-fake" },
+    { kandy: { ...peradeniya, latitude: 7 } }, { imaginary: peradeniya },
+    { kandy: "other:bad\narea" }, { kandy: "other:  " }, { kandy: "other:" + "x".repeat(81) },
+    { kandy: "other:<area>" }, { kandy: "other: Local area" }, { kandy: "other:Local area " }]) {
+    await denied(firestore.updateDoc(ref, { serviceAreasByDistrict: areas }));
+  }
+  await denied(firestore.updateDoc(firestore.doc(customer().db, "users", "map-customer-a"), { serviceAreasByDistrict: {} }));
+  const source = (await admin.doc("users/map-tech").get()).data();
+  await denied(firestore.setDoc(firestore.doc(tech().db, "technician_map_profiles", "map-tech"), {
+    ...projection.buildMapProfile("map-tech", source), serviceAreasByDistrict: { kandy: peradeniya.id }, updatedAt: firestore.serverTimestamp(),
+  }));
+  // Exercise the largest permitted district map against the rules evaluation budget.
+  const serviceDistrictIds = domain.DISTRICTS.map((d) => d.id);
+  const serviceAreasByDistrict = Object.fromEntries(serviceDistrictIds.map((id) => [id, "other:Local area"]));
+  const batch = firestore.writeBatch(tech().db);
+  batch.update(ref, { serviceDistrictIds, serviceAreasByDistrict });
+  batch.set(firestore.doc(tech().db, "technician_map_profiles", "map-tech"), {
+    ...projection.buildMapProfile("map-tech", { ...source, serviceDistrictIds, serviceAreasByDistrict }), updatedAt: firestore.serverTimestamp(),
+  });
+  await batch.commit();
+});
+
+test("existing customer profile/list actions read only public projections and cannot inject private detail fields", async () => {
+  const categories = {};
+  new Function("exports", ts.transpileModule(readFileSync(new URL("../../src/constants/serviceRequests.ts", import.meta.url), "utf8"),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText)(categories);
+  const code = ts.transpileModule(readFileSync(new URL("../../src/services/technician.service.ts", import.meta.url), "utf8"),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+  const exports = {}, deps = { "firebase/firestore": firestore, "@/src/firebase/config": customer(),
+    "@/functions/src/domain/map": domain, "@/functions/src/domain/mapProjection": projection,
+    "@/functions/src/domain/serviceAreas": requireFunctions("./lib/domain/serviceAreas.js") };
+  deps["@/src/constants/serviceRequests"] = categories;
+  const rating = {};
+  new Function("exports", ts.transpileModule(readFileSync(new URL("../../src/utils/technicianRating.ts", import.meta.url), "utf8"),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText)(rating);
+  deps["@/src/utils/technicianRating"] = rating;
+  new Function("exports", "require", code)(exports, (id) => deps[id] ?? requireRoot(id));
+  const profile = await exports.getApprovedTechnician("map-tech");
+  assert.equal(profile.uid, "map-tech"); assert.equal(profile.fullName, "Map Technician");
+  assert.equal(profile.averageRating, 4); assert.equal(profile.reviewCount, 3);
+  assert.equal(profile.address, ""); assert.equal(profile.phone, ""); assert.equal(profile.email, "");
+  const items = await new Promise((resolve, reject) => {
+    const stop = exports.subscribeToApprovedTechnicians((items) => { stop(); resolve(items); }, reject, { division: "Kandy" });
+  });
+  assert.ok(items.some((item) => item.uid === "map-tech"));
+  assert.ok(items.every((item) => item.phone === "" && item.address === ""));
+  const authoritative = (await admin.doc("users/map-tech").get()).data();
+  const trusted = projection.buildMapProfile("map-tech", authoritative);
+  await denied(firestore.setDoc(firestore.doc(tech().db, "technician_map_profiles", "map-tech"), {
+    ...trusted, publicDetails: { ...trusted.publicDetails, address: "private" }, updatedAt: firestore.serverTimestamp(),
+  }));
+  const load = (path, extra = {}) => {
+    const output = ts.transpileModule(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"),
+      { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
+    const result = {};
+    new Function("exports", "require", output)(result, (id) => extra[id] ?? deps[id] ?? requireRoot(id));
+    return result;
+  };
+  const notifications = load("src/services/notification.service.ts");
+  const requests = load("src/services/request.service.ts", {
+    "@/src/services/technician.service": exports, "@/src/services/notification.service": notifications,
+  });
+  const customerProfile = (await admin.doc("users/map-customer-a").get()).data();
+  const requestId = await requests.createServiceRequest({ profile: customerProfile, technician: profile,
+    serviceCategory: "Electrical", title: "Local demo request", description: "Test public profile preflight", address: "Customer supplied address",
+    division: "Kandy", preferredDate: "2026-10-04", scheduledAt: new Date("2026-10-04T04:30:00Z"), priority: "normal" });
+  const request = (await admin.doc(`service_requests/${requestId}`).get()).data();
+  assert.equal(request.technicianId, "map-tech"); assert.equal(request.customerId, "map-customer-a");
+  assert.equal(request.status, "requested");
+  const notification = await admin.collection("notifications").where("requestId", "==", requestId).get();
+  assert.ok(notification.docs.some((item) => item.data().userId === "map-tech" && item.data().type === "new_customer_request"));
 });
