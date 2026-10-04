@@ -21,6 +21,7 @@ function fixture(overrides = {}) {
     servicesEnabled: async () => true, current: async () => point(),
     watch: async (next, error) => { state.watch = next; state.watchError = error; return () => { state.removed++; }; },
     every: (callback, ms) => { assert.equal(ms, 90000); state.heartbeat = callback; return () => { state.timerRemoved++; }; },
+    after: (callback, ms) => { state.pending = { callback, ms }; return () => { state.pending = undefined; }; },
     publish: async (uid, p) => { state.writes.push({ uid, point: p }); }, ...overrides };
   return { state, point, sharing: new ForegroundSharing(adapter), adapter };
 }
@@ -164,4 +165,61 @@ test("OFF cancels a pending acquisition and late callbacks cannot publish", asyn
   await sharing.stop(); await enabling;
   assert.equal(cancelled.aborted, true); assert.equal(sharing.getSnapshot().status, "off");
   assert.ok(state.writes.every((write) => !write.point));
+});
+
+test("a newer watch fix during startup replaces the acquisition fix before the first publication", async () => {
+  const { sharing, state, point, adapter } = fixture();
+  const initial = point(), newer = { ...initial, latitude: 7.095, longitude: 80.865, sampledAt: initial.sampledAt + 1 };
+  adapter.watch = async (next) => { state.watch = next; next(newer); return () => state.removed++; };
+  await sharing.setSession("tech-a"); await sharing.enable();
+  assert.deepEqual(state.writes.at(-1).point, newer);
+  await sharing.stop();
+});
+
+test("movement during an in-flight first save is retained, throttled and cannot regress to an older callback", async () => {
+  const { sharing, state, point, adapter } = fixture(); let release;
+  await sharing.setSession("tech-a");
+  const publish = adapter.publish;
+  adapter.publish = async (uid, fix) => { if (fix && !release) await new Promise((resolve) => { release = resolve; }); await publish(uid, fix); };
+  const starting = sharing.enable(); await flush();
+  const older = point(); state.now += 1000;
+  const moved = { ...point(), latitude: 7.095, longitude: 80.865 };
+  state.watch(moved); release(); await starting; await flush();
+  assert.equal(state.writes.filter((write) => write.point).length, 1); assert.ok(state.pending);
+  state.now += 60000; state.watch(older); await flush();
+  assert.equal(sharing.getSnapshot().status, "sharing");
+  // A recent callback preserves the same device coordinate and allows the bounded write.
+  state.watch({ ...moved, sampledAt: state.now }); await flush();
+  assert.deepEqual(state.writes.at(-1).point, { ...moved, sampledAt: state.now });
+  assert.equal(state.pending, undefined); await sharing.stop();
+});
+
+test("a single throttled movement is published at the next allowed interval; OFF cancels its pending write", async () => {
+  const { sharing, state, point } = fixture();
+  await sharing.setSession("tech-a"); await sharing.enable();
+  const initial = state.writes.length;
+  state.now += 1000; const moved = { ...point(), latitude: 7.095, longitude: 80.865 };
+  state.watch(moved); await flush();
+  assert.equal(state.writes.length, initial); assert.equal(state.pending.ms, 59000);
+  const due = state.pending.callback; state.pending = undefined; state.now += 59000; due(); await flush();
+  assert.equal(state.writes.length, initial + 1); assert.deepEqual(state.writes.at(-1).point, moved);
+  state.now += 1000; state.watch({ ...point(), latitude: 7.295, longitude: 80.635 }); await flush();
+  const cancelled = state.pending.callback;
+  await sharing.stop(); assert.equal(state.pending, undefined);
+  const stopped = state.writes.length; state.now += 59000; cancelled(); await flush();
+  assert.equal(state.writes.length, stopped); assert.equal(state.writes.at(-1).point, undefined);
+});
+
+test("a previous account's in-flight save cannot throttle the new technician's first fix", async () => {
+  const { sharing, state, adapter } = fixture(); let release;
+  const publish = adapter.publish;
+  adapter.publish = async (uid, point) => {
+    if (uid === "tech-a" && point) await new Promise((resolve) => { release = resolve; });
+    await publish(uid, point);
+  };
+  await sharing.setSession("tech-a"); const previous = sharing.enable(); await flush();
+  const changed = sharing.setSession("tech-b"); release(); await previous; await changed;
+  await sharing.enable();
+  assert.equal(state.writes.at(-1).uid, "tech-b"); assert.ok(state.writes.at(-1).point);
+  assert.equal(sharing.getSnapshot().status, "sharing"); await sharing.stop();
 });
