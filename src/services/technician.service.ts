@@ -1,19 +1,23 @@
 import {
   collection,
   doc,
-  getDoc,
+  getDocFromServer,
   onSnapshot,
   query,
   where,
   Timestamp,
+  type SnapshotMetadata,
+  limit,
+  documentId,
+  orderBy,
 } from "firebase/firestore";
 
-import { ServiceCategory } from "@/src/constants/serviceRequests";
+import { SERVICE_CATEGORIES, ServiceCategory } from "@/src/constants/serviceRequests";
 import { db } from "@/src/firebase/config";
-import {
-  getTechnicianDivision,
-  UserProfile,
-} from "@/src/services/user.service";
+import { districtIdForName } from "@/functions/src/domain/map";
+import { declaredServiceAreaLabel, StoredServiceAreasByDistrict } from "@/functions/src/domain/serviceAreas";
+import { MAP_MAX_ITEMS, MAP_PAGE_SIZE } from "@/functions/src/domain/mapProjection";
+import { isEligibleReviewRating } from "@/src/utils/technicianRating";
 
 export interface PublicTechnicianProfile {
   uid: string;
@@ -30,6 +34,7 @@ export interface PublicTechnicianProfile {
   averageRating: number;
   reviewCount: number;
   completedJobs: number;
+  serviceDistrictIds: string[];
 }
 
 export interface TechnicianReviewSummary {
@@ -43,29 +48,29 @@ export interface TechnicianReviewSummary {
   createdAt?: Timestamp;
 }
 
-function mapTechnician(
-  data: UserProfile
-): PublicTechnicianProfile {
+type PublicProjection = {
+  technicianId: string; fullName: string; specialization: string; approved: boolean;
+  serviceDistrictIds: string[]; serviceAreasByDistrict?: StoredServiceAreasByDistrict;
+  averageRating: number; reviewCount: number;
+  publicDetails?: { profilePhotoUrl?: string; experience?: string; qualifications?: string; certifications?: string; completedJobs?: number };
+};
+function mapTechnician(data: PublicProjection): PublicTechnicianProfile {
+  const details = data.publicDetails;
   return {
-    uid: data.uid,
+    uid: data.technicianId,
     fullName: data.fullName || "Service Technician",
-    email: data.email || "",
-    phone: data.phone || "",
-    address: data.address || "",
-    profilePhotoUrl: data.profilePhotoUrl,
+    email: "", phone: "", address: "",
+    profilePhotoUrl: details?.profilePhotoUrl || undefined,
     specialization: data.specialization || "General Maintenance",
-    experience: data.experience || "Not provided",
-    qualifications: data.qualifications || "Not provided",
-    certifications: data.certifications || "Not provided",
-    serviceDivision: getTechnicianDivision(data),
+    experience: details?.experience || "Not provided",
+    qualifications: details?.qualifications || "Not provided",
+    certifications: details?.certifications || "Not provided",
+    serviceDistrictIds: data.serviceDistrictIds,
+    serviceDivision: data.serviceDistrictIds.map((id) => declaredServiceAreaLabel(id, data.serviceAreasByDistrict)).join("; ") || "Service districts not set",
     averageRating: Number(data.averageRating ?? 0),
     reviewCount: Number(data.reviewCount ?? 0),
-    completedJobs: Number(data.completedJobs ?? 0),
+    completedJobs: Number(details?.completedJobs ?? 0),
   };
-}
-
-function hasActiveAccount(data: UserProfile): boolean {
-  return !data.accountStatus || data.accountStatus === "active";
 }
 
 function matchesCategory(
@@ -89,7 +94,8 @@ function matchesDivision(
     return true;
   }
 
-  return technician.serviceDivision === division;
+  const id = districtIdForName(division);
+  return technician.serviceDivision === division || !!id && technician.serviceDistrictIds.includes(id);
 }
 
 export function subscribeToApprovedTechnicians(
@@ -98,24 +104,27 @@ export function subscribeToApprovedTechnicians(
   filters?: {
     category?: ServiceCategory | "All" | string;
     division?: string;
+    pageCount?: number;
+    onHasMore?: (hasMore: boolean) => void;
   }
 ) {
-  const techniciansQuery = query(
-    collection(db, "users"),
-    where("role", "==", "technician"),
-    where("technicianApprovalStatus", "==", "approved")
-  );
-
-  return onSnapshot(
+  const count = Math.min(MAP_MAX_ITEMS, Math.max(1, filters?.pageCount ?? 1) * MAP_PAGE_SIZE);
+  const districtId = districtIdForName(filters?.division ?? "");
+  const category = SERVICE_CATEGORIES.find((value) => value === filters?.category);
+  const techniciansQuery = query(collection(db, "technician_map_profiles"), where("approved", "==", true),
+    ...(districtId ? [where("serviceDistrictIds", "array-contains", districtId)] : []),
+    ...(category ? [where("serviceCategory", "==", category)] : []),
+    orderBy(documentId()), limit(count));
+  let alive = true, generation = 0;
+  const unsubscribe = onSnapshot(
     techniciansQuery,
     (snapshot) => {
-      const technicians = snapshot.docs
-        .map((item) =>
-          mapTechnician(item.data() as UserProfile)
-        )
-        .filter((_, index) =>
-          hasActiveAccount(snapshot.docs[index].data() as UserProfile)
-        )
+      const version = ++generation;
+      // Follow-up server gets recheck CURRENT approval; no private profile read.
+      void Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref))).then((verified) => {
+        if (!alive || version !== generation) return;
+        const technicians = verified
+        .map((item) => mapTechnician(item.data() as PublicProjection))
         .filter((technician) =>
           matchesCategory(technician, filters?.category)
         )
@@ -130,30 +139,28 @@ export function subscribeToApprovedTechnicians(
           return first.fullName.localeCompare(second.fullName);
         });
 
-      onNext(technicians);
+        onNext(technicians);
+        filters?.onHasMore?.(snapshot.size === count && count < MAP_MAX_ITEMS);
+      }, (error) => { if (alive && version === generation) onError(error); });
     },
     onError
   );
+  return () => { alive = false; unsubscribe(); };
 }
 
 export async function getApprovedTechnician(
   technicianId: string
 ): Promise<PublicTechnicianProfile | null> {
-  const snapshot = await getDoc(
-    doc(db, "users", technicianId)
+  const snapshot = await getDocFromServer(
+    doc(db, "technician_map_profiles", technicianId)
   );
 
   if (!snapshot.exists()) {
     return null;
   }
 
-  const data = snapshot.data() as UserProfile;
-
-  if (
-    data.role !== "technician" ||
-    data.technicianApprovalStatus !== "approved" ||
-    !hasActiveAccount(data)
-  ) {
+  const data = snapshot.data() as PublicProjection;
+  if (data.approved !== true) {
     return null;
   }
 
@@ -162,7 +169,7 @@ export async function getApprovedTechnician(
 
 export function subscribeToTechnicianReviews(
   technicianId: string,
-  onNext: (reviews: TechnicianReviewSummary[]) => void,
+  onNext: (reviews: TechnicianReviewSummary[], metadata: SnapshotMetadata) => void,
   onError: (error: Error) => void
 ) {
   const reviewsQuery = query(
@@ -172,8 +179,10 @@ export function subscribeToTechnicianReviews(
 
   return onSnapshot(
     reviewsQuery,
+    { includeMetadataChanges: true },
     (snapshot) => {
       const reviews = snapshot.docs
+        .filter((item) => isEligibleReviewRating(item.data().rating))
         .map((item) => {
           const data = item.data();
 
@@ -199,7 +208,7 @@ export function subscribeToTechnicianReviews(
           return secondMillis - firstMillis;
         });
 
-      onNext(reviews);
+      onNext(reviews, snapshot.metadata);
     },
     onError
   );
