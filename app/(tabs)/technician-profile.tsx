@@ -1,5 +1,6 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   ActivityIndicator,
   ScrollView,
@@ -22,9 +23,11 @@ import {
 import {
   getApprovedTechnician,
   PublicTechnicianProfile,
-  subscribeToTechnicianReviews,
   TechnicianReviewSummary,
 } from "@/src/services/technician.service";
+import { auth } from "@/src/firebase/config";
+import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
+import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
 
 import {
   getReviewDisplayName,
@@ -45,78 +48,50 @@ function formatReviewDate(
   });
 }
 
-function getReviewCountLabel(count: number): string {
-  return `${count} review${count === 1 ? "" : "s"}`;
-}
-
 export default function TechnicianProfileScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
   const technicianId = String(params.id ?? "");
   const [technician, setTechnician] =
     useState<PublicTechnicianProfile | null>(null);
-  const [reviews, setReviews] = useState<
-    TechnicianReviewSummary[]
-  >([]);
+  const ratings = useTechnicianReviews(technician?.uid === technicianId ? technicianId : null);
+  const ratingDisplay = getTechnicianRatingDisplay(ratings);
+  const { reviews } = ratings;
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    if (!technicianId) {
-      setErrorMessage("Technician not found.");
-      setLoading(false);
-      return;
-    }
-
-    let unsubscribeReviews: (() => void) | undefined;
-
-    getApprovedTechnician(technicianId)
-      .then((item) => {
-        if (!item) {
-          setErrorMessage(
-            "This technician is not available for customer requests."
-          );
-          return;
-        }
-
-        setTechnician(item);
-        unsubscribeReviews = subscribeToTechnicianReviews(
-          technicianId,
-          setReviews,
-          (error) => {
-            console.error(
-              "Technician reviews subscription error:",
-              error
-            );
+    let active = true;
+    let generation = 0;
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (!active) return;
+      const version = ++generation;
+      setTechnician(null);
+      setErrorMessage("");
+      setLoading(true);
+      if (!technicianId || !user) {
+        setErrorMessage(user ? "Technician not found." : "Please sign in to view this technician.");
+        setLoading(false);
+        return;
+      }
+      const isCurrent = () => active && version === generation && auth.currentUser?.uid === user.uid;
+      getApprovedTechnician(technicianId)
+        .then((item) => {
+          if (!isCurrent()) return;
+          if (!item || item.uid !== technicianId) {
+            setErrorMessage("This technician is not available for customer requests.");
+            return;
           }
-        );
-      })
-      .catch((error) => {
-        console.error("Technician profile load error:", error);
-        setErrorMessage("Unable to load technician profile.");
-      })
-      .finally(() => setLoading(false));
-
-    return () => unsubscribeReviews?.();
+          setTechnician(item);
+        })
+        .catch((error) => {
+          if (!isCurrent()) return;
+          console.error("Technician profile load error:", error);
+          setErrorMessage("Unable to load technician profile.");
+        })
+        .finally(() => { if (isCurrent()) setLoading(false); });
+    });
+    return () => { active = false; generation++; unsubscribeAuth(); };
   }, [technicianId]);
-
-  const ratingSummary = useMemo(() => {
-    if (reviews.length === 0) {
-      return {
-        average: technician?.averageRating ?? 0,
-        count: technician?.reviewCount ?? 0,
-      };
-    }
-
-    const total = reviews.reduce(
-      (sum, review) => sum + review.rating,
-      0
-    );
-
-    return {
-      average: total / reviews.length,
-      count: reviews.length,
-    };
-  }, [reviews, technician]);
 
   if (loading) {
     return (
@@ -183,15 +158,13 @@ export default function TechnicianProfileScreen() {
             {technician.specialization}
           </Text>
           <View style={styles.ratingRow}>
-            <Star size={17} color="#F59E0B" fill="#F59E0B" />
+            <Star size={17} color="#F59E0B" fill={ratingDisplay.hasRatings ? "#F59E0B" : "transparent"} />
             <Text style={styles.ratingText}>
-              {ratingSummary.average > 0
-                ? ratingSummary.average.toFixed(1)
-                : "New"}
+              {ratingDisplay.value}
             </Text>
-            <Text style={styles.reviewCount}>
-              ({getReviewCountLabel(ratingSummary.count)})
-            </Text>
+            {ratings.status === "ready" && (
+              <Text style={styles.reviewCount}>({ratingDisplay.countLabel})</Text>
+            )}
           </View>
           <TouchableOpacity
             style={styles.requestButton}
@@ -238,7 +211,15 @@ export default function TechnicianProfileScreen() {
         </View>
 
         <Text style={styles.sectionTitle}>Customer Reviews</Text>
-        {reviews.length > 0 ? (
+        {ratings.status !== "ready" ? (
+          <View style={styles.noReviewsCard}>
+            {ratings.status === "loading" && <ActivityIndicator color="#3B82F6" />}
+            <Text style={styles.noReviewsTitle}>{ratingDisplay.value}</Text>
+            {ratings.status === "error" && (
+              <Text accessibilityRole="alert" style={styles.noReviewsText}>{ratings.errorMessage}</Text>
+            )}
+          </View>
+        ) : reviews.length > 0 ? (
           <View style={styles.reviewList}>
             {reviews.slice(0, 5).map((review) => {
               const reviewerName = getReviewDisplayName(review);
