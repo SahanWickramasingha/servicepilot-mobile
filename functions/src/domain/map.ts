@@ -32,6 +32,20 @@ export function locationIsFresh(updatedAtMs: number | undefined, now = Date.now(
     updatedAtMs <= now + 5000 && now - updatedAtMs <= LOCATION_FRESH_MS;
 }
 
+/** Haversine great-circle distance in km; never a route distance or ETA. */
+export function distanceKm(a: Coordinate, b: Coordinate): number | undefined {
+  if (!validCoordinate(a) || !validCoordinate(b)) return undefined;
+  const radians = (degrees: number) => degrees * Math.PI / 180;
+  const lat = radians(b.latitude - a.latitude), lng = radians(b.longitude - a.longitude);
+  const h = Math.sin(lat / 2) ** 2 + Math.cos(radians(a.latitude)) * Math.cos(radians(b.latitude)) * Math.sin(lng / 2) ** 2;
+  return 6371.0088 * 2 * Math.asin(Math.sqrt(Math.min(1, Math.max(0, h))));
+}
+
+export function browsingDistanceKm(customer?: Coordinate & { updatedAtMs?: number }, technician?: Coordinate & { updatedAtMs?: number }, now = Date.now()): number | undefined {
+  if (!customer || !technician || !locationIsFresh(customer.updatedAtMs, now) || !locationIsFresh(technician.updatedAtMs, now)) return undefined;
+  return distanceKm(customer, technician);
+}
+
 export function districtIdForName(value: string): string | undefined {
   const name = value.trim().toLowerCase().replace(/\s+district$/, "").replace(/\s+/g, "-");
   const alias = name === "nuwaraeliya" ? "nuwara-eliya" : name === "moneragala" ? "monaragala" : name;
