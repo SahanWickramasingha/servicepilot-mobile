@@ -27,6 +27,7 @@ export default function TechnicianLayout() {
           <Stack.Screen name="after-photos" />
           <Stack.Screen name="signature" />
           <Stack.Screen name="performance" />
+          <Stack.Screen name="personal-information" />
         </Stack>
       </ServiceProgressProvider>
     </ProtectedRoute>
