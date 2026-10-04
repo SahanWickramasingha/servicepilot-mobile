@@ -16,11 +16,12 @@ import {
 } from "react-native";
 
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
+import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
+import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
 import { ServiceRequest } from "@/src/services/request.service";
 import {
   getCompletedTechnicianRequests,
   getHistoryTechnicianRequests,
-  getRatingLabel,
   getRequestDateLabel,
   getRequestDisplayTitle,
   getRequestTimeLabel,
@@ -28,14 +29,12 @@ import {
 } from "@/src/utils/technicianRequests";
 
 export default function TechnicianHistoryScreen() {
-  const { profile, requests, loading, errorMessage } =
+  const { uid, profile, requests, loading, errorMessage } =
     useTechnicianWorkspace();
+  const ratings = useTechnicianReviews(profile ? uid : null);
+  const ratingDisplay = getTechnicianRatingDisplay(ratings);
   const historyRequests = getHistoryTechnicianRequests(requests);
   const completedRequests = getCompletedTechnicianRequests(requests);
-  const ratingLabel = getRatingLabel(
-    Number(profile?.averageRating ?? 0),
-    Number(profile?.reviewCount ?? 0)
-  );
 
   if (loading) {
     return <StateScreen message="Loading service history..." />;
@@ -83,7 +82,7 @@ export default function TechnicianHistoryScreen() {
           />
 
           <StatCard
-            value={ratingLabel}
+            value={ratingDisplay.label}
             label="Rating"
             color="#F59E0B"
           />
