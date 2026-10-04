@@ -27,6 +27,10 @@ import {
   updateUserProfileSafe,
 } from "@/src/services/user.service";
 import { ProtectedRoute } from "@/src/components/auth/ProtectedRoute";
+import { DistrictPicker } from "@/src/components/maps/DistrictPicker";
+import { ServiceAreaPicker } from "@/src/components/maps/ServiceAreaPicker";
+import { resolveServiceDistrictIds } from "@/functions/src/domain/map";
+import { readServiceAreas, retainServiceAreas, ServiceAreasByDistrict } from "@/functions/src/domain/serviceAreas";
 
 export default function EditProfileScreen() {
   const [fullName, setFullName] = useState("");
@@ -36,6 +40,10 @@ export default function EditProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [isTechnician, setIsTechnician] = useState(false);
+  const [districts, setDistricts] = useState<string[]>([]);
+  const [areas, setAreas] = useState<ServiceAreasByDistrict>({});
 
   useEffect(() => {
     const currentUser = auth.currentUser;
@@ -57,6 +65,10 @@ export default function EditProfileScreen() {
         setEmail(profile.email ?? currentUser.email ?? "");
         setPhone(profile.phone ?? "");
         setAddress(profile.address ?? "");
+        setIsTechnician(profile.role === "technician");
+        const ids = resolveServiceDistrictIds(profile);
+        setDistricts(ids);
+        setAreas(retainServiceAreas(ids, readServiceAreas(profile.serviceAreasByDistrict)));
       })
       .catch((error) => {
         console.error("Edit profile load error:", error);
@@ -83,12 +95,15 @@ export default function EditProfileScreen() {
     try {
       setSaving(true);
       setErrorMessage("");
+      setSuccessMessage("");
       await updateUserProfileSafe(currentUser.uid, {
         fullName,
         phone,
         address,
+        ...(isTechnician ? { serviceDistrictIds: districts, serviceAreasByDistrict: areas } : {}),
       });
-      router.back();
+      if (isTechnician) setSuccessMessage("Personal information and service area saved.");
+      else router.back();
     } catch (error: any) {
       console.error("Edit profile save error:", error);
       setErrorMessage(
@@ -101,7 +116,7 @@ export default function EditProfileScreen() {
 
   if (loading) {
     return (
-      <ProtectedRoute allowedRoles={["customer"]}>
+      <ProtectedRoute allowedRoles={["customer", "technician"]}>
       <View style={styles.centerScreen}>
         <ActivityIndicator color="#3B82F6" />
       </View>
@@ -110,7 +125,7 @@ export default function EditProfileScreen() {
   }
 
   return (
-    <ProtectedRoute allowedRoles={["customer"]}>
+    <ProtectedRoute allowedRoles={["customer", "technician"]}>
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -136,7 +151,7 @@ export default function EditProfileScreen() {
           <View style={styles.headerText}>
             <Text style={styles.title}>Edit Profile</Text>
             <Text style={styles.subtitle}>
-              Update safe account fields
+              {isTechnician ? "Personal Information" : "Update safe account fields"}
             </Text>
           </View>
         </View>
@@ -148,6 +163,7 @@ export default function EditProfileScreen() {
             </Text>
           </View>
         )}
+        {!!successMessage && <Text accessibilityRole="alert" style={{ color: "#86EFAC", marginBottom: 14 }}>{successMessage}</Text>}
 
         <View style={styles.formCard}>
           <Field
@@ -176,7 +192,7 @@ export default function EditProfileScreen() {
             keyboardType="phone-pad"
           />
 
-          <Text style={styles.label}>Address</Text>
+          <Text style={styles.label}>Private street / home address</Text>
           <View style={styles.addressContainer}>
             <MapPin
               size={20}
@@ -194,6 +210,15 @@ export default function EditProfileScreen() {
             />
           </View>
         </View>
+
+        {isTechnician && <View style={styles.formCard}>
+          <Text style={styles.label}>Service Area</Text>
+          <DistrictPicker selected={districts} multiple disabled={saving} onChange={(ids) => {
+            setDistricts(ids); setAreas((current) => retainServiceAreas(ids, current)); setSuccessMessage("");
+          }} />
+          <View style={{ height: 16 }} />
+          <ServiceAreaPicker districts={districts} areas={areas} onChange={(value) => { setAreas(value); setSuccessMessage(""); }} disabled={saving} />
+        </View>}
 
         <TouchableOpacity
           style={[
