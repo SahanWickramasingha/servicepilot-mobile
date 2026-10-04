@@ -23,6 +23,8 @@ import {
 } from "react-native";
 
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
+import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
+import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
 import { auth } from "@/src/firebase/config";
 import {
   NotificationCenterItem,
@@ -35,7 +37,6 @@ import {
   getRequestDisplayTitle,
   getRequestScheduleDate,
   getRequestTimeLabel,
-  getRatingLabel,
   getStatusUi,
   getUpcomingTechnicianRequests,
   isCurrentOrFutureRequest,
@@ -44,8 +45,10 @@ import {
 } from "@/src/utils/technicianRequests";
 
 export default function TechnicianDashboard() {
-  const { profile, requests, loading, errorMessage } =
+  const { uid, profile, requests, loading, errorMessage } =
     useTechnicianWorkspace();
+  const ratings = useTechnicianReviews(profile ? uid : null);
+  const ratingDisplay = getTechnicianRatingDisplay(ratings);
   const [notifications, setNotifications] = useState<NotificationCenterItem[]>(
     []
   );
@@ -116,11 +119,6 @@ export default function TechnicianDashboard() {
       />
     );
   }
-
-  const ratingLabel = getRatingLabel(
-    Number(profile.averageRating ?? 0),
-    Number(profile.reviewCount ?? 0)
-  );
 
   return (
     <View style={styles.container}>
@@ -264,7 +262,7 @@ export default function TechnicianDashboard() {
             </Text>
 
             <Text style={styles.ratingSummaryValue}>
-              {ratingLabel}
+              {ratingDisplay.label}
             </Text>
 
             <Text style={styles.ratingSectionHint}>
@@ -277,16 +275,14 @@ export default function TechnicianDashboard() {
               size={20}
               color="#F59E0B"
               fill={
-                Number(profile.averageRating ?? 0) > 0
+                ratingDisplay.hasRatings
                   ? "#F59E0B"
                   : "transparent"
               }
             />
 
             <Text style={styles.ratingValue}>
-              {Number(profile.averageRating ?? 0) > 0
-                ? Number(profile.averageRating).toFixed(1)
-                : "0"}
+              {ratingDisplay.hasRatings ? ratingDisplay.value : "—"}
             </Text>
 
             <Text style={styles.ratingLabel}>Rating</Text>
