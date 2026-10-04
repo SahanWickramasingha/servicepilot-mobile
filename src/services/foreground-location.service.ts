@@ -30,4 +30,5 @@ export const foregroundSharing = new ForegroundSharing({
   },
   publish: publishTechnicianLocation,
   every: (callback, ms) => { const timer = setInterval(callback, ms); return () => clearInterval(timer); },
+  after: (callback, ms) => { const timer = setTimeout(callback, ms); return () => clearTimeout(timer); },
 });
