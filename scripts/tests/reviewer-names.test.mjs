@@ -58,6 +58,7 @@ function loadTs(path, deps = {}) {
   return exports;
 }
 const authorUi = loadTs("src/utils/reviewAuthor.ts");
+const ratingUi = loadTs("src/utils/technicianRating.ts");
 
 function services(db, uid, authenticatedSession) {
   const config = { db, auth: authenticatedSession ?? { currentUser: uid ? { uid } : null } };
@@ -65,6 +66,7 @@ function services(db, uid, authenticatedSession) {
     "@/src/firebase/config": config,
     "@/src/utils/registrationDebug": {},
     "@/functions/src/domain/mapProjection": functionsRequire("./lib/domain/mapProjection.js"),
+    "@/functions/src/domain/serviceAreas": functionsRequire("./lib/domain/serviceAreas.js"),
   });
   const notification = loadTs("src/services/notification.service.ts", {
     "@/src/firebase/config": config,
@@ -79,6 +81,11 @@ function services(db, uid, authenticatedSession) {
     technician: loadTs("src/services/technician.service.ts", {
       "@/src/firebase/config": config,
       "@/src/services/user.service": user,
+      "@/functions/src/domain/map": functionsRequire("./lib/domain/map.js"),
+      "@/functions/src/domain/serviceAreas": functionsRequire("./lib/domain/serviceAreas.js"),
+      "@/functions/src/domain/mapProjection": functionsRequire("./lib/domain/mapProjection.js"),
+      "@/src/constants/serviceRequests": loadTs("src/constants/serviceRequests.ts"),
+      "@/src/utils/technicianRating": ratingUi,
     }),
   };
 }
@@ -132,6 +139,10 @@ before(async () => {
   const existing = reviewData("existing");
   delete existing.customerName;
   await admin.doc("service_reviews/existing_customer").set(existing);
+  for (const [uid, fullName] of [["rating-gihan", "Gihan"], ["rating-zero", "Unreviewed Technician"]]) {
+    await admin.doc(`users/${uid}`).set({ uid, fullName, role: "technician", emailVerified: true,
+      technicianApprovalStatus: "approved", accountStatus: "active", averageRating: 0, reviewCount: 0 });
+  }
 });
 
 after(async () => {
@@ -365,4 +376,63 @@ test("Customer broadcast receipt and read markers retain their existing permissi
   await setDoc(doc(db, "message_reads", "customer_broadcast"), { userId: "customer", messageId: "broadcast", readAt: createdAt });
   assert.ok((await getDoc(doc(db, "message_reads", "customer_broadcast"))).exists());
   await denied(getDoc(doc(client("technician"), "system_messages", "broadcast")));
+});
+
+function ratingStream(db, uid, technicianId) {
+  const values = [];
+  let failure;
+  const stop = services(db, uid).technician.subscribeToTechnicianReviews(technicianId, (reviews, metadata) => {
+    if (!metadata.fromCache && !metadata.hasPendingWrites) values.push({
+      summary: ratingUi.summarizeTechnicianReviews(reviews), reviews,
+    });
+  }, (error) => { failure = error; });
+  return { stop, values, async until(count) {
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      if (failure) throw failure;
+      const value = values.find(entry => entry.summary.count === count);
+      if (value) return value;
+      await new Promise(resolve => setTimeout(resolve, 30));
+    }
+    throw new Error(`No confirmed ${count}-review rating arrived`);
+  } };
+}
+
+test("zero aggregates do not hide Gihan's 5.0/1 Bandara review; both role listeners update live over five cards", async () => {
+  const customer = ratingStream(client("viewer"), "viewer", "rating-gihan");
+  const technician = ratingStream(client("rating-gihan"), "rating-gihan", "rating-gihan");
+  try {
+    await Promise.all([customer.until(0), technician.until(0)]);
+    const service = services(client("customer"), "customer").review;
+    await request("rating-first", { technicianId: "rating-gihan" });
+    await service.submitServiceReview({ requestId: "rating-first", customerId: "customer",
+      technicianId: "rating-gihan", rating: 5, comment: "Excellent service" });
+    for (const stream of [customer, technician]) {
+      const loaded = await stream.until(1);
+      assert.deepEqual(loaded.summary, { average: 5, count: 1 });
+      assert.equal(loaded.reviews[0].customerName, "Bandara");
+      assert.equal(ratingUi.getTechnicianRatingDisplay({ status: "ready", summary: loaded.summary, errorMessage: "" }).label, "5.0 (1 review)");
+    }
+    for (const [index, stars] of [5, 5, 5, 5, 1, 2].entries()) {
+      const requestId = `rating-more-${index}`;
+      await request(requestId, { technicianId: "rating-gihan" });
+      await service.submitServiceReview({ requestId, customerId: "customer", technicianId: "rating-gihan", rating: stars, comment: "Review" });
+    }
+    for (const stream of [customer, technician]) {
+      assert.deepEqual((await stream.until(7)).summary, { average: 4, count: 7 });
+      assert.ok(stream.values.some(value => value.summary.count === 1));
+      assert.ok(stream.values.some(value => value.summary.count === 7));
+    }
+    const profile = (await admin.doc("users/rating-gihan").get()).data();
+    assert.equal(profile.averageRating, 0); assert.equal(profile.reviewCount, 0);
+    await denied(updateDoc(doc(client("rating-gihan"), "users", "rating-gihan"), { averageRating: 5, reviewCount: 99 }));
+  } finally { customer.stop(); technician.stop(); }
+});
+
+test("an approved technician's confirmed empty query gives zero reviews; other technicians cannot read Gihan's reviews", async () => {
+  const stream = ratingStream(client("rating-zero"), "rating-zero", "rating-zero");
+  try { assert.deepEqual((await stream.until(0)).summary, { average: 0, count: 0 }); }
+  finally { stream.stop(); }
+  await denied(getDocs(query(collection(client("rating-zero"), "service_reviews"), where("technicianId", "==", "rating-gihan"))));
+  await denied(getDoc(doc(client("rating-gihan"), "users", "customer")));
 });
