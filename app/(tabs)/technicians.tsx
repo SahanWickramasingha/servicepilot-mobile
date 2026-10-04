@@ -53,10 +53,13 @@ export default function TechniciansScreen() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [pageCount, setPageCount] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
 
   useEffect(() => {
     setCategory(initialCategory);
     setDivision(params.division ?? "All");
+    setPageCount(1);
   }, [initialCategory, params.division]);
 
   useEffect(() => {
@@ -78,11 +81,13 @@ export default function TechniciansScreen() {
       {
         category,
         division,
+        pageCount,
+        onHasMore: setHasMore,
       }
     );
 
     return unsubscribe;
-  }, [category, division]);
+  }, [category, division, pageCount]);
 
   const divisions = useMemo(() => {
     const unique = new Set(
@@ -166,7 +171,7 @@ export default function TechniciansScreen() {
                 key={item}
                 label={item}
                 active={category === item}
-                onPress={() => setCategory(item)}
+                onPress={() => { setPageCount(1); setCategory(item); }}
               />
             )
           )}
@@ -183,7 +188,7 @@ export default function TechniciansScreen() {
               key={item}
               label={item}
               active={division === item}
-              onPress={() => setDivision(item)}
+              onPress={() => { setPageCount(1); setDivision(item); }}
             />
           ))}
         </ScrollView>
@@ -220,6 +225,9 @@ export default function TechniciansScreen() {
             </Text>
           </View>
         )}
+        {hasMore && <TouchableOpacity accessibilityRole="button" style={styles.emptyCard} onPress={() => setPageCount((count) => count + 1)}>
+          <Text style={styles.sectionTitle}>Load more Technicians</Text></TouchableOpacity>}
+        {pageCount >= 3 && <Text style={styles.emptyText}>Showing up to 24 professionals. Choose a district on the Map to narrow results.</Text>}
       </ScrollView>
     </View>
   );
@@ -470,4 +478,3 @@ const styles = StyleSheet.create({
     marginTop: 7,
   },
 });
-
