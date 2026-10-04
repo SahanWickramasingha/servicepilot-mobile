@@ -1,7 +1,11 @@
+import { encodeServiceAreas, readServiceAreas } from "./serviceAreas";
+import type { StoredServiceAreasByDistrict } from "./serviceAreas";
+
 export type MapProfileSource = {
   role?: unknown; fullName?: unknown; specialization?: unknown; accountStatus?: unknown;
   technicianApprovalStatus?: unknown; serviceDistrictIds?: unknown;
-  averageRating?: unknown; reviewCount?: unknown;
+  averageRating?: unknown; reviewCount?: unknown; serviceAreasByDistrict?: unknown;
+  experience?: unknown; qualifications?: unknown; certifications?: unknown; profilePhotoUrl?: unknown; completedJobs?: unknown;
 };
 
 export const MAP_PAGE_SIZE = 8;
@@ -29,5 +33,14 @@ export function buildMapProfile(technicianId: string, profile: MapProfileSource)
     serviceCategory: mapServiceCategory(specialization),
     serviceDistrictIds: Array.isArray(profile.serviceDistrictIds) ? profile.serviceDistrictIds : [],
     approved: profile.technicianApprovalStatus === "approved" && (profile.accountStatus === undefined || profile.accountStatus === "active"),
-    averageRating, reviewCount };
+    averageRating, reviewCount,
+    publicDetails: {
+      experience: typeof profile.experience === "string" ? profile.experience : "",
+      qualifications: typeof profile.qualifications === "string" ? profile.qualifications : "",
+      certifications: typeof profile.certifications === "string" ? profile.certifications : "",
+      profilePhotoUrl: typeof profile.profilePhotoUrl === "string" ? profile.profilePhotoUrl : "",
+      completedJobs: typeof profile.completedJobs === "number" ? profile.completedJobs : 0,
+    },
+    ...(profile.serviceAreasByDistrict !== undefined ? { serviceAreasByDistrict: encodeServiceAreas(
+      Array.isArray(profile.serviceDistrictIds) ? profile.serviceDistrictIds : [], readServiceAreas(profile.serviceAreasByDistrict as StoredServiceAreasByDistrict)) } : {}) };
 }
