@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
+import { Image } from "expo-image";
 import {
   Bell,
   BriefcaseBusiness,
@@ -13,7 +14,6 @@ import {
 } from "lucide-react-native";
 import {
   ActivityIndicator,
-  Image,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -23,6 +23,7 @@ import {
 } from "react-native";
 
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
+import { TechnicianAvailabilityPanel } from "@/src/components/technicians/TechnicianAvailabilityPanel";
 import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
 import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
 import { auth } from "@/src/firebase/config";
@@ -52,20 +53,23 @@ export default function TechnicianDashboard() {
   const [notifications, setNotifications] = useState<NotificationCenterItem[]>(
     []
   );
+  const notificationRole = profile?.role;
 
   useEffect(() => {
     const currentUser = auth.currentUser;
+    setNotifications([]);
+    let active = true;
 
-    if (!currentUser || !profile || profile.role !== "technician") {
+    if (!currentUser || currentUser.uid !== uid || notificationRole !== "technician") {
       return;
     }
 
-    return subscribeToNotificationCenter(
+    const stop = subscribeToNotificationCenter(
       {
         userId: currentUser.uid,
         role: "technician",
       },
-      setNotifications,
+      (items) => { if (active && auth.currentUser?.uid === uid) setNotifications(items); },
       (error, context) =>
         console.error(
           "Technician notification badge error:",
@@ -73,7 +77,8 @@ export default function TechnicianDashboard() {
           error
         )
     );
-  }, [profile]);
+    return () => { active = false; stop(); };
+  }, [uid, notificationRole]);
 
   const activeRequests = getActiveTechnicianRequests(requests);
   const todayRequests = sortRequestsBySchedule(
@@ -136,7 +141,10 @@ export default function TechnicianDashboard() {
             <View style={styles.avatar}>
               {profile.profilePhotoUrl ? (
                 <Image
-                  source={{ uri: profile.profilePhotoUrl }}
+                  source={{ uri: profile.profilePhotoUrl, cacheKey: `${uid}:${profile.profilePhotoUrl}` }}
+                  cachePolicy="memory"
+                  recyclingKey={`${uid}:${profile.profilePhotoUrl}`}
+                  contentFit="cover"
                   style={styles.avatarImage}
                 />
               ) : (
@@ -170,6 +178,8 @@ export default function TechnicianDashboard() {
             )}
           </TouchableOpacity>
         </View>
+
+        <TechnicianAvailabilityPanel key={profile.uid} profile={profile} />
 
         {pendingRequests.length > 0 && (
           <ReminderCard

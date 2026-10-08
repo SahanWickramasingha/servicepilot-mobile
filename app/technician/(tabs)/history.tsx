@@ -1,3 +1,4 @@
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   CheckCircle2,
@@ -7,7 +8,7 @@ import {
 } from "lucide-react-native";
 import {
   ActivityIndicator,
-  ScrollView,
+  FlatList,
   StatusBar,
   StyleSheet,
   Text,
@@ -33,8 +34,11 @@ export default function TechnicianHistoryScreen() {
     useTechnicianWorkspace();
   const ratings = useTechnicianReviews(profile ? uid : null);
   const ratingDisplay = getTechnicianRatingDisplay(ratings);
-  const historyRequests = getHistoryTechnicianRequests(requests);
-  const completedRequests = getCompletedTechnicianRequests(requests);
+  const historyRequests = useMemo(() => getHistoryTechnicianRequests(requests), [requests]);
+  const completedRequests = useMemo(() => getCompletedTechnicianRequests(requests), [requests]);
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [uid]);
+  const renderHistory = useCallback(({ item }: { item: ServiceRequest }) => <HistoryCard job={item} />, []);
 
   if (loading) {
     return <StateScreen message="Loading service history..." />;
@@ -56,10 +60,17 @@ export default function TechnicianHistoryScreen() {
         backgroundColor="#06101D"
       />
 
-      <ScrollView
+      <FlatList
+        data={historyRequests.slice(0, page * 20)}
+        renderItem={renderHistory}
+        keyExtractor={historyKey}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={7}
+        ItemSeparatorComponent={RowSeparator}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
-      >
+        ListHeaderComponent={<>
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Service History</Text>
@@ -102,13 +113,8 @@ export default function TechnicianHistoryScreen() {
           </Text>
         </View>
 
-        {historyRequests.length > 0 ? (
-          <View style={styles.list}>
-            {historyRequests.map((job) => (
-              <HistoryCard key={job.id} job={job} />
-            ))}
-          </View>
-        ) : (
+        </>}
+        ListEmptyComponent={
           <View style={styles.emptyCard}>
             <CheckCircle2 size={38} color="#22C55E" />
             <Text style={styles.emptyTitle}>No history yet</Text>
@@ -116,8 +122,12 @@ export default function TechnicianHistoryScreen() {
               Completed, rejected, or cancelled jobs will appear here.
             </Text>
           </View>
-        )}
-      </ScrollView>
+        }
+        ListFooterComponent={historyRequests.length > page * 20 ? <TouchableOpacity accessibilityRole="button"
+          style={styles.emptyCard} onPress={() => setPage((value) => value + 1)}>
+          <Text style={styles.emptyText}>Load more history ({historyRequests.length - page * 20} remaining)</Text>
+        </TouchableOpacity> : null}
+      />
     </View>
   );
 }
@@ -140,7 +150,9 @@ function StateScreen({
   );
 }
 
-function HistoryCard({ job }: { job: ServiceRequest }) {
+const historyKey = (job: ServiceRequest) => job.id;
+const RowSeparator = () => <View style={{ height: 12 }} />;
+const HistoryCard = memo(function HistoryCard({ job }: { job: ServiceRequest }) {
   const status = getStatusUi(job.status);
 
   return (
@@ -198,7 +210,7 @@ function HistoryCard({ job }: { job: ServiceRequest }) {
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 function StatCard({
   value,

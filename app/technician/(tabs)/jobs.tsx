@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Clock3,
@@ -22,6 +22,8 @@ import {
 
 import { normalizeRequestStatus } from "@/src/constants/serviceRequests";
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
+import { availabilityDisplay } from "@/functions/src/domain/availability";
+import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
 import {
   ServiceRequest,
   updateTechnicianRequestStatus,
@@ -50,9 +52,11 @@ type TechnicianActionStatus =
 type ReasonAction = "reject" | "cancel";
 
 export default function TechnicianJobsScreen() {
-  const { requests, loading, errorMessage } = useTechnicianWorkspace();
+  const { profile, requests, loading, errorMessage } = useTechnicianWorkspace();
+  const canAccept = availabilityDisplay(profile?.availability).canRequest;
   const [filter, setFilter] = useState<FilterType>("all");
   const [updatingId, setUpdatingId] = useState("");
+  const pendingActions = useRef(new Set<string>());
   const [reasonAction, setReasonAction] =
     useState<ReasonAction | null>(null);
   const [reasonRequest, setReasonRequest] =
@@ -85,6 +89,8 @@ export default function TechnicianJobsScreen() {
     status: TechnicianActionStatus,
     actionReason?: string
   ): Promise<boolean> => {
+    if (pendingActions.current.has(requestId)) return false;
+    pendingActions.current.add(requestId);
     try {
       setUpdatingId(requestId);
       await updateTechnicianRequestStatus(requestId, status, {
@@ -98,6 +104,7 @@ export default function TechnicianJobsScreen() {
       );
       return false;
     } finally {
+      pendingActions.current.delete(requestId);
       setUpdatingId("");
     }
   };
@@ -258,12 +265,17 @@ export default function TechnicianJobsScreen() {
           </Text>
         </View>
 
+        <AvailabilityBadge availability={profile?.availability} showDescription />
+        {!canAccept && <TouchableOpacity accessibilityRole="button" onPress={() => router.push("/technician")}>
+          <Text style={styles.viewButtonText}>Set Available on your dashboard to accept requests. Existing jobs remain accessible.</Text>
+        </TouchableOpacity>}
         <View style={styles.jobsList}>
           {filteredJobs.map((job) => (
             <JobCard
               key={job.id}
               job={job}
               updating={updatingId === job.id}
+              canAccept={canAccept}
               onAccept={() =>
                 handleStatusUpdate(job.id, "accepted")
               }
@@ -380,6 +392,7 @@ function FilterButton({
 function JobCard({
   job,
   updating,
+  canAccept,
   onAccept,
   onReject,
   onStart,
@@ -387,6 +400,7 @@ function JobCard({
 }: {
   job: ServiceRequest;
   updating: boolean;
+  canAccept: boolean;
   onAccept: () => void;
   onReject: () => void;
   onStart: () => void;
@@ -506,10 +520,10 @@ function JobCard({
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.acceptButton}
+              style={[styles.acceptButton, !canAccept && { opacity: 0.45 }]}
               activeOpacity={0.85}
               onPress={onAccept}
-              disabled={updating}
+              disabled={updating || !canAccept}
             >
               <CheckCircle2 size={17} color="#FFFFFF" />
               <Text style={styles.acceptButtonText}>

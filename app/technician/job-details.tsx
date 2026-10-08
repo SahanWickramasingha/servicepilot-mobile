@@ -27,6 +27,8 @@ import {
 import { normalizeRequestStatus } from "@/src/constants/serviceRequests";
 import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
 import { updateTechnicianRequestStatus } from "@/src/services/request.service";
+import { availabilityDisplay } from "@/functions/src/domain/availability";
+import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
 import {
   getPriorityUi,
   getRequestDateLabel,
@@ -38,7 +40,8 @@ import {
 type ReasonAction = "reject" | "cancel";
 
 export default function TechnicianJobDetailsScreen() {
-  const { request, loading, errorMessage } = useTechnicianRequest();
+  const { request, profile, loading, errorMessage } = useTechnicianRequest();
+  const canAccept = availabilityDisplay(profile?.availability).canRequest;
   const [updating, setUpdating] = useState(false);
   const [reasonAction, setReasonAction] =
     useState<ReasonAction | null>(null);
@@ -343,27 +346,34 @@ export default function TechnicianJobDetailsScreen() {
         )}
 
         {normalizedStatus === "requested" && (
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={styles.cancelJobButton}
-              activeOpacity={0.85}
-              disabled={updating}
-              onPress={() => openReasonModal("reject")}
-            >
-              <Text style={styles.cancelJobButtonText}>
-                Reject Request
-              </Text>
-            </TouchableOpacity>
+          <View>
+            <AvailabilityBadge availability={profile?.availability} showDescription />
+            {!canAccept && <TouchableOpacity accessibilityRole="button" onPress={() => router.push("/technician")}>
+              <Text style={styles.cancelJobButtonText}>Set Available on your dashboard to accept this request</Text>
+            </TouchableOpacity>}
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={styles.cancelJobButton}
+                activeOpacity={0.85}
+                disabled={updating}
+                onPress={() => openReasonModal("reject")}
+              >
+                <Text style={styles.cancelJobButtonText}>
+                  Reject Request
+                </Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.startButton, styles.actionButtonFlex]}
-              activeOpacity={0.85}
-              disabled={updating}
-              onPress={() => handleStatusUpdate("accepted")}
-            >
-              <CheckCircle2 size={19} color="#FFFFFF" />
-              <Text style={styles.startButtonText}>Accept Request</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.startButton, styles.actionButtonFlex, !canAccept && { opacity: 0.45 }]}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                disabled={updating || !canAccept}
+                onPress={() => handleStatusUpdate("accepted")}
+              >
+                <CheckCircle2 size={19} color="#FFFFFF" />
+                <Text style={styles.startButtonText}>Accept Request</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 
