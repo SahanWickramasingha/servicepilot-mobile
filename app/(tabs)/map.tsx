@@ -15,6 +15,8 @@ import type { LocationFocus } from "@/src/components/maps/TechnicianMap.types";
 import { MAP_MAX_ITEMS } from "@/functions/src/domain/mapProjection";
 import { mapServiceErrorMessage } from "@/src/utils/mapServiceError";
 import { technicianServiceAreaReference } from "@/src/utils/mapViewActions";
+import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
+import { availabilityDisplay } from "@/functions/src/domain/availability";
 
 function updateLabel(location: SharedMapLocation | undefined, now: number): string {
   if (!location) return "Location unavailable";
@@ -123,11 +125,24 @@ export default function CustomerMapScreen() {
     return () => { alive = false; stop(); active.remove(); };
   }, [ids, retry, receiveLocation]));
 
-  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 10000); return () => clearInterval(timer); }, []);
+  useFocusEffect(useCallback(() => {
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const update = (state: string) => {
+      clearInterval(timer); timer = undefined;
+      if (state === "active") { setClock(Date.now()); timer = setInterval(() => setClock(Date.now()), 10000); }
+    };
+    update(AppState.currentState);
+    const listener = AppState.addEventListener("change", update);
+    return () => { clearInterval(timer); listener.remove(); };
+  }, []));
+  // Availability, distance/loading text and timer ticks don't alter map inputs.
+  const markerIdentity = JSON.stringify(technicians.map((item) => [item.uid, item.fullName]));
+  const freshnessIdentity = technicians.map((item) => locationIsFresh(locations[item.uid]?.updatedAtMs, now)).join("|");
   const points = useMemo(() => technicians.flatMap((technician) => {
     const point = locations[technician.uid];
     return point ? [{ ...point, id: technician.uid, title: technician.fullName, stale: !locationIsFresh(point.updatedAtMs, now) }] : [];
-  }), [technicians, locations, now]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Identity keys cover the name/UID and freshness inputs; timestamps still refresh card text.
+  }), [markerIdentity, locations, freshnessIdentity]);
   const selected = technicians.find((technician) => technician.uid === selectedId);
   const serviceArea = useMemo(() => {
     const technician = technicians.find((item) => item.uid === serviceAreaSelection?.id);
@@ -161,8 +176,19 @@ export default function CustomerMapScreen() {
     setDetailsOpen(false); setSelectionIds([]); setFocusLocation(undefined);
     setMode("map"); setSelectedId(id); setServiceAreaSelection({ id, sequence: ++viewSequence.current });
   };
-  useEffect(() => { if ((focusLocation || serviceArea) && mode === "map") requestAnimationFrame(() => scroll.current?.scrollTo({ y: Math.max(0, mapTop.current - 55), animated: true })); }, [focusLocation, serviceArea, mode]);
-  const outsideTechnicians = technicians.filter((technician) => locations[technician.uid] && !pointInDistrict(locations[technician.uid], district));
+  const locationSequence = focusLocation?.sequence, areaSequence = serviceArea?.sequence;
+  useEffect(() => {
+    if ((!locationSequence && !areaSequence) || mode !== "map") return;
+    const frame = requestAnimationFrame(() => scroll.current?.scrollTo({ y: Math.max(0, mapTop.current - 55), animated: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [locationSequence, areaSequence, mode]);
+  const clearMapFocus = useCallback(() => { viewSequence.current++; setServiceAreaSelection(undefined); setFocusLocation(undefined); }, []);
+  const selectMarker = useCallback((ids: string[]) => {
+    viewSequence.current++; setFocusLocation(undefined);
+    if (ids.length === 1) { setSelectedId(ids[0]); setDetailsOpen(true); } else setSelectionIds(ids);
+  }, []);
+  const outsideTechnicians = useMemo(() => technicians.filter((technician) => locations[technician.uid] &&
+    !pointInDistrict(locations[technician.uid], district)), [technicians, locations, district]);
   const cardProps = { now, districtId, customerLocation: customer.location, onShowLocation: showLocation, onShowServiceArea: showServiceArea,
     onNavigate: () => { setDetailsOpen(false); setSelectionIds([]); } };
 
@@ -198,10 +224,7 @@ export default function CustomerMapScreen() {
               focusLocation.phase === "error" ? "Unable to verify the latest shared GPS. Check your connection and retry." :
               focusLocation.phase === "stale" ? "Last shared GPS is stale. No fresh location is available; retry Show location." :
               focusLocation.phase === "unavailable" ? "Location unavailable. Sharing is off or no valid shared GPS is available." : updateLabel(locations[focusLocation.id], now)}` : undefined}
-            serviceArea={serviceArea} onClearServiceArea={() => { viewSequence.current++; setServiceAreaSelection(undefined); setFocusLocation(undefined); }} onSelect={(ids) => {
-            viewSequence.current++; setFocusLocation(undefined);
-            if (ids.length === 1) { setSelectedId(ids[0]); setDetailsOpen(true); } else setSelectionIds(ids);
-          }} />
+            serviceArea={serviceArea} onClearServiceArea={clearMapFocus} onSelect={selectMarker} />
         </View>
         <Pressable onPress={() => { void Linking.openURL("https://www.geoboundaries.org/"); }}><Text style={styles.attribution}>District boundaries: geoBoundaries / © OpenStreetMap contributors (ODbL)</Text></Pressable>
         <Pressable onPress={() => { void Linking.openURL("https://www.geonames.org/"); }}><Text style={styles.attribution}>Town references: GeoNames (CC BY 4.0)</Text></Pressable>
@@ -250,11 +273,13 @@ function TechnicianCard({ technician, location, now, districtId, customerLocatio
   const service = SERVICE_CATEGORIES.find((value) => value.toLowerCase() === technician.specialization.toLowerCase());
   const outside = location && !pointInDistrict(location, district);
   const distance = browsingDistanceKm(customerLocation, location, now);
+  const canRequest = availabilityDisplay(technician.availability).canRequest;
   return <View style={styles.card} accessibilityLiveRegion="polite">
     <View style={styles.cardHeader}><View style={styles.avatar}><Wrench size={22} color="#60A5FA" /></View><View style={{ flex: 1 }}>
       <Text style={styles.cardTitle}>{technician.fullName}</Text><Text style={styles.subtitle}>{technician.specialization}</Text>
     </View><Star size={15} color="#F59E0B" /><Text style={styles.rating}>{technician.reviewCount > 0 ? technician.averageRating.toFixed(1) : "New"}</Text></View>
     <Text style={styles.subtitle}>{technician.reviewCount} review{technician.reviewCount === 1 ? "" : "s"} • Serves {declaredServiceAreaLabel(districtId, technician.serviceAreasByDistrict)}</Text>
+    <AvailabilityBadge availability={technician.availability} showDescription />
     <Text style={[styles.subtitle, location && !locationIsFresh(location.updatedAtMs, now) && styles.stale]}>{updateLabel(location, now)}</Text>
     {location?.updatedAtMs && <Text style={styles.subtitle}>Last updated: {new Date(location.updatedAtMs).toLocaleString()}</Text>}
     <Text style={styles.subtitle}>{distance === undefined ? "Distance unavailable" : `Approximately ${distance.toFixed(1)} km away`}</Text>
@@ -264,7 +289,7 @@ function TechnicianCard({ technician, location, now, districtId, customerLocatio
     <Pressable accessibilityRole="button" accessibilityLabel={`Show shared location for ${technician.fullName}`} style={[styles.button, styles.secondary]}
       onPress={() => onShowLocation(technician.uid)}><Text style={styles.buttonText}>Show location</Text></Pressable>
     <View style={styles.actions}><Pressable accessibilityRole="button" accessibilityLabel={`View profile for ${technician.fullName}`} style={[styles.button, styles.secondary]} onPress={() => { onNavigate(); router.push({ pathname: "/technician-profile", params: { id: technician.uid } }); }}>
-      <Text style={styles.buttonText}>View Profile</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Request service from ${technician.fullName}`} style={styles.button} onPress={() => { onNavigate(); router.push({ pathname: "/create-request", params: { technicianId: technician.uid, ...(service ? { service } : {}) } }); }}>
+      <Text style={styles.buttonText}>View Profile</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Request service from ${technician.fullName}`} accessibilityState={{ disabled: !canRequest }} disabled={!canRequest} style={[styles.button, !canRequest && { opacity: 0.45 }]} onPress={() => { onNavigate(); router.push({ pathname: "/create-request", params: { technicianId: technician.uid, ...(service ? { service } : {}) } }); }}>
       <Text style={styles.buttonText}>Request Service</Text></Pressable></View>
   </View>;
 }

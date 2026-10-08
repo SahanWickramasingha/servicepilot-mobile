@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test, after } from "node:test";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { performanceTestDependency } from "../lib/performance-test-deps.mjs";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword } from "firebase/auth";
 import * as firestore from "firebase/firestore";
@@ -39,7 +40,7 @@ test("actual Admin lifecycle service atomically disables/enables projection, aud
   const exports = {}, code = ts.transpileModule(readFileSync(new URL("../../admin-web/src/services/accountLifecycleService.ts", import.meta.url), "utf8"),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
   const deps = { "firebase/firestore": firestore, "../firebase/config": { db: actor.db }, "../../../functions/src/domain/mapProjection": { buildMapProfile } };
-  new Function("exports", "require", code)(exports, (id) => deps[id] ?? rootRequire(id));
+  new Function("exports", "require", code)(exports, (id) => deps[id] ?? performanceTestDependency(id, deps) ?? rootRequire(id));
   const locationRef = firestore.doc(customer.db, "technician_locations", technicianId);
   assert.equal((await firestore.getDocFromServer(locationRef)).exists(), true);
   await assert.rejects(firestore.updateDoc(firestore.doc(actor.db, "users", technicianId), { accountStatus: "disabled", disabledBy: actorUid, disabledAt: firestore.serverTimestamp(), updatedAt: firestore.serverTimestamp() }), (e) => e.code === "permission-denied");

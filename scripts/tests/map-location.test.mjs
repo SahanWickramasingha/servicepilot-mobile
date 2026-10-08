@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { before, after, test } from "node:test";
 import { createRequire } from "node:module";
+import { performanceTestDependency } from "../lib/performance-test-deps.mjs";
 import { readFileSync } from "node:fs";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword, signOut } from "firebase/auth";
@@ -32,6 +33,7 @@ function loadService(session) {
     "@/src/firebase/config": { default: session.app, auth: session.auth, db: session.db }, "@/functions/src/domain/map": domain,
     "@/src/utils/mapServiceError": errorExports };
   deps["@/functions/src/domain/mapProjection"] = projection;
+  deps["@/functions/src/domain/availability"] = requireFunctions("./lib/domain/availability.js");
   deps["@/functions/src/domain/serviceAreas"] = requireFunctions("./lib/domain/serviceAreas.js");
   new Function("exports", "require", "__DEV__", output)(exports, (id) => deps[id] ?? requireRoot(id), false);
   return exports;
@@ -287,7 +289,8 @@ test("Personal Information persists district areas atomically without changing G
       { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
     const exports = {}, deps = { "firebase/firestore": firestore, "@/src/firebase/config": session,
       "@/src/utils/registrationDebug": {}, "@/functions/src/domain/mapProjection": projection, "@/functions/src/domain/serviceAreas": areaDomain };
-    new Function("exports", "require", code)(exports, (id) => deps[id] ?? requireRoot(id)); return exports;
+    deps["@/functions/src/domain/availability"] = requireFunctions("./lib/domain/availability.js");
+    new Function("exports", "require", code)(exports, (id) => deps[id] ?? performanceTestDependency(id, deps) ?? requireRoot(id)); return exports;
   };
   const userService = loadProfileService(tech());
   const peradeniya = areaDomain.SERVICE_AREA_CATALOGUE.kandy.find((a) => a.label === "Peradeniya");
@@ -371,11 +374,17 @@ test("existing customer profile/list actions read only public projections and ca
     "@/functions/src/domain/map": domain, "@/functions/src/domain/mapProjection": projection,
     "@/functions/src/domain/serviceAreas": requireFunctions("./lib/domain/serviceAreas.js") };
   deps["@/src/constants/serviceRequests"] = categories;
+  deps["@/functions/src/domain/availability"] = requireFunctions("./lib/domain/availability.js");
   const rating = {};
   new Function("exports", ts.transpileModule(readFileSync(new URL("../../src/utils/technicianRating.ts", import.meta.url), "utf8"),
     { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText)(rating);
   deps["@/src/utils/technicianRating"] = rating;
-  new Function("exports", "require", code)(exports, (id) => deps[id] ?? requireRoot(id));
+  new Function("exports", "require", code)(exports, (id) => deps[id] ?? performanceTestDependency(id, deps) ?? requireRoot(id));
+  const profileCode = ts.transpileModule(readFileSync(new URL("../../src/services/user.service.ts", import.meta.url), "utf8"),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
+  const userService = {};
+  new Function("exports", "require", profileCode)(userService, (id) => id === "@/src/firebase/config" ? tech() : id === "@/src/utils/registrationDebug" ? {} : deps[id] ?? performanceTestDependency(id, { ...deps, "@/src/firebase/config": tech() }) ?? requireRoot(id));
+  await userService.updateTechnicianAvailability("map-tech", "available");
   const profile = await exports.getApprovedTechnician("map-tech");
   assert.equal(profile.uid, "map-tech"); assert.equal(profile.fullName, "Map Technician");
   assert.equal(profile.averageRating, 4); assert.equal(profile.reviewCount, 3);
@@ -394,7 +403,7 @@ test("existing customer profile/list actions read only public projections and ca
     const output = ts.transpileModule(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"),
       { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
     const result = {};
-    new Function("exports", "require", output)(result, (id) => extra[id] ?? deps[id] ?? requireRoot(id));
+    new Function("exports", "require", output)(result, (id) => extra[id] ?? deps[id] ?? performanceTestDependency(id, { ...deps, ...extra }) ?? requireRoot(id));
     return result;
   };
   const notifications = load("src/services/notification.service.ts");

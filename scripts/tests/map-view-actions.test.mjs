@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { performanceTestDependency } from "../lib/performance-test-deps.mjs";
 const require = createRequire(import.meta.url), ts = require("typescript");
 const functions = createRequire(new URL("../../functions/package.json", import.meta.url));
 const domain = functions("./lib/domain/map.js"), areas = functions("./lib/domain/serviceAreas.js");
@@ -9,7 +10,7 @@ const dependencies = { "@/functions/src/domain/map": domain, "@/functions/src/do
 function load(path, deps) {
   const output = ts.transpileModule(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  const result = {}; new Function("exports", "require", output)(result, (id) => deps[id]); return result;
+  const result = {}; new Function("exports", "require", output)(result, (id) => deps[id] ?? performanceTestDependency(id, deps)); return result;
 }
 const actions = load("src/utils/mapViewActions.ts", dependencies);
 const kandy = domain.DISTRICTS.find((d) => d.id === "kandy");
@@ -60,6 +61,12 @@ function nativeHarness() {
       return [slots[index], (value) => { slots[index] = typeof value === "function" ? value(slots[index]) : value; }]; },
     useRef: (current) => { const index = cursor++; if (!(index in slots)) slots[index] = { current }; return slots[index]; },
     useCallback: (fn, deps) => memo(fn, deps),
+    memo: (component) => component,
+    useMemo: (fn, deps) => {
+      const index = cursor++, prior = slots[index];
+      if (!prior || deps.some((value, i) => !Object.is(value, prior.deps[i]))) slots[index] = { value: fn(), deps };
+      return slots[index].value;
+    },
     useEffect: (fn, deps) => { const index = cursor++, prior = slots[index];
       if (!prior || !deps || deps.some((v, i) => !Object.is(v, prior.deps[i]))) queue.push(() => { prior?.cleanup?.(); slots[index] = { deps, cleanup: fn() }; }); },
   };
@@ -187,13 +194,16 @@ test("customer subscriptions keep the open card/banner authoritative through tow
     },
     "@/functions/src/domain/map": domain, "@/functions/src/domain/serviceAreas": areas,
     "@/functions/src/domain/mapProjection": { MAP_MAX_ITEMS: 24 },
+    "@/functions/src/domain/availability": require("../../functions/lib/domain/availability.js"),
+    "@/src/components/technicians/AvailabilityBadge": { AvailabilityBadge: "AvailabilityBadge" },
     "@/src/utils/mapViewActions": actions, "@/src/utils/mapServiceError": {},
   });
   const flatten = (element) => !element || typeof element !== "object" ? [] : [element, ...[element.props?.children].flat(Infinity).flatMap(flatten)];
   const render = () => { cursor = 0; tree = screen.default(); while (queue.length) queue.shift()(); };
   const map = () => flatten(tree).find((e) => e.type === "TechnicianMap").props;
   const card = () => flatten(tree).find((e) => e.type?.name === "TechnicianCard").props;
-  const priorFrame = globalThis.requestAnimationFrame; globalThis.requestAnimationFrame = (fn) => fn();
+  const priorFrame = globalThis.requestAnimationFrame, priorCancel = globalThis.cancelAnimationFrame;
+  globalThis.requestAnimationFrame = (fn) => { fn(); return 1; }; globalThis.cancelAnimationFrame = () => {};
   try {
     render(); const saved = { ...technician, serviceDistrictIds: ["colombo", "kandy"], fullName: "Test Technician", specialization: "Electrical", averageRating: 4, reviewCount: 3 };
     directory({ items: [saved], hasMore: false }); render();
@@ -245,7 +255,7 @@ test("customer subscriptions keep the open card/banner authoritative through tow
     assert.equal(map().points.length, 0); assert.equal(map().serviceArea, undefined); assert.match(map().focusLocationStatus, /Location unavailable/);
     directory({ items: [{ ...updated, serviceAreasByDistrict: {} }], hasMore: false }); render();
     card().onShowServiceArea(saved.uid); render(); assert.match(map().serviceArea.detail, /District boundary only/);
-  } finally { globalThis.requestAnimationFrame = priorFrame; for (const slot of slots) slot?.cleanup?.(); }
+  } finally { for (const slot of slots) slot?.cleanup?.(); globalThis.requestAnimationFrame = priorFrame; globalThis.cancelAnimationFrame = priorCancel; }
 });
 
 test("native camera waits for authoritative action coordinates and does not focus stale or unverified points", () => {

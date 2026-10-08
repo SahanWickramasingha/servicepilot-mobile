@@ -1,6 +1,7 @@
 import { collection, doc, documentId, getDocFromServer, getDocsFromServer, limit, onSnapshot, orderBy,
   query, runTransaction, serverTimestamp, setDoc, startAfter, Timestamp, where, writeBatch } from "firebase/firestore";
 import { auth, db } from "@/src/firebase/config";
+import { readTechnicianAvailability, TechnicianAvailability } from "@/functions/src/domain/availability";
 import { approximateCoordinate, DISTRICTS, locationIsFresh, resolveServiceDistrictIds, validCoordinate } from "@/functions/src/domain/map";
 import { buildMapProfile, mapServiceCategory, MAP_MAX_ITEMS, MAP_PAGE_SIZE } from "@/functions/src/domain/mapProjection";
 import { StoredServiceAreasByDistrict, encodeServiceAreas, readServiceAreas, retainServiceAreas } from "@/functions/src/domain/serviceAreas";
@@ -9,6 +10,7 @@ export type MapTechnician = {
   uid: string; fullName: string; specialization: string; serviceDistrictIds: string[];
   averageRating: number; reviewCount: number;
   serviceAreasByDistrict?: StoredServiceAreasByDistrict;
+  availability?: TechnicianAvailability;
 };
 export type SharedMapLocation = { latitude: number; longitude: number; updatedAtMs?: number };
 export type PublicMapLocationSnapshot = { location: SharedMapLocation | null; updatedAtMs?: number };
@@ -20,6 +22,7 @@ function mapProfile(uid: string, data: Record<string, any> | undefined): MapTech
   if (!data) throw new MapServiceError("service", "failed-precondition");
   return { uid, fullName: data.fullName, specialization: data.specialization,
     serviceDistrictIds: data.serviceDistrictIds, averageRating: data.averageRating, reviewCount: data.reviewCount,
+    ...(readTechnicianAvailability(data.availability) ? { availability: readTechnicianAvailability(data.availability) } : {}),
     ...(data.serviceAreasByDistrict !== undefined ? { serviceAreasByDistrict: data.serviceAreasByDistrict } : {}) };
 }
 

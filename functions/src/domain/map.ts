@@ -1,4 +1,6 @@
-import boundaries from "./district-boundaries.json";
+import catalogue from "./district-catalogue.json";
+// Metro/Node provide require at runtime; Admin Web's TS config has no Node globals.
+declare const require: (path: "./district-boundaries.json") => typeof import("./district-boundaries.json");
 
 export const LOCATION_FRESH_MS = 2 * 60 * 1000;
 export type Coordinate = { latitude: number; longitude: number };
@@ -6,17 +8,21 @@ type Polygon = number[][][];
 type Geometry = { type: string; coordinates: Polygon | Polygon[] };
 export type District = { id: string; name: string; bounds: number[]; geometry: Geometry };
 
-export const DISTRICTS: District[] = boundaries.features.map((feature) => {
-  const name = feature.name.replace(/ District$/, "");
-  const geometry = feature.geometry as Geometry;
-  const polygons = geometry.type === "Polygon" ? [geometry.coordinates as Polygon] : geometry.coordinates as Polygon[];
-  const points = polygons.flatMap((polygon) => polygon.flat());
-  return {
-    id: name.toLowerCase().replace(/\s+/g, "-"), name, geometry,
-    bounds: [Math.min(...points.map((p) => p[1])), Math.min(...points.map((p) => p[0])),
-      Math.max(...points.map((p) => p[1])), Math.max(...points.map((p) => p[0]))],
-  };
-}).sort((a, b) => a.name.localeCompare(b.name));
+let geometries: Map<string, Geometry> | undefined;
+export const DISTRICTS: District[] = catalogue.map((district) => ({
+  ...district,
+  // Authentication/profile validation needs IDs, labels and bounds, not polygons.
+  // Metro resolves this literal require; evaluation waits until a map uses geometry.
+  get geometry(): Geometry {
+    if (!geometries) {
+      const boundaries: typeof import("./district-boundaries.json") = require("./district-boundaries.json");
+      geometries = new Map(boundaries.features.map((feature) => [
+        feature.name.replace(/ District$/, "").toLowerCase().replace(/\s+/g, "-"), feature.geometry as Geometry,
+      ]));
+    }
+    return geometries.get(district.id)!;
+  },
+}));
 
 export function validCoordinate(value: Coordinate): boolean {
   return Number.isFinite(value.latitude) && Number.isFinite(value.longitude) &&

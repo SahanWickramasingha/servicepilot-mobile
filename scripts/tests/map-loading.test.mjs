@@ -34,6 +34,7 @@ const service = loadTs("src/services/location.service.ts", {
   "@/src/firebase/config": { app, auth: { currentUser: null }, db },
   "@/src/utils/mapServiceError": errors, "@/functions/src/domain/map": domain,
   "@/functions/src/domain/mapProjection": projection,
+  "@/functions/src/domain/availability": require("../../functions/lib/domain/availability.js"),
   "@/functions/src/domain/serviceAreas": require("../../functions/lib/domain/serviceAreas.js"),
 });
 after(async () => { await firestore.terminate(db); await deleteApp(app); });

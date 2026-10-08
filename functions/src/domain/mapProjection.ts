@@ -1,11 +1,13 @@
 import { encodeServiceAreas, readServiceAreas } from "./serviceAreas";
 import type { StoredServiceAreasByDistrict } from "./serviceAreas";
+import { readTechnicianAvailability } from "./availability";
 
 export type MapProfileSource = {
   role?: unknown; fullName?: unknown; specialization?: unknown; accountStatus?: unknown;
   technicianApprovalStatus?: unknown; serviceDistrictIds?: unknown;
   averageRating?: unknown; reviewCount?: unknown; serviceAreasByDistrict?: unknown;
   experience?: unknown; qualifications?: unknown; certifications?: unknown; profilePhotoUrl?: unknown; completedJobs?: unknown;
+  availability?: unknown;
 };
 
 export const MAP_PAGE_SIZE = 8;
@@ -23,6 +25,7 @@ export function buildMapProfile(technicianId: string, profile: MapProfileSource)
     throw new Error("A Technician display name is required.");
   }
   const specialization = typeof profile.specialization === "string" ? profile.specialization : "";
+  const availability = readTechnicianAvailability(profile.availability);
   const averageRating = profile.averageRating ?? 0;
   const reviewCount = profile.reviewCount ?? 0;
   if (typeof averageRating !== "number" || !Number.isFinite(averageRating) || averageRating < 0 || averageRating > 5 ||
@@ -34,6 +37,7 @@ export function buildMapProfile(technicianId: string, profile: MapProfileSource)
     serviceDistrictIds: Array.isArray(profile.serviceDistrictIds) ? profile.serviceDistrictIds : [],
     approved: profile.technicianApprovalStatus === "approved" && (profile.accountStatus === undefined || profile.accountStatus === "active"),
     averageRating, reviewCount,
+    ...(availability ? { availability } : {}),
     publicDetails: {
       experience: typeof profile.experience === "string" ? profile.experience : "",
       qualifications: typeof profile.qualifications === "string" ? profile.qualifications : "",
