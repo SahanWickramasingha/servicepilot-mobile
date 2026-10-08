@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccessibilityInfo, PixelRatio, Platform, StyleSheet, View, Text, Pressable } from "react-native";
 import MapView, { Circle, Marker, Polygon, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { MapPinned, Minus, Plus, Wrench } from "lucide-react-native";
@@ -19,7 +19,7 @@ function districtRegion(district: TechnicianMapProps["district"]): Region {
     latitudeDelta: (north - south) * 1.3, longitudeDelta: (east - west) * 1.3 };
 }
 
-function WrenchPin({ group, selected, onPress }: { group: MapPoint[]; selected: boolean; onPress: () => void }) {
+const WrenchPin = memo(function WrenchPin({ group, selected, onSelect }: { group: MapPoint[]; selected: boolean; onSelect: TechnicianMapProps["onSelect"] }) {
   const marker = useRef<React.ComponentRef<typeof Marker>>(null);
   const [tracking, setTracking] = useState(true);
   const stale = group.every((point) => point.stale);
@@ -33,13 +33,25 @@ function WrenchPin({ group, selected, onPress }: { group: MapPoint[]; selected: 
   return <Marker ref={marker} identifier={group[0].id} coordinate={group[0]} title={title}
     style={styles.marker}
     description={status} accessibilityLabel={`${title}. ${status}`} accessibilityRole="button"
-    anchor={{ x: 0.5, y: 1 }} tracksViewChanges={tracking} onPress={onPress}>
+    anchor={{ x: 0.5, y: 1 }} tracksViewChanges={tracking} onPress={() => onSelect?.(group.map((point) => point.id))}>
     <View collapsable={false} style={styles.marker} onLayout={() => marker.current?.redraw()}>
       <View style={styles.markerTipOutline} /><View style={[styles.markerTip, { borderTopColor: color }]} />
       <View style={[styles.markerHead, { backgroundColor: color }]}><Wrench size={pinSize(24)} color="#FFFFFF" strokeWidth={2.5} /></View>
       {group.length > 1 && <View style={styles.badge}><Text style={styles.badgeText}>{group.length}</Text></View>}
     </View>
   </Marker>;
+}, (previous, next) => previous.selected === next.selected && previous.onSelect === next.onSelect &&
+  previous.group.length === next.group.length && previous.group.every((point, index) => {
+    const other = next.group[index];
+    return point.id === other.id && point.title === other.title && point.stale === other.stale &&
+      point.latitude === other.latitude && point.longitude === other.longitude;
+  }));
+
+function mapPolygons(geometry: NonNullable<TechnicianMapProps["district"]>["geometry"] | undefined) {
+  if (!geometry) return [];
+  const polygons = geometry.type === "Polygon" ? [geometry.coordinates as number[][][]] : geometry.coordinates as number[][][][];
+  const coordinates = (ring: number[][]) => ring.map(([longitude, latitude]) => ({ latitude, longitude }));
+  return polygons.map((rings) => ({ coordinates: coordinates(rings[0]), holes: rings.slice(1).map(coordinates) }));
 }
 
 const darkMap = [
@@ -108,27 +120,26 @@ export default function TechnicianMap({ district, points, selectedId, onSelect, 
     } : districtRegion(serviceArea.district), 400);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Follow saved-area changes, not unrelated GPS/rating updates.
   }, [ready, serviceArea?.sequence, serviceArea?.district.id, serviceArea?.label, serviceArea?.townReference?.latitude, serviceArea?.townReference?.longitude]);
-  const groups = groupMarkerPoints(points, region.latitudeDelta, region.longitudeDelta, width, 370);
-  const geometry = district?.geometry;
-  const polygons = geometry ? (geometry.type === "Polygon" ? [geometry.coordinates as number[][][]] : geometry.coordinates as number[][][][]) : [];
+  const groups = useMemo(() => groupMarkerPoints(points, region.latitudeDelta, region.longitudeDelta, width, 370),
+    [points, region.latitudeDelta, region.longitudeDelta, width]);
+  const polygons = useMemo(() => mapPolygons(district?.geometry), [district]);
   const serviceGeometry = !serviceArea?.townReference ? serviceArea?.district.geometry : undefined;
-  const servicePolygons = serviceGeometry ? (serviceGeometry.type === "Polygon" ? [serviceGeometry.coordinates as number[][][]] : serviceGeometry.coordinates as number[][][][]) : [];
-  const coordinates = (ring: number[][]) => ring.map(([longitude, latitude]) => ({ latitude, longitude }));
+  const servicePolygons = useMemo(() => mapPolygons(serviceGeometry), [serviceGeometry]);
   return <View style={styles.container} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
     <MapView ref={map} style={StyleSheet.absoluteFillObject} provider={Platform.OS === "android" ? PROVIDER_GOOGLE : undefined}
       initialRegion={districtRegion(district)} onRegionChangeComplete={setRegion}
       minZoomLevel={MAP_MIN_ZOOM} maxZoomLevel={MAP_MAX_ZOOM} zoomControlEnabled={false}
       customMapStyle={darkMap} userInterfaceStyle="dark" onMapReady={() => setReady(true)}
       showsUserLocation={false} showsMyLocationButton={false} toolbarEnabled={false}>
-      {polygons.map((rings, index) => <Polygon key={`${district?.id}-${index}`} coordinates={coordinates(rings[0])}
-        holes={rings.slice(1).map(coordinates)} strokeColor="#60A5FA" strokeWidth={2} fillColor="#2563EB14" />)}
-      {servicePolygons.map((rings, index) => <Polygon key={`service-${serviceArea?.technicianId}-${index}`} coordinates={coordinates(rings[0])}
-        holes={rings.slice(1).map(coordinates)} strokeColor="#F59E0B" strokeWidth={3} fillColor="#F59E0B22" />)}
+      {polygons.map((polygon, index) => <Polygon key={`${district?.id}-${index}`} {...polygon}
+        strokeColor="#60A5FA" strokeWidth={2} fillColor="#2563EB14" />)}
+      {servicePolygons.map((polygon, index) => <Polygon key={`service-${serviceArea?.technicianId}-${index}`} {...polygon}
+        strokeColor="#F59E0B" strokeWidth={3} fillColor="#F59E0B22" />)}
       {serviceArea?.townReference && <Marker key={`service-town-${serviceArea.label}`} coordinate={serviceArea.townReference}
         pinColor="#F59E0B" title={serviceArea.label} description={serviceArea.detail}
         accessibilityLabel={`${serviceArea.label}. ${serviceArea.detail}`} />}
       {groups.map((group) => <WrenchPin key={group.map((point) => `${point.id}:${point.stale}:${point.id === selectedId}`).join("|")}
-        group={group} selected={group.some((p) => p.id === selectedId)} onPress={() => onSelect?.(group.map((p) => p.id))} />)}
+        group={group} selected={group.some((p) => p.id === selectedId)} onSelect={onSelect} />)}
       {district && points.map((point) => <Circle key={`area-${point.id}`} center={point} radius={800}
         strokeColor="#60A5FA60" fillColor="#2563EB15" />)}
     </MapView>
