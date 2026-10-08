@@ -32,10 +32,13 @@ export function useTechnicianWorkspace(): TechnicianWorkspaceState {
   useEffect(() => {
     let unsubscribeProfile: (() => void) | undefined;
     let unsubscribeRequests: (() => void) | undefined;
+    let generation = 0;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       unsubscribeProfile?.();
       unsubscribeRequests?.();
+      const version = ++generation;
+      const isCurrent = () => generation === version && auth.currentUser?.uid === user?.uid;
 
       setProfile(null);
       setRequests([]);
@@ -57,6 +60,7 @@ export function useTechnicianWorkspace(): TechnicianWorkspaceState {
       unsubscribeProfile = subscribeToUserProfile(
         user.uid,
         (nextProfile) => {
+          if (!isCurrent()) return;
           setProfileLoading(false);
 
           if (!nextProfile) {
@@ -82,6 +86,7 @@ export function useTechnicianWorkspace(): TechnicianWorkspaceState {
           setProfile(nextProfile);
         },
         (error) => {
+          if (!isCurrent()) return;
           console.error("Technician profile subscription error:", error);
           setProfileLoading(false);
           setErrorMessage("Unable to load technician profile.");
@@ -91,10 +96,12 @@ export function useTechnicianWorkspace(): TechnicianWorkspaceState {
       unsubscribeRequests = subscribeToTechnicianRequests(
         user.uid,
         (nextRequests) => {
+          if (!isCurrent()) return;
           setRequests(nextRequests);
           setRequestsLoading(false);
         },
         (error) => {
+          if (!isCurrent()) return;
           console.error("Technician requests subscription error:", error);
           setRequestsLoading(false);
           setErrorMessage("Unable to load technician jobs.");
@@ -103,6 +110,7 @@ export function useTechnicianWorkspace(): TechnicianWorkspaceState {
     });
 
     return () => {
+      generation++;
       unsubscribeProfile?.();
       unsubscribeRequests?.();
       unsubscribeAuth();
