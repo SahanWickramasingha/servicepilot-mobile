@@ -111,6 +111,7 @@ service cloud.firestore {
         "serviceAreas",
         "serviceDivision",
         "technicianApprovalStatus",
+        "availability",
         "createdAt",
         "updatedAt"
       ]);
@@ -144,6 +145,7 @@ service cloud.firestore {
             request.resource.data.role == "technician" &&
             hasOnlyTechnicianCreateFields() &&
             hasRequiredTechnicianCreateFields() &&
+            request.resource.data.get("availability", "offline") == "offline" &&
             request.resource.data.technicianApprovalStatus == "pending"
           )
         );
@@ -244,6 +246,16 @@ service cloud.firestore {
             "reviewedAt",
             "rejectionReason"
           ]);
+    }
+
+    function validTechnicianAvailabilityUpdate(userId) {
+      let projection = getAfter(/databases/$(database)/documents/technician_map_profiles/$(userId)).data;
+      return isOwner(userId) && isVerifiedApprovedTechnician() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["availability", "updatedAt"]) &&
+        request.resource.data.availability in ["available", "busy", "offline"] &&
+        request.resource.data.updatedAt == request.time &&
+        projection.technicianId == userId && projection.availability == request.resource.data.availability &&
+        projection.updatedAt == request.time;
     }
 
     function validSuperAdminAccountDisable() {
@@ -629,6 +641,15 @@ service cloud.firestore {
         );
     }
 
+    function technicianAcceptsNewRequests(technicianId) {
+      // Check authoritative state at commit, including writes in the same batch.
+      let profile = getAfter(/databases/$(database)/documents/users/$(technicianId)).data;
+      let projection = getAfter(/databases/$(database)/documents/technician_map_profiles/$(technicianId)).data;
+      return profile.role == "technician" && profile.technicianApprovalStatus == "approved" &&
+        profileHasActiveAccount(profile) && profile.get("availability", "") == "available" &&
+        projection.approved == true && projection.get("availability", "") == "available";
+    }
+
     function validCustomerRequestCreate() {
       return isVerifiedCustomer() &&
         hasRequiredRequestCreateFields() &&
@@ -637,6 +658,7 @@ service cloud.firestore {
         request.resource.data.technicianId is string &&
         request.resource.data.technicianName is string &&
         isApprovedTechnicianId(request.resource.data.technicianId) &&
+        technicianAcceptsNewRequests(request.resource.data.technicianId) &&
         request.resource.data.status == "requested" &&
         request.resource.data.scheduledAt is timestamp &&
         request.resource.data.priority in ["normal", "urgent"] &&
@@ -686,7 +708,8 @@ service cloud.firestore {
         (
           (
             resource.data.status in ["requested", "pending"] &&
-            request.resource.data.status == "accepted"
+            request.resource.data.status == "accepted" &&
+            technicianAcceptsNewRequests(request.auth.uid)
           ) ||
           (
             resource.data.status in ["requested", "pending"] &&
@@ -1163,7 +1186,8 @@ service cloud.firestore {
           isActiveDispatcher() || isSuperAdmin()) &&
         profile.role == "technician" &&
         data.keys().hasAll(["technicianId", "fullName", "specialization", "serviceCategory", "serviceDistrictIds", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
-        data.keys().hasOnly(["technicianId", "fullName", "specialization", "serviceCategory", "serviceDistrictIds", "serviceAreasByDistrict", "publicDetails", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
+        data.keys().hasOnly(["technicianId", "fullName", "specialization", "serviceCategory", "serviceDistrictIds", "serviceAreasByDistrict", "publicDetails", "availability", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
+        data.get("availability", null) == (profile.get("availability", null) in ["available", "busy", "offline"] ? profile.availability : null) &&
         data.technicianId == technicianId && data.fullName is string && data.fullName.size() > 0 && data.fullName == profile.fullName &&
         data.specialization is string && data.specialization == profile.get("specialization", "") &&
         data.serviceCategory == mapCategory(profile) && validServiceDistrictIds(data.serviceDistrictIds) &&
@@ -1285,6 +1309,7 @@ service cloud.firestore {
       allow get: if canGetUserProfile(userId);
       allow list: if canListUserProfiles();
       allow update: if (validOwnerUpdate(userId) ||
+        validTechnicianAvailabilityUpdate(userId) ||
         validSuperAdminAccountLifecycleUpdate() ||
         validDispatcherInvitationAccept(userId) ||
         validDispatcherTechnicianReview()) && mapApprovalFollowsUser(userId);
