@@ -1,5 +1,4 @@
 import {
-  addDoc,
   collection,
   doc,
   getDoc,
@@ -9,6 +8,7 @@ import {
   Timestamp,
   updateDoc,
   where,
+  runTransaction,
 } from "firebase/firestore";
 
 import {
@@ -17,6 +17,9 @@ import {
   ServiceCategory,
 } from "@/src/constants/serviceRequests";
 import { auth, db } from "@/src/firebase/config";
+import { createSessionStream } from "./session-subscriptions";
+import { liveDocuments } from "@/src/utils/liveDocuments";
+import { requireAvailableTechnician } from "@/functions/src/domain/availability";
 import { createPersonalNotification } from "@/src/services/notification.service";
 import { UserProfile } from "@/src/services/user.service";
 import {
@@ -186,15 +189,23 @@ export async function createServiceRequest(
     );
   }
 
-  const requestRef = await addDoc(
-    collection(db, "service_requests"),
-    {
+  requireAvailableTechnician(approvedTechnician.availability);
+
+  const requestRef = doc(collection(db, "service_requests"));
+  try { await runTransaction(db, async (transaction) => {
+    const projection = (await transaction.get(doc(db, "technician_map_profiles", approvedTechnician.uid))).data();
+    if (auth.currentUser?.uid !== currentUser.uid) throw new Error("Your account changed. Please sign in again.");
+    if (!projection || projection.approved !== true) throw new Error("This technician is no longer approved for requests.");
+    requireAvailableTechnician(projection.availability);
+    // A concurrent availability change retries the read or is denied at commit.
+    // Rules also validate the authoritative private profile at the commit.
+    transaction.set(requestRef, {
       customerId: currentUser.uid,
       customerName: input.profile.fullName.trim(),
       customerEmail: input.profile.email.trim().toLowerCase(),
       customerPhone: input.profile.phone.trim(),
       technicianId: approvedTechnician.uid,
-      technicianName: approvedTechnician.fullName,
+      technicianName: projection.fullName,
       serviceCategory: input.serviceCategory,
       title: input.title.trim(),
       description: input.description.trim(),
@@ -213,8 +224,13 @@ export async function createServiceRequest(
       imageUrls: input.imageUrls ?? [],
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+    });
+  }); } catch (error) {
+    if ((error as { code?: string }).code === "permission-denied") {
+      throw Object.assign(new Error("Request could not be created. Technician availability or approval may have changed. Confirm your account, refresh and retry."), { code: "permission-denied" });
     }
-  );
+    throw error;
+  }
 
   await createPersonalNotification({
     userId: approvedTechnician.uid,
@@ -228,6 +244,7 @@ export async function createServiceRequest(
   return requestRef.id;
 }
 
+const requestsStream = createSessionStream<[ServiceRequest[]]>(() => [[]]);
 export function subscribeToTechnicianRequests(
   technicianId: string,
   onNext: (requests: ServiceRequest[]) => void,
@@ -238,19 +255,18 @@ export function subscribeToTechnicianRequests(
     where("technicianId", "==", technicianId)
   );
 
-  return onSnapshot(
+  return requestsStream(`technician:${technicianId}`, (emit, fail) => {
+    const rows = liveDocuments(mapServiceRequest);
+    return onSnapshot(
     requestsQuery,
     (snapshot) => {
-      onNext(
-        sortByCreatedDesc(
-          snapshot.docs.map((item) =>
-            mapServiceRequest(item.id, item.data())
-          )
-        )
+      emit(
+        sortByCreatedDesc(rows(snapshot))
       );
     },
-    onError
-  );
+    fail
+    );
+  }, onNext, onError);
 }
 
 export function subscribeToCustomerRequests(
@@ -263,19 +279,18 @@ export function subscribeToCustomerRequests(
     where("customerId", "==", customerId)
   );
 
-  return onSnapshot(
+  return requestsStream(`customer:${customerId}`, (emit, fail) => {
+    const rows = liveDocuments(mapServiceRequest);
+    return onSnapshot(
     requestsQuery,
     (snapshot) => {
-      onNext(
-        sortByCreatedDesc(
-          snapshot.docs.map((item) =>
-            mapServiceRequest(item.id, item.data())
-          )
-        )
+      emit(
+        sortByCreatedDesc(rows(snapshot))
       );
     },
-    onError
-  );
+    fail
+    );
+  }, onNext, onError);
 }
 
 export function subscribeToServiceRequest(
@@ -418,12 +433,6 @@ export async function updateTechnicianRequestStatus(
     throw new Error("Please sign in before updating this request.");
   }
 
-  const request = await getServiceRequest(requestId);
-
-  if (!request || request.technicianId !== currentUser.uid) {
-    throw new Error("You can only update your assigned requests.");
-  }
-
   const reason = options.reason?.trim() ?? "";
 
   if (status === "rejected" && !reason) {
@@ -460,7 +469,33 @@ export async function updateTechnicianRequestStatus(
     updatePayload.technicianCancellationReason = reason;
   }
 
-  await updateDoc(doc(db, "service_requests", requestId), updatePayload);
+  const request = await runTransaction(db, async (transaction) => {
+    const requestRef = doc(db, "service_requests", requestId);
+    const snapshot = await transaction.get(requestRef);
+    if (!snapshot.exists()) throw new Error("Request not found.");
+    const job = mapServiceRequest(snapshot.id, snapshot.data());
+    if (job.technicianId !== currentUser.uid || auth.currentUser?.uid !== currentUser.uid) {
+      throw new Error("You can only update your assigned requests.");
+    }
+    if (status === "accepted") {
+      const profile = (await transaction.get(doc(db, "users", currentUser.uid))).data();
+      const projection = (await transaction.get(doc(db, "technician_map_profiles", currentUser.uid))).data();
+      if (profile?.role !== "technician" || profile.technicianApprovalStatus !== "approved" ||
+          (profile.accountStatus !== undefined && profile.accountStatus !== "active") || projection?.approved !== true) {
+        throw new Error("An active approved technician account is required.");
+      }
+      requireAvailableTechnician(profile.availability);
+      requireAvailableTechnician(projection.availability);
+    }
+    // Never update availability on acceptance/completion: no automatic one-job cap.
+    transaction.update(requestRef, updatePayload);
+    return job;
+  }).catch((error: unknown) => {
+    if (status === "accepted" && (error as { code?: string }).code === "permission-denied") {
+      throw Object.assign(new Error("Request could not be accepted. Confirm you are Available and this request is still pending, then refresh and retry."), { code: "permission-denied" });
+    }
+    throw error;
+  });
 
   const notificationByStatus = {
     accepted: {

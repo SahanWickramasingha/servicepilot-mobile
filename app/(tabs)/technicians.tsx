@@ -1,7 +1,11 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "@/src/firebase/config";
+import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
 import {
   ActivityIndicator,
+  FlatList,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -55,6 +59,7 @@ export default function TechniciansScreen() {
   const [errorMessage, setErrorMessage] = useState("");
   const [pageCount, setPageCount] = useState(1);
   const [hasMore, setHasMore] = useState(false);
+  const renderTechnician = useCallback(({ item }: { item: PublicTechnicianProfile }) => <TechnicianCard technician={item} />, []);
 
   useEffect(() => {
     setCategory(initialCategory);
@@ -63,30 +68,40 @@ export default function TechniciansScreen() {
   }, [initialCategory, params.division]);
 
   useEffect(() => {
-    setLoading(true);
+    let stop: (() => void) | undefined;
+    let generation = 0;
+    const stopAuth = onAuthStateChanged(auth, (user) => {
+      stop?.();
+      const version = ++generation;
+      setTechnicians([]); setErrorMessage(""); setHasMore(false); setLoading(!!user);
+      if (!user) { setErrorMessage("Please sign in to browse technicians."); return; }
+      stop = subscribeToApprovedTechnicians(
+        (items) => {
+          if (version !== generation || auth.currentUser?.uid !== user.uid) return;
+          setTechnicians(items);
+          setErrorMessage("");
+          setLoading(false);
+        },
+        (error) => {
+          if (version !== generation || auth.currentUser?.uid !== user.uid) return;
+          console.error(
+            "Approved technicians subscription error:",
+            error
+          );
+          setErrorMessage("Unable to load technicians.");
+          setTechnicians([]);
+          setLoading(false);
+        },
+        {
+          category,
+          division,
+          pageCount,
+          onHasMore: (value) => { if (version === generation) setHasMore(value); },
+        }
+      );
+    });
 
-    const unsubscribe = subscribeToApprovedTechnicians(
-      (items) => {
-        setTechnicians(items);
-        setLoading(false);
-      },
-      (error) => {
-        console.error(
-          "Approved technicians subscription error:",
-          error
-        );
-        setErrorMessage("Unable to load technicians.");
-        setLoading(false);
-      },
-      {
-        category,
-        division,
-        pageCount,
-        onHasMore: setHasMore,
-      }
-    );
-
-    return unsubscribe;
+    return () => { generation++; stop?.(); stopAuth(); };
   }, [category, division, pageCount]);
 
   const divisions = useMemo(() => {
@@ -129,10 +144,17 @@ export default function TechniciansScreen() {
         barStyle="light-content"
         backgroundColor="#06101D"
       />
-      <ScrollView
+      <FlatList
+        data={filteredTechnicians}
+        renderItem={renderTechnician}
+        keyExtractor={technicianKey}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={7}
+        ItemSeparatorComponent={RowSeparator}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
-      >
+        ListHeaderComponent={<>
         <View style={styles.header}>
           <Text style={styles.title}>Technicians</Text>
           <Text style={styles.subtitle}>
@@ -205,16 +227,8 @@ export default function TechniciansScreen() {
           </Text>
         </View>
 
-        {filteredTechnicians.length > 0 ? (
-          <View style={styles.list}>
-            {filteredTechnicians.map((technician) => (
-              <TechnicianCard
-                key={technician.uid}
-                technician={technician}
-              />
-            ))}
-          </View>
-        ) : (
+        </>}
+        ListEmptyComponent={
           <View style={styles.emptyCard}>
             <UserRound size={38} color="#64748B" />
             <Text style={styles.emptyTitle}>
@@ -224,11 +238,13 @@ export default function TechniciansScreen() {
               Try another category or division.
             </Text>
           </View>
-        )}
+        }
+        ListFooterComponent={<>
         {hasMore && <TouchableOpacity accessibilityRole="button" style={styles.emptyCard} onPress={() => setPageCount((count) => count + 1)}>
           <Text style={styles.sectionTitle}>Load more Technicians</Text></TouchableOpacity>}
         {pageCount >= 3 && <Text style={styles.emptyText}>Showing up to 24 professionals. Choose a district on the Map to narrow results.</Text>}
-      </ScrollView>
+        </>}
+      />
     </View>
   );
 }
@@ -260,7 +276,9 @@ function FilterChip({
   );
 }
 
-function TechnicianCard({
+const technicianKey = (technician: PublicTechnicianProfile) => technician.uid;
+const RowSeparator = () => <View style={{ height: 12 }} />;
+const TechnicianCard = memo(function TechnicianCard({
   technician,
 }: {
   technician: PublicTechnicianProfile;
@@ -286,6 +304,7 @@ function TechnicianCard({
       </View>
       <View style={styles.cardContent}>
         <Text style={styles.name}>{technician.fullName}</Text>
+        <AvailabilityBadge availability={technician.availability} showDescription />
         <View style={styles.metaRow}>
           <Wrench size={13} color="#60A5FA" />
           <Text style={styles.metaText}>
@@ -315,7 +334,7 @@ function TechnicianCard({
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#06101D" },

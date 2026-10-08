@@ -1,5 +1,6 @@
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   CheckCircle2,
   ChevronRight,
@@ -9,6 +10,7 @@ import {
 } from "lucide-react-native";
 import {
   ActivityIndicator,
+  FlatList,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -49,23 +51,29 @@ export default function BookingsScreen() {
   >([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [page, setPage] = useState(1);
+  const renderRequest = useCallback(({ item }: { item: ServiceRequest }) => <RequestCard request={item} />, []);
+  useEffect(() => { setPage(1); }, [selectedFilter]);
 
   useEffect(() => {
-    const currentUser = auth.currentUser;
-
-    if (!currentUser) {
-      setErrorMessage("Please sign in again.");
-      setLoading(false);
-      return;
-    }
-// Subscribe to the user's service requests
-    const unsubscribe = subscribeToCustomerRequests(
+    let stop: (() => void) | undefined;
+    let generation = 0;
+    const stopAuth = onAuthStateChanged(auth, (currentUser) => {
+      stop?.();
+      const version = ++generation;
+      const current = () => version === generation && auth.currentUser?.uid === currentUser?.uid;
+      setRequests([]); setPage(1); setErrorMessage(""); setLoading(!!currentUser);
+      if (!currentUser) { setErrorMessage("Please sign in again."); return; }
+      stop = subscribeToCustomerRequests(
       currentUser.uid,
       (items) => {
+        if (!current()) return;
         setRequests(items);
         setLoading(false);
       },
       (error) => {
+        if (!current()) return;
+        setRequests([]);
         console.error(
           "Requests subscription error:",
           error
@@ -77,7 +85,8 @@ export default function BookingsScreen() {
       }
     );
 
-    return unsubscribe;
+    });
+    return () => { generation++; stop?.(); stopAuth(); };
   }, []);
 
   // Filter the requests based on the selected filter type
@@ -136,10 +145,17 @@ export default function BookingsScreen() {
         backgroundColor="#06101D"
       />
 
-      <ScrollView
+      <FlatList
+        data={filteredRequests.slice(0, page * 20)}
+        renderItem={renderRequest}
+        keyExtractor={requestKey}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={7}
+        ItemSeparatorComponent={RowSeparator}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
-      >
+        ListHeaderComponent={<>
         <View style={styles.header}>
           <View style={styles.headerText}>
             <Text style={styles.title}>My Requests</Text>
@@ -218,16 +234,8 @@ export default function BookingsScreen() {
           </Text>
         </View>
 
-        {filteredRequests.length > 0 ? (
-          <View style={styles.requestList}>
-            {filteredRequests.map((request) => (
-              <RequestCard
-                key={request.id}
-                request={request}
-              />
-            ))}
-          </View>
-        ) : (
+        </>}
+        ListEmptyComponent={
           <View style={styles.emptyCard}>
             <View style={styles.emptyIcon}>
               <Wrench size={35} color="#64748B" />
@@ -247,8 +255,12 @@ export default function BookingsScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-        )}
-      </ScrollView>
+        }
+        ListFooterComponent={filteredRequests.length > page * 20 ? <TouchableOpacity accessibilityRole="button"
+          style={styles.emptyButton} onPress={() => setPage((value) => value + 1)}>
+          <Text style={styles.emptyButtonText}>Load more requests ({filteredRequests.length - page * 20} remaining)</Text>
+        </TouchableOpacity> : null}
+      />
     </View>
   );
 }
@@ -302,7 +314,9 @@ function FilterButton({
   );
 }
 
-function RequestCard({
+const requestKey = (request: ServiceRequest) => request.id;
+const RowSeparator = () => <View style={{ height: 12 }} />;
+const RequestCard = memo(function RequestCard({
   request,
 }: {
   request: ServiceRequest;
@@ -406,7 +420,7 @@ function RequestCard({
       </Text>
     </TouchableOpacity>
   );
-}
+});
 
 function getRequestIcon(status: RequestStatus) {
   if (status === "completed") {

@@ -1,5 +1,8 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
+import { availabilityDisplay } from "@/functions/src/domain/availability";
 import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
@@ -42,7 +45,7 @@ import {
   UserProfile,
 } from "@/src/services/user.service";
 import {
-  getApprovedTechnician,
+  subscribeToApprovedTechnician,
   PublicTechnicianProfile,
 } from "@/src/services/technician.service";
 
@@ -159,48 +162,42 @@ export default function CreateRequestScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const sessionVersion = useRef(0);
+  const submissionVersion = useRef<number | null>(null);
 
   useEffect(() => {
-    const currentUser = auth.currentUser;
-
-    if (!currentUser) {
-      setErrorMessage("Please sign in again.");
-      setLoading(false);
-      return;
-    }
-
-    Promise.all([
-      getUserProfile(currentUser.uid),
-      params.technicianId
-        ? getApprovedTechnician(String(params.technicianId))
-        : Promise.resolve(null),
-    ])
-      .then(([userProfile, approvedTechnician]) => {
-        if (!userProfile) {
-          setErrorMessage("Customer profile not found.");
-          return;
-        }
-
-        if (!approvedTechnician) {
-          setErrorMessage(
-            "Please select an approved technician before creating a request."
-          );
-        }
-
-        setProfile(userProfile);
-        setTechnician(approvedTechnician);
-        setAddress(userProfile.address ?? "");
-        setDivision(
-          approvedTechnician?.serviceDivision ??
-            userProfile.address ??
-            ""
-        );
-      })
-      .catch((error) => {
-        console.error("Create request profile load error:", error);
-        setErrorMessage("Unable to load your profile.");
-      })
-      .finally(() => setLoading(false));
+    sessionVersion.current = sessionVersion.current + 1;
+    let stopTechnician: (() => void) | undefined;
+    const stopAuth = onAuthStateChanged(auth, (user) => {
+      stopTechnician?.();
+      const version = ++sessionVersion.current;
+      const isCurrent = () => version === sessionVersion.current && auth.currentUser?.uid === user?.uid;
+      setProfile(null); setTechnician(null); setErrorMessage(""); setSuccessMessage("");
+      setAddress(""); setDivision(""); setSubmitting(false); setLoading(true);
+      let profileLoaded = false, technicianLoaded = false;
+      const finishLoading = () => { if (isCurrent() && profileLoaded && technicianLoaded) setLoading(false); };
+      if (!user) { setErrorMessage("Please sign in again."); setLoading(false); return; }
+      void getUserProfile(user.uid).then((item) => {
+        if (!isCurrent()) return;
+        if (!item || item.role !== "customer") { setErrorMessage("A customer account is required."); return; }
+        setProfile(item); setAddress(item.address ?? "");
+      }, () => { if (isCurrent()) setErrorMessage("Unable to load your profile."); })
+        .finally(() => { profileLoaded = true; finishLoading(); });
+      if (!params.technicianId) {
+        technicianLoaded = true; setErrorMessage("Please select an approved technician."); finishLoading(); return;
+      }
+      stopTechnician = subscribeToApprovedTechnician(String(params.technicianId), (item) => {
+        if (!isCurrent()) return;
+        if (!technicianLoaded) setDivision(item?.serviceDivision ?? "");
+        technicianLoaded = true; setTechnician(item);
+        if (!item) setErrorMessage("This technician is no longer approved for requests.");
+        finishLoading();
+      }, () => {
+        if (!isCurrent()) return;
+        technicianLoaded = true; setTechnician(null); setErrorMessage("Unable to verify technician availability. Check your connection."); finishLoading();
+      });
+    });
+    return () => { sessionVersion.current++; stopTechnician?.(); stopAuth(); };
   }, [params.technicianId]);
 
   const preferredDate = selectedDate
@@ -236,6 +233,10 @@ export default function CreateRequestScreen() {
       return "Please select a preferred date.";
     }
 
+    if (!availabilityDisplay(technician.availability).canRequest) {
+      return availabilityDisplay(technician.availability).description;
+    }
+
     if (!preferredTime) {
       return "Please select a preferred time.";
     }
@@ -260,6 +261,9 @@ export default function CreateRequestScreen() {
     !validationMessage && !submitting && !!profile;
 
   const handleSubmit = async () => {
+    const version = sessionVersion.current;
+    if (submissionVersion.current === version) return;
+    const isCurrent = () => version === sessionVersion.current && auth.currentUser?.uid === profile?.uid;
     if (!profile || !technician || validationMessage) {
       setErrorMessage(validationMessage);
       return;
@@ -271,6 +275,7 @@ export default function CreateRequestScreen() {
     }
 
     try {
+      submissionVersion.current = version;
       setSubmitting(true);
       setErrorMessage("");
       setSuccessMessage("");
@@ -290,6 +295,8 @@ export default function CreateRequestScreen() {
         imageUrls: [],
       });
 
+      if (!isCurrent()) return;
+
       setSuccessMessage("Service request created.");
 
       router.replace({
@@ -297,13 +304,15 @@ export default function CreateRequestScreen() {
         params: { id: requestId },
       });
     } catch (error: any) {
+      if (!isCurrent()) return;
       console.error("Create request error:", error);
       setErrorMessage(
         error?.message ||
           "Unable to create service request."
       );
     } finally {
-      setSubmitting(false);
+      if (submissionVersion.current === version) submissionVersion.current = null;
+      if (isCurrent()) setSubmitting(false);
     }
   };
 
@@ -401,6 +410,7 @@ export default function CreateRequestScreen() {
               <Text style={styles.technicianName}>
                 {technician.fullName}
               </Text>
+              <AvailabilityBadge availability={technician.availability} showDescription />
               <Text style={styles.technicianMeta}>
                 {technician.specialization}
               </Text>
