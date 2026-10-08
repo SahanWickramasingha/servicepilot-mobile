@@ -14,9 +14,11 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { buildMapProfile } from "@/functions/src/domain/mapProjection";
+import { readTechnicianAvailability, TechnicianAvailability } from "@/functions/src/domain/availability";
 import { ServiceAreasByDistrict, StoredServiceAreasByDistrict, encodeServiceAreas } from "@/functions/src/domain/serviceAreas";
 
 import { auth, db } from "@/src/firebase/config";
+import { createSessionStream } from "./session-subscriptions";
 import {
   getFirebaseErrorCode,
   getFirebaseErrorMessage,
@@ -81,6 +83,7 @@ export interface UserProfile {
   averageRating?: number;
   reviewCount?: number;
   completedJobs?: number;
+  availability?: TechnicianAvailability;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -130,6 +133,7 @@ export async function createUserProfile(
     ...(isTechnician
       ? {
           technicianApprovalStatus: "pending",
+          availability: "offline",
           specialization:
             data.specialization?.trim() ?? "",
           experience:
@@ -223,23 +227,24 @@ export async function getUserProfile(
   return snapshot.data() as UserProfile;
 }
 
+const profileStream = createSessionStream<[UserProfile | null]>(() => [null]);
 export function subscribeToUserProfile(
   uid: string,
   onNext: (profile: UserProfile | null) => void,
   onError: (error: Error) => void
 ) {
-  return onSnapshot(
+  return profileStream(uid, (emit, fail) => onSnapshot(
     doc(db, "users", uid),
     (snapshot) => {
       if (!snapshot.exists()) {
-        onNext(null);
+        emit(null);
         return;
       }
 
-      onNext(snapshot.data() as UserProfile);
+      emit(snapshot.data() as UserProfile);
     },
-    onError
-  );
+    fail
+  ), onNext, onError);
 }
 
 export async function markUserEmailVerified(
@@ -279,6 +284,26 @@ export async function updateUserProfileSafe(
     transaction.update(userRef, changes);
     if (profile?.role === "technician") transaction.set(doc(db, "technician_map_profiles", uid), {
       ...buildMapProfile(uid, { ...profile, ...changes }), updatedAt: serverTimestamp(),
+    });
+  });
+}
+
+/** Only this explicit control changes availability. Jobs and GPS never write it. */
+export async function updateTechnicianAvailability(uid: string, availability: TechnicianAvailability): Promise<void> {
+  const currentUser = auth.currentUser;
+  if (currentUser?.uid !== uid) throw new Error("Change availability for your own account only.");
+  if (!readTechnicianAvailability(availability)) throw new Error("Select Available, Busy or Offline.");
+  await runTransaction(db, async (transaction) => {
+    if (auth.currentUser?.uid !== uid) throw new Error("Your account changed. Please try again.");
+    const userRef = doc(db, "users", uid);
+    const profile = (await transaction.get(userRef)).data();
+    if (!profile || profile.role !== "technician" || profile.technicianApprovalStatus !== "approved" ||
+        (profile.accountStatus !== undefined && profile.accountStatus !== "active") || !currentUser.emailVerified) {
+      throw new Error("An active, verified and approved technician account is required.");
+    }
+    transaction.update(userRef, { availability, updatedAt: serverTimestamp() });
+    transaction.set(doc(db, "technician_map_profiles", uid), {
+      ...buildMapProfile(uid, { ...profile, availability }), updatedAt: serverTimestamp(),
     });
   });
 }

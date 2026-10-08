@@ -21,13 +21,15 @@ import {
 } from "lucide-react-native";
 
 import {
-  getApprovedTechnician,
+  subscribeToApprovedTechnician,
   PublicTechnicianProfile,
   TechnicianReviewSummary,
 } from "@/src/services/technician.service";
 import { auth } from "@/src/firebase/config";
 import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
 import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
+import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
+import { availabilityDisplay } from "@/functions/src/domain/availability";
 
 import {
   getReviewDisplayName,
@@ -62,8 +64,10 @@ export default function TechnicianProfileScreen() {
   useEffect(() => {
     let active = true;
     let generation = 0;
+    let stopTechnician: (() => void) | undefined;
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (!active) return;
+      stopTechnician?.();
       const version = ++generation;
       setTechnician(null);
       setErrorMessage("");
@@ -74,23 +78,26 @@ export default function TechnicianProfileScreen() {
         return;
       }
       const isCurrent = () => active && version === generation && auth.currentUser?.uid === user.uid;
-      getApprovedTechnician(technicianId)
-        .then((item) => {
+      stopTechnician = subscribeToApprovedTechnician(technicianId,
+        (item) => {
           if (!isCurrent()) return;
+          setLoading(false);
           if (!item || item.uid !== technicianId) {
+            setTechnician(null);
             setErrorMessage("This technician is not available for customer requests.");
             return;
           }
           setTechnician(item);
-        })
-        .catch((error) => {
+          setErrorMessage("");
+        },
+        (error) => {
           if (!isCurrent()) return;
           console.error("Technician profile load error:", error);
+          setTechnician(null); setLoading(false);
           setErrorMessage("Unable to load technician profile.");
-        })
-        .finally(() => { if (isCurrent()) setLoading(false); });
+        });
     });
-    return () => { active = false; generation++; unsubscribeAuth(); };
+    return () => { active = false; generation++; stopTechnician?.(); unsubscribeAuth(); };
   }, [technicianId]);
 
   if (loading) {
@@ -157,6 +164,7 @@ export default function TechnicianProfileScreen() {
           <Text style={styles.specialization}>
             {technician.specialization}
           </Text>
+          <AvailabilityBadge availability={technician.availability} showDescription />
           <View style={styles.ratingRow}>
             <Star size={17} color="#F59E0B" fill={ratingDisplay.hasRatings ? "#F59E0B" : "transparent"} />
             <Text style={styles.ratingText}>
@@ -167,7 +175,9 @@ export default function TechnicianProfileScreen() {
             )}
           </View>
           <TouchableOpacity
-            style={styles.requestButton}
+            style={[styles.requestButton, !availabilityDisplay(technician.availability).canRequest && { opacity: 0.45 }]}
+            accessibilityRole="button"
+            disabled={!availabilityDisplay(technician.availability).canRequest}
             activeOpacity={0.85}
             onPress={() =>
               router.push({

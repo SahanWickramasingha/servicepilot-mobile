@@ -28,6 +28,8 @@ import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
 import { logoutUser } from "@/src/services/auth.service";
 import { getCompletedTechnicianRequests } from "@/src/utils/technicianRequests";
 import { TechnicianSharingPanel } from "@/src/components/maps/TechnicianSharingPanel";
+import { TechnicianAvailabilityPanel } from "@/src/components/technicians/TechnicianAvailabilityPanel";
+import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
 import { resolveServiceDistrictIds } from "@/functions/src/domain/map";
 import { declaredServiceAreaLabel } from "@/functions/src/domain/serviceAreas";
 
@@ -97,6 +99,7 @@ export default function TechnicianProfileScreen() {
           </Text>
 
           <Text style={styles.role}>{specialization}</Text>
+          <AvailabilityBadge availability={profile.availability} />
 
           <Text style={styles.divisionText}>{serviceDivision}</Text>
 
@@ -132,6 +135,7 @@ export default function TechnicianProfileScreen() {
 
         <Text style={styles.sectionTitle}>Technician</Text>
 
+        <TechnicianAvailabilityPanel key={profile.uid} profile={profile} />
         <TechnicianSharingPanel profile={profile} />
 
         <View style={styles.menuCard}>

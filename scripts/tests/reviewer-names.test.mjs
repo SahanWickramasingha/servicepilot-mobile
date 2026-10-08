@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { before, after, test } from "node:test";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { performanceTestDependency } from "../lib/performance-test-deps.mjs";
 import * as firebaseAppSdk from "firebase/app";
 import * as firestoreSdk from "firebase/firestore";
 import { initializeApp as clientApp, deleteApp } from "firebase/app";
@@ -52,9 +53,10 @@ function loadTs(path, deps = {}) {
   }).outputText;
   const exports = {};
   const sdk = { "firebase/app": firebaseAppSdk, "firebase/firestore": firestoreSdk };
+  deps["@/functions/src/domain/availability"] ??= functionsRequire("./lib/domain/availability.js");
   // Use the host realm: Firestore validates plain-object prototypes when writing.
   const evaluate = new Function("exports", "require", "__DEV__", output);
-  evaluate(exports, (id) => deps[id] ?? sdk[id] ?? rootRequire(id), false);
+  evaluate(exports, (id) => deps[id] ?? performanceTestDependency(id, deps) ?? sdk[id] ?? rootRequire(id), false);
   return exports;
 }
 const authorUi = loadTs("src/utils/reviewAuthor.ts");

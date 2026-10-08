@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { performanceTestDependency } from "../lib/performance-test-deps.mjs";
 const require = createRequire(import.meta.url), ts = require("typescript");
 function load(path, deps = {}) {
   const result = {};
   const code = ts.transpileModule(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
   new Function("exports", "require", code)(result, (id) => {
+    const performanceDep = performanceTestDependency(id, deps);
+    if (performanceDep) return performanceDep;
     if (!(id in deps)) throw new Error(`Missing test dependency: ${id}`);
     return deps[id];
   });
@@ -181,6 +184,7 @@ test("the real review service queries every review for one ID and requests metad
     "firebase/firestore": sdk, "@/src/firebase/config": { db: {} },
     "@/src/constants/serviceRequests": {}, "@/functions/src/domain/map": {},
     "@/functions/src/domain/serviceAreas": {}, "@/functions/src/domain/mapProjection": {},
+    "@/functions/src/domain/availability": load("functions/src/domain/availability.ts"),
     "@/src/utils/technicianRating": rating,
   });
   let reviews, metadata;
