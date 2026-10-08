@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   Bell,
   CheckCircle2,
@@ -27,6 +28,7 @@ import {
   getRequestStatusLabel,
 } from "@/src/constants/serviceRequests";
 import { auth } from "@/src/firebase/config";
+import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
 import {
   formatRequestDate,
   ServiceRequest,
@@ -62,94 +64,102 @@ export default function HomeScreen() {
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
-    const currentUser = auth.currentUser;
-
-    if (!currentUser) {
-      setLoading(false);
-      setErrorMessage("Please sign in again.");
-      return;
-    }
-
-    const customerId = currentUser.uid;
-
+    let generation = 0;
     let unsubscribeRequests: (() => void) | undefined;
-    let unsubscribeNotifications:
-      | (() => void)
-      | undefined;
+    let unsubscribeNotifications: (() => void) | undefined;
     let unsubscribeTechnicians: (() => void) | undefined;
+    const stopListeners = () => { unsubscribeRequests?.(); unsubscribeNotifications?.(); unsubscribeTechnicians?.(); };
+    const stopAuth = onAuthStateChanged(auth, (currentUser) => {
+      stopListeners();
+      const version = ++generation;
+      const isCurrent = () => version === generation && auth.currentUser?.uid === currentUser?.uid;
+      setProfile(null); setRequests([]); setNotifications([]); setTechnicians([]); setErrorMessage(""); setLoading(true);
 
-    async function loadCustomer() {
-      try {
-        const userProfile = await getUserProfile(
-          customerId
-        );
-
-        if (!userProfile) {
-          setErrorMessage("Customer profile not found.");
-          setLoading(false);
-          return;
-        }
-
-        setProfile(userProfile);
-
-        unsubscribeRequests =
-          subscribeToCustomerRequests(
-            customerId,
-            (items) => {
-              setRequests(items);
-              setLoading(false);
-            },
-            (error) => {
-              console.error(
-                "Dashboard requests subscription error:",
-                error
-              );
-              setErrorMessage(
-                "Unable to load service requests."
-              );
-              setLoading(false);
-            }
-          );
-
-        unsubscribeNotifications =
-          subscribeToCustomerNotifications(
-            {
-              userId: customerId,
-              role: userProfile.role,
-            },
-            setNotifications,
-            (error, context) => {
-              console.error(
-                "Dashboard notifications subscription error:",
-                context.queryType,
-                error
-              );
-            }
-          );
-
-        unsubscribeTechnicians =
-          subscribeToApprovedTechnicians(
-            setTechnicians,
-            (error) => {
-              console.error(
-                "Dashboard technicians subscription error:",
-                error
-              );
-            }
-          );
-      } catch (error) {
-        console.error("Dashboard load error:", error);
-        setErrorMessage("Unable to load dashboard.");
+      if (!currentUser) {
         setLoading(false);
+        setErrorMessage("Please sign in again.");
+        return;
       }
-    }
 
-    loadCustomer();
+      const customerId = currentUser.uid;
+
+      async function loadCustomer() {
+        try {
+          const userProfile = await getUserProfile(
+            customerId
+          );
+          if (!isCurrent()) return;
+
+          if (!userProfile) {
+            setErrorMessage("Customer profile not found.");
+            setLoading(false);
+            return;
+          }
+
+          setProfile(userProfile);
+
+          unsubscribeRequests =
+            subscribeToCustomerRequests(
+              customerId,
+              (items) => {
+                if (!isCurrent()) return;
+                setRequests(items);
+                setLoading(false);
+              },
+              (error) => {
+                if (!isCurrent()) return;
+                console.error(
+                  "Dashboard requests subscription error:",
+                  error
+                );
+                setErrorMessage(
+                  "Unable to load service requests."
+                );
+                setLoading(false);
+              }
+            );
+
+          unsubscribeNotifications =
+            subscribeToCustomerNotifications(
+              {
+                userId: customerId,
+                role: userProfile.role,
+              },
+              (items) => { if (isCurrent()) setNotifications(items); },
+              (error, context) => {
+                console.error(
+                  "Dashboard notifications subscription error:",
+                  context.queryType,
+                  error
+                );
+              }
+            );
+
+          unsubscribeTechnicians =
+            subscribeToApprovedTechnicians(
+              (items) => { if (isCurrent()) setTechnicians(items); },
+              (error) => {
+                if (!isCurrent()) return;
+                setTechnicians([]);
+                console.error(
+                  "Dashboard technicians subscription error:",
+                  error
+                );
+              }
+            );
+        } catch (error) {
+          if (!isCurrent()) return;
+          console.error("Dashboard load error:", error);
+          setErrorMessage("Unable to load dashboard.");
+          setLoading(false);
+        }
+      }
+
+      loadCustomer();
+    });
 
     return () => {
-      unsubscribeRequests?.();
-      unsubscribeNotifications?.();
-      unsubscribeTechnicians?.();
+      generation++; stopListeners(); stopAuth();
     };
   }, []);
 
@@ -497,6 +507,7 @@ function TechnicianSection({
                 <Text style={styles.technicianMiniName}>
                   {technician.fullName}
                 </Text>
+                <AvailabilityBadge availability={technician.availability} />
                 <Text style={styles.technicianMiniMeta}>
                   {technician.specialization}
                 </Text>
