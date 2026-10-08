@@ -16,6 +16,7 @@ import {
 import { FirebaseError } from "firebase/app";
 
 import { db } from "@/src/firebase/config";
+import { createSessionStream } from "./session-subscriptions";
 import type { UserRole } from "@/src/services/user.service";
 
 export type NotificationPriority = "normal" | "important" | "critical";
@@ -206,6 +207,7 @@ function logNotificationSubscriptionError({
   });
 }
 
+const notificationStream = createSessionStream<[NotificationCenterItem[]], [Error, NotificationSubscriptionError]>(() => [[]]);
 export function subscribeToNotificationCenter(
   {
     userId,
@@ -219,6 +221,14 @@ export function subscribeToNotificationCenter(
     error: Error,
     context: NotificationSubscriptionError
   ) => void
+) {
+  return notificationStream(`${userId}:${role}`, (emitNext, emitError) => connectNotificationCenter({ userId, role }, emitNext, emitError), onNext, onError);
+}
+
+function connectNotificationCenter(
+  { userId, role }: { userId: string; role: UserRole },
+  onNext: (items: NotificationCenterItem[]) => void,
+  onError: (error: Error, context: NotificationSubscriptionError) => void
 ) {
   let personal: PersonalNotification[] = [];
   let systemMessages: SystemMessage[] = [];
