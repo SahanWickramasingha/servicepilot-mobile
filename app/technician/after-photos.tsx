@@ -18,7 +18,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
+// Mock photo type
 type PhotoItem = {
   id: number;
   added: boolean;
@@ -77,7 +77,7 @@ export default function AfterServicePhotosScreen() {
       )
     );
   };
-
+// Save handler
   const handleSave = () => {
     if (photoCount === 0) {
       Alert.alert(
