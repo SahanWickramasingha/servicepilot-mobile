@@ -64,7 +64,7 @@ export default function AfterServicePhotosScreen() {
       )
     );
   };
-
+// remove 
   const removePhoto = (id: number) => {
     setPhotos((current) =>
       current.map((photo) =>

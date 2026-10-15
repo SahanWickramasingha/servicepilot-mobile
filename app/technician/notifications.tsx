@@ -42,7 +42,6 @@ export default function TechnicianNotificationsScreen() {
 
     const currentUserId = currentUser.uid;
     let unsubscribe: (() => void) | undefined;
-
     async function loadNotifications() {
       try {
         const profile = await getUserProfile(currentUserId);
