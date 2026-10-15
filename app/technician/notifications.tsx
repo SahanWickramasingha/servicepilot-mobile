@@ -52,7 +52,7 @@ export default function TechnicianNotificationsScreen() {
           setLoading(false);
           return;
         }
-
+// Subscribe to notification center updates for the technician
         unsubscribe = subscribeToNotificationCenter(
           {
             userId: currentUserId,
