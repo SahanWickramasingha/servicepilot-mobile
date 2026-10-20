@@ -33,6 +33,7 @@ export function renderHarness(path, { root = '.', initial = [], dependencies = {
   function load(logical) {
     if (modules.has(logical)) return modules.get(logical);
     let file = resolve(root, logical); if (!existsSync(file)) file = resolve(logical);
+    if (!existsSync(file) && file.endsWith('.ts') && existsSync(file+'x')) file += 'x';
     if (logical.endsWith('.json')) return JSON.parse(readFileSync(file, 'utf8'));
     const output = {}, code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
       module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,

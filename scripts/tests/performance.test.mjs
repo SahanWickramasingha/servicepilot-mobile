@@ -13,6 +13,7 @@ function pure(path) {
 }
 const { createSharedSubscription } = pure('src/utils/sharedSubscription.ts');
 const { liveDocuments } = pure('src/utils/liveDocuments.ts');
+const ratingModule = pure('src/utils/technicianRating.ts');
 function fixture() {
   let viewer = 'customer-a', watch, watchers = 0;
   const connections = [];
@@ -104,7 +105,7 @@ test('service consumers share jobs/reviews and preserve real reviewer names and 
       '@/src/constants/serviceRequests': {}, '@/src/services/notification.service': {}, '@/src/services/user.service': {},
       '@/src/services/technician.service': {}, '@/functions/src/domain/availability': require('../../functions/lib/domain/availability.js'),
       '@/functions/src/domain/map': require('../../functions/lib/domain/map.js'), '@/functions/src/domain/serviceAreas': require('../../functions/lib/domain/serviceAreas.js'),
-      '@/functions/src/domain/mapProjection': {}, '@/src/utils/technicianRating': { isEligibleReviewRating: (value) => value === 5 } };
+      '@/functions/src/domain/mapProjection': {}, '@/src/utils/technicianRating': ratingModule };
     const output = {}; new Function('exports', 'require', ts.transpileModule(readFileSync(new URL('../../'+path, import.meta.url), 'utf8'),
       { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(output,
       (id) => deps[id] ?? performanceTestDependency(id, deps)); return output;

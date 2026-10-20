@@ -1,0 +1,68 @@
+warning: in the working copy of 'admin-web/src/firebase/config.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'admin-web/src/pages/AuditLogs.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'admin-web/src/pages/Dispatchers.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'admin-web/src/pages/Login.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'admin-web/src/pages/Technicians.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/(auth)/login.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/index.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'firebase.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'functions/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package-lock.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'pnpm-lock.yaml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/TECHNICIAN_RATING_VALIDATION.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/check-rating-types.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/lib/performance-render-harness.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/tests/performance.test.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/tests/reviewer-names.test.mjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/components/auth/ProtectedRoute.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/firebase/config.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/hooks/useTechnicianReviews.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/auth.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/technician.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/user.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/utils/foregroundSharing.ts', LF will be replaced by CRLF the next time Git touches it
+ admin-web/src/auth/AdminAuthContext.tsx            | 122 [32m++++[m[31m-----[m
+ .../src/components/AccountLifecycleActions.tsx     |  26 [32m+[m[31m-[m
+ admin-web/src/firebase/config.ts                   |  20 [32m+[m[31m-[m
+ admin-web/src/pages/AuditLogs.tsx                  |   3 [32m+[m
+ admin-web/src/pages/Dispatchers.tsx                |  67 [32m++++[m[31m-[m
+ admin-web/src/pages/Login.tsx                      |   9 [32m+[m[31m-[m
+ admin-web/src/pages/Technicians.tsx                |   9 [32m+[m[31m-[m
+ admin-web/src/services/accountLifecycleService.ts  | 110 [32m++[m[31m------[m
+ .../src/services/dispatcherProvisioningService.ts  | 288 [32m++++++[m[31m---------------[m
+ admin-web/src/types.ts                             |   7 [32m+[m
+ app/(auth)/change-password.tsx                     | 122 [32m++++++[m[31m---[m
+ app/(auth)/forgot-password.tsx                     |  58 [32m+++[m[31m--[m
+ app/(auth)/login.tsx                               |  32 [32m++[m[31m-[m
+ app/(tabs)/create-request.tsx                      |  19 [32m+[m[31m-[m
+ app/(tabs)/index.tsx                               |  24 [32m+[m[31m-[m
+ app/(tabs)/map.tsx                                 |   9 [32m+[m[31m-[m
+ app/(tabs)/technicians.tsx                         |  17 [32m+[m[31m-[m
+ app/_layout.tsx                                    |   7 [32m+[m[31m-[m
+ app/index.tsx                                      | 104 [32m+[m[31m-------[m
+ firebase.json                                      |   7 [32m+[m[31m-[m
+ firestore.rules                                    | 286 [32m+++++[m[31m---------------[m
+ functions/package.json                             |   1 [32m+[m
+ functions/src/index.ts                             |   5 [32m+[m
+ functions/src/services/map.service.ts              |   5 [32m+[m[31m-[m
+ package-lock.json                                  |  34 [32m+++[m
+ package.json                                       |   1 [32m+[m
+ pnpm-lock.yaml                                     | 106 [32m+++++++[m[31m-[m
+ public/auth/action.html                            | 225 [32m++++++[m[31m----------[m
+ scripts/TECHNICIAN_RATING_VALIDATION.md            |   7 [32m+[m
+ scripts/check-rating-types.mjs                     |   2 [32m+[m
+ scripts/lib/performance-render-harness.mjs         |   1 [32m+[m
+ scripts/tests/foreground-sharing.test.mjs          |  12 [32m+[m
+ scripts/tests/map-admin.test.mjs                   |  25 [32m+[m[31m-[m
+ scripts/tests/performance.test.mjs                 |   3 [32m+[m[31m-[m
+ scripts/tests/reviewer-names.test.mjs              |  63 [32m++++[m[31m-[m
+ scripts/tests/technician-rating.test.mjs           |  81 [32m+++++[m[31m-[m
+ src/components/auth/ProtectedRoute.tsx             | 165 [32m+[m[31m-----------[m
+ src/firebase/config.ts                             |   5 [32m+[m[31m-[m
+ src/hooks/useTechnicianReviews.ts                  |  11 [32m+[m[31m-[m
+ src/services/auth.service.ts                       | 114 [32m+++++++[m[31m-[m
+ src/services/technician.service.ts                 |  13 [32m+[m[31m-[m
+ src/services/user.service.ts                       |   2 [32m+[m
+ src/utils/foregroundSharing.ts                     |   9 [32m+[m
+ 43 files changed, 1063 insertions(+), 1173 deletions(-)
