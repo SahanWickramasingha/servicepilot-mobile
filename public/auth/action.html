@@ -6,10 +6,11 @@
       name="viewport"
       content="width=device-width, initial-scale=1"
     />
-    <title>Verify Email | ServicePilot</title>
+    <meta name="referrer" content="no-referrer" />
+    <title>Account Actions | ServicePilot</title>
     <meta
       name="description"
-      content="ServicePilot email verification"
+      content="Secure ServicePilot email verification and password reset"
     />
     <link
       rel="icon"
@@ -31,6 +32,18 @@
         --error: #ef4444;
       }
 
+      [hidden] { display: none !important; }
+      .secure-form { margin-top: 24px; text-align: left; }
+      .secure-form fieldset { border: 0; padding: 0; margin: 0; }
+      .secure-form label { display: block; margin: 16px 0 8px; color: var(--text); font-size: 14px; }
+      .input-row { display: flex; gap: 8px; }
+      .secure-form input { min-width: 0; width: 100%; background: var(--card-strong); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 14px; font: inherit; }
+      button { font-family: inherit; cursor: pointer; }
+      button:disabled { opacity: .6; cursor: wait; }
+      .secure-form .button { margin-top: 18px; width: 100%; }
+      .visibility { border: 1px solid var(--border); border-radius: 10px; background: var(--card-strong); color: var(--text); min-width: 58px; }
+      .form-message { color: #fca5a5; line-height: 1.5; font-size: 14px; }
+      .status-icon { font-size: 36px; }
       * {
         box-sizing: border-box;
       }
@@ -223,16 +236,36 @@
           <div id="statusIcon" class="status-icon">
             <div class="spinner" aria-hidden="true"></div>
           </div>
-          <h1 id="title">Verifying your email...</h1>
+          <h1 id="title">Checking your secure link...</h1>
           <p id="message" class="message">
-            Please wait a moment while we verify your ServicePilot account.
+            Please wait while we load the secure account action.
           </p>
+          <noscript><p>JavaScript is required to complete this secure action. Enable JavaScript and reopen the link from your email.</p></noscript>
+          <form id="resetForm" class="secure-form" hidden novalidate>
+            <fieldset id="resetFields" disabled>
+              <label for="newPassword">New password</label>
+              <div class="input-row"><input id="newPassword" type="password" minlength="8" autocomplete="new-password" required aria-describedby="resetHint resetError" /><button id="showPassword" class="visibility" type="button" aria-label="Show or hide new password" aria-pressed="false">Show</button></div>
+              <label for="confirmPassword">Confirm new password</label>
+              <div class="input-row"><input id="confirmPassword" type="password" minlength="8" autocomplete="new-password" required aria-describedby="resetError" /><button id="showConfirmation" class="visibility" type="button" aria-label="Show or hide password confirmation" aria-pressed="false">Show</button></div>
+              <p id="resetHint" class="message">Use at least 8 characters. Follow any additional account password requirements.</p>
+              <p id="resetError" class="form-message" role="alert"></p>
+              <button id="resetSubmit" class="button primary" type="submit">Reset Password</button>
+            </fieldset>
+          </form>
+          <button id="retryAction" class="button secondary" type="button" hidden>Retry checking link</button>
+          <button id="requestFresh" class="button secondary" type="button" hidden>Request a fresh reset link</button>
+          <form id="freshForm" class="secure-form" hidden novalidate>
+            <label for="freshEmail">Email address</label>
+            <input id="freshEmail" type="email" autocomplete="email" maxlength="254" required />
+            <button id="freshSubmit" class="button primary" type="submit">Send Reset Link</button>
+            <p id="freshMessage" class="form-message" role="status" aria-live="polite"></p>
+          </form>
           <div id="actions" class="actions" hidden>
-            <a class="button primary" href="/" id="primaryAction">
-              Open ServicePilot
+            <a class="button primary" href="servicepilotmobile://login" id="primaryAction">
+              Back to Sign In (Mobile App)
             </a>
-            <a class="button secondary" href="/" id="secondaryAction">
-              Back to Sign In
+            <a class="button secondary" href="/login" id="secondaryAction">
+              Web Portal Sign In
             </a>
           </div>
         </article>
@@ -242,152 +275,46 @@
     </main>
 
     <script type="module">
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
-      import {
-        applyActionCode,
-        getAuth,
-      } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js";
-
-      const firebaseConfig = {
-        apiKey: "AIzaSyAKPlFn0eosrpqD0v8FxAfk-NsgONd51i4",
-        authDomain: "servicepilot-756d9.firebaseapp.com",
-        projectId: "servicepilot-756d9",
-        storageBucket: "servicepilot-756d9.firebasestorage.app",
-        messagingSenderId: "869400470316",
-        appId: "1:869400470316:web:3ccdf35ad3cbb368698289",
-      };
-
-      const stateContent = {
-        success: {
-          icon: "check",
-          tone: "success",
-          title: "Email Verified",
-          message:
-            "Your ServicePilot email has been verified successfully. You can now return to the ServicePilot app and sign in.",
-        },
-        alreadyUsed: {
-          icon: "check",
-          tone: "warning",
-          title: "Email Already Verified",
-          message:
-            "This verification link has already been used or the account is already verified. You can return to ServicePilot and sign in.",
-        },
-        expired: {
-          icon: "alert",
-          tone: "warning",
-          title: "Verification Link Expired",
-          message:
-            "This verification link is no longer valid. Return to ServicePilot and request a new verification email.",
-        },
-        invalid: {
-          icon: "alert",
-          tone: "error",
-          title: "Invalid Verification Link",
-          message:
-            "This verification link is missing required information. Return to ServicePilot and request a new verification email.",
-        },
-        unsupported: {
-          icon: "alert",
-          tone: "warning",
-          title: "Unsupported Action",
-          message:
-            "This ServicePilot page only handles email verification links.",
-        },
-        error: {
-          icon: "alert",
-          tone: "error",
-          title: "Unable to Verify Email",
-          message:
-            "We couldn't verify your email right now. Return to ServicePilot and request a new verification email.",
-        },
-      };
-
-      const statusIcon = document.getElementById("statusIcon");
-      const title = document.getElementById("title");
-      const message = document.getElementById("message");
-      const actions = document.getElementById("actions");
-      const primaryAction = document.getElementById("primaryAction");
-      const secondaryAction = document.getElementById("secondaryAction");
-
-      function iconMarkup(name) {
-        if (name === "check") {
-          return `
-            <svg width="38" height="38" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          `;
-        }
-
-        return `
-          <svg width="38" height="38" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 9v4" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>
-            <path d="M12 17h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-            <path d="M10.3 4.4 2.7 18a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 4.4a2 2 0 0 0-3.4 0Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
-          </svg>
-        `;
-      }
-
-      function renderState(key) {
-        const state = stateContent[key] ?? stateContent.error;
-
-        statusIcon.className = `status-icon ${state.tone}`;
-        statusIcon.innerHTML = iconMarkup(state.icon);
-        title.textContent = state.title;
-        message.textContent = state.message;
-        actions.hidden = false;
-        primaryAction.textContent = "Return to ServicePilot App";
-        primaryAction.removeAttribute("target");
-        primaryAction.href = "/";
-        secondaryAction.textContent = "Back to Sign In";
-        secondaryAction.href = "/";
-      }
-
-      async function verifyEmailAction() {
+      // Strip sensitive parameters before any external SDK imports. Never report
+      // location.search, action codes, passwords, or raw provider errors.
+      async function boot() {
         const params = new URLSearchParams(window.location.search);
-        const mode = params.get("mode");
-        const oobCode = params.get("oobCode");
-        const continueUrl = params.get("continueUrl");
-        const lang = params.get("lang");
-
-        if (lang) {
-          document.documentElement.lang = lang;
-        }
-
-        if (mode !== "verifyEmail") {
-          renderState("unsupported");
-          return;
-        }
-
-        if (!oobCode) {
-          renderState("invalid");
-          return;
-        }
-
+        const input = { mode: params.get("mode"), code: params.get("oobCode"),
+          invalidQuery: params.getAll("mode").length !== 1 || params.getAll("oobCode").length !== 1 };
+        window.history.replaceState(null, "", window.location.pathname);
+        let active = true, page;
+        window.addEventListener("pagehide", () => { active = false; input.code = ""; page?.dispose(); }, { once: true });
         try {
-          const app = initializeApp(firebaseConfig);
-          const auth = getAuth(app);
-
-          await applyActionCode(auth, oobCode);
-          void continueUrl;
-          renderState("success");
-        } catch (error) {
-          const code = error?.code || "";
-
-          if (code === "auth/expired-action-code") {
-            renderState("expired");
-            return;
+          const [appApi, authApi, controller, config] = await Promise.all([
+            import("https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js"),
+            import("https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js"),
+            import("/auth/action-controller.js"), import("/auth/action-config.js"),
+          ]);
+          if (!active) return;
+          const settings = config.actionConfig;
+          const app = appApi.initializeApp(settings.firebase, "servicepilot-email-action");
+          const auth = authApi.initializeAuth(app, { persistence: authApi.inMemoryPersistence });
+          if (settings.emulatorUrl) {
+            if (!settings.firebase.projectId.startsWith("demo-") || !["127.0.0.1", "localhost"].includes(window.location.hostname) ||
+                !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(settings.emulatorUrl)) throw new Error("Invalid local configuration");
+            authApi.connectAuthEmulator(auth, settings.emulatorUrl, { disableWarnings: true });
           }
-
-          if (code === "auth/invalid-action-code") {
-            renderState("alreadyUsed");
-            return;
-          }
-
-          renderState("error");
+          // Fixed reviewed destinations only. continueUrl and URL apiKey are ignored.
+          document.getElementById("primaryAction").href = settings.mobileSignIn;
+          document.getElementById("secondaryAction").href = settings.webSignIn;
+          page = controller.startEmailActionPage({ api: authApi, auth, document, ...input });
+          input.code = "";
+          await page.ready;
+        } catch {
+          input.code = "";
+          if (!active) return;
+          document.getElementById("title").textContent = "Account Action Unavailable";
+          document.getElementById("message").textContent = "Check your connection and reopen the link from your email. No password update has been confirmed.";
+          document.getElementById("statusIcon").textContent = "!";
+          document.getElementById("actions").hidden = false;
         }
       }
-
-      verifyEmailAction();
+      void boot();
     </script>
   </body>
 </html>

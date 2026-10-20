@@ -1,7 +1,8 @@
 import { router } from "expo-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
+  ActivityIndicator,
   Platform,
   ScrollView,
   StatusBar,
@@ -13,24 +14,36 @@ import {
 } from "react-native";
 
 import { ArrowLeft, CheckCircle2, Mail, Send } from "lucide-react-native";
+import { resetPassword } from "@/src/services/auth.service";
 
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("");
   const [isSent, setIsSent] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const submitting = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
-  const handleSendResetLink = () => {
-    /*
-      Firebase password reset will be added later.
-
-      Future:
-      await sendPasswordResetEmail(auth, email);
-    */
-
-    if (!email.trim()) {
-      return;
+  const handleSendResetLink = async () => {
+    if (!mounted.current || submitting.current || isSent) return;
+    submitting.current = true;
+    setLoading(true);
+    setErrorMessage("");
+    let accepted = false;
+    try {
+      await resetPassword(email);
+      accepted = true;
+      if (mounted.current) setIsSent(true);
+    } catch (error) {
+      if (mounted.current) setErrorMessage(error instanceof Error ? error.message : "Unable to send the reset request. Please try again.");
+    } finally {
+      if (!accepted) submitting.current = false;
+      if (mounted.current) setLoading(false);
     }
-
-    setIsSent(true);
   };
 
   return (
@@ -100,24 +113,26 @@ export default function ForgotPasswordScreen() {
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoCorrect={false}
+                  editable={!loading}
                   style={styles.input}
                 />
               </View>
             </View>
 
             {/* Send Button */}
+            {!!errorMessage && <Text accessibilityRole="alert" style={styles.errorText}>{errorMessage}</Text>}
             <TouchableOpacity
               style={[
                 styles.sendButton,
-                !email.trim() && styles.sendButtonDisabled,
+                (!email.trim() || loading) && styles.sendButtonDisabled,
               ]}
-              disabled={!email.trim()}
+              disabled={!email.trim() || loading}
               activeOpacity={0.85}
               onPress={handleSendResetLink}
             >
-              <Send size={19} color="#FFFFFF" />
+              {loading ? <ActivityIndicator color="#FFFFFF" /> : <Send size={19} color="#FFFFFF" />}
 
-              <Text style={styles.sendButtonText}>Send Reset Link</Text>
+              <Text style={styles.sendButtonText}>{loading ? "Sending..." : "Send Reset Link"}</Text>
             </TouchableOpacity>
 
             {/* Login Link */}
@@ -140,7 +155,7 @@ export default function ForgotPasswordScreen() {
               <Text style={styles.successTitle}>Check Your Email</Text>
 
               <Text style={styles.successText}>
-                We sent a password reset link to
+                If an eligible account exists for this email, a password reset link will be sent.
               </Text>
 
               <Text style={styles.emailText}>{email}</Text>
@@ -157,14 +172,14 @@ export default function ForgotPasswordScreen() {
               activeOpacity={0.85}
               onPress={() => router.replace("/login")}
             >
-              <Text style={styles.sendButtonText}>Back to Login</Text>
+              <Text style={styles.sendButtonText}>Back to Sign In</Text>
             </TouchableOpacity>
 
             {/* Resend */}
             <TouchableOpacity
               style={styles.resendButton}
               activeOpacity={0.8}
-              onPress={() => setIsSent(false)}
+              onPress={() => { submitting.current = false; setIsSent(false); setErrorMessage(""); }}
             >
               <Text style={styles.resendText}>
                 Didn&apos;t receive the email? Try again
@@ -178,6 +193,7 @@ export default function ForgotPasswordScreen() {
 }
 
 const styles = StyleSheet.create({
+  errorText: { color: "#FCA5A5", marginBottom: 16, textAlign: "center", fontSize: 13 },
   container: {
     flex: 1,
     backgroundColor: "#06101D",
