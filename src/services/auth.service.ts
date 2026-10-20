@@ -3,6 +3,9 @@ import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
   sendEmailVerification,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
   signOut,
   User,
   UserCredential,
@@ -72,7 +75,101 @@ export async function loginUser(
 }
 
 export async function resetPassword(email: string): Promise<void> {
-  await sendPasswordResetEmail(auth, email.trim());
+  const normalized = email.trim().toLowerCase();
+  if (normalized.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    throw new Error("Please enter a valid email address.");
+  }
+  try {
+    // The Console email template selects the action handler. A continue URL
+    // would only select a destination AFTER handling the action.
+    await sendPasswordResetEmail(auth, normalized);
+  } catch (error) {
+    switch (getFirebaseErrorCode(error)) {
+      // Preserve the same neutral outcome with or without enumeration protection.
+      case "auth/user-not-found":
+      case "auth/user-disabled":
+        return;
+      case "auth/invalid-email":
+        throw new Error("Please enter a valid email address.");
+      case "auth/network-request-failed":
+        throw new Error("Unable to send the reset request. Check your connection and try again.");
+      case "auth/too-many-requests":
+        throw new Error("Too many reset requests. Please wait a while before trying again.");
+      default:
+        throw new Error("Unable to send the reset request right now. Please try again later.");
+    }
+  }
+}
+
+function passwordChangeErrorMessage(error: unknown): string {
+  switch (getFirebaseErrorCode(error)) {
+    case "auth/wrong-password":
+    case "auth/invalid-credential":
+    case "auth/invalid-login-credentials":
+      return "Your current password is incorrect. Please try again.";
+    case "auth/weak-password":
+    case "auth/password-does-not-meet-requirements":
+      return "Choose a stronger password with at least 8 characters that meets your account's password requirements.";
+    case "auth/network-request-failed":
+      return "Unable to reach the authentication service. Check your connection and try again.";
+    case "auth/too-many-requests":
+      return "Too many attempts. Please wait a while before trying again.";
+    case "auth/requires-recent-login":
+      return "For your security, please sign in again before changing your password.";
+    case "auth/user-token-expired":
+    case "auth/invalid-user-token":
+    case "auth/user-not-found":
+    case "auth/user-disabled":
+    case "auth/user-mismatch":
+      return "Your session is no longer valid. Please sign in again.";
+    default:
+      return "Unable to change your password. Please try again.";
+  }
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+  confirmPassword: string
+): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error("Please sign in before changing your password.");
+  }
+  if (user.isAnonymous || !user.email || !user.providerData.some(
+    (provider) => provider.providerId === EmailAuthProvider.PROVIDER_ID
+  )) {
+    throw new Error("Password changes are available for email/password accounts only. Manage your password with your sign-in provider.");
+  }
+  // Preserve the exact password values, including intentional spaces.
+  if (!currentPassword.length) {
+    throw new Error("Enter your current password.");
+  }
+  if (newPassword.length < 8) {
+    throw new Error("Your new password must contain at least 8 characters.");
+  }
+  if (newPassword !== confirmPassword) {
+    throw new Error("Your new password and confirmation must match.");
+  }
+  if (newPassword === currentPassword) {
+    throw new Error("Choose a new password different from your current password.");
+  }
+
+  try {
+    const credential = EmailAuthProvider.credential(user.email, currentPassword);
+    await reauthenticateWithCredential(user, credential);
+    // Never update a captured user's password after logout or an account switch.
+    if (auth.currentUser !== user) {
+      throw Object.assign(new Error("Session changed."), { code: "auth/user-mismatch" });
+    }
+    await updatePassword(user, newPassword);
+    if (auth.currentUser !== user) {
+      throw Object.assign(new Error("Session changed."), { code: "auth/user-mismatch" });
+    }
+  } catch (error) {
+    // Return only safe, actionable messages; never log credentials or raw errors.
+    throw new Error(passwordChangeErrorMessage(error));
+  }
 }
 
 export async function sendVerificationEmail(

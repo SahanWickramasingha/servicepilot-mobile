@@ -1,6 +1,7 @@
 import { router } from "expo-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -19,6 +20,7 @@ import {
   LockKeyhole,
   ShieldCheck,
 } from "lucide-react-native";
+import { changePassword } from "@/src/services/auth.service";
 
 export default function ChangePasswordScreen() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -30,37 +32,64 @@ export default function ChangePasswordScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [updated, setUpdated] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const submitting = useRef(false);
+  const mounted = useRef(false);
+  const returnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (returnTimer.current !== null) clearTimeout(returnTimer.current);
+    };
+  }, []);
 
   const passwordsMatch =
     newPassword.length > 0 && newPassword === confirmPassword;
 
   const hasMinimumLength = newPassword.length >= 8;
+  const isDifferentPassword = newPassword.length > 0 && newPassword !== currentPassword;
 
   const canSubmit =
-    currentPassword.trim().length > 0 &&
+    currentPassword.length > 0 &&
     hasMinimumLength &&
-    passwordsMatch;
+    passwordsMatch &&
+    isDifferentPassword;
 
-  const handleUpdatePassword = () => {
-    if (!canSubmit) {
+  const handleUpdatePassword = async () => {
+    if (!mounted.current || submitting.current || updated || !canSubmit) {
       return;
     }
 
-    /*
-      Firebase password update will be added later.
+    submitting.current = true;
+    setLoading(true);
+    setErrorMessage("");
+    let passwordChanged = false;
+    try {
+      await changePassword(currentPassword, newPassword, confirmPassword);
+      passwordChanged = true;
+      if (!mounted.current) return;
 
-      Future:
-      1. Re-authenticate user with current password
-      2. Validate new password
-      3. updatePassword()
-      4. Show success feedback
-    */
-
-    setUpdated(true);
-
-    setTimeout(() => {
-      router.back();
-    }, 1200);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setShowCurrentPassword(false);
+      setShowNewPassword(false);
+      setShowConfirmPassword(false);
+      setUpdated(true);
+      returnTimer.current = setTimeout(() => {
+        if (mounted.current) router.back();
+      }, 1200);
+    } catch (error) {
+      if (!mounted.current) return;
+      setErrorMessage(error instanceof Error ? error.message : "Unable to change your password. Please try again.");
+    } finally {
+      // Keep submissions locked after success, including older press callbacks.
+      submitting.current = passwordChanged;
+      if (mounted.current) setLoading(false);
+    }
   };
 
   return (
@@ -141,6 +170,9 @@ export default function ChangePasswordScreen() {
                 placeholder="Enter current password"
                 placeholderTextColor="#64748B"
                 secureTextEntry={!showCurrentPassword}
+                editable={!loading && !updated}
+                autoCapitalize="none"
+                autoCorrect={false}
                 style={styles.input}
               />
 
@@ -177,6 +209,9 @@ export default function ChangePasswordScreen() {
                 placeholder="Enter new password"
                 placeholderTextColor="#64748B"
                 secureTextEntry={!showNewPassword}
+                editable={!loading && !updated}
+                autoCapitalize="none"
+                autoCorrect={false}
                 style={styles.input}
               />
 
@@ -213,6 +248,9 @@ export default function ChangePasswordScreen() {
                 placeholder="Confirm new password"
                 placeholderTextColor="#64748B"
                 secureTextEntry={!showConfirmPassword}
+                editable={!loading && !updated}
+                autoCapitalize="none"
+                autoCorrect={false}
                 style={styles.input}
               />
 
@@ -249,14 +287,20 @@ export default function ChangePasswordScreen() {
           />
 
           <Rule
-            text="Use a strong and unique password"
-            valid={newPassword.length >= 10}
+            text="Different from your current password"
+            valid={isDifferentPassword}
           />
         </View>
 
+        {errorMessage ? (
+          <View style={styles.errorBox} accessibilityRole="alert" accessibilityLiveRegion="polite">
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
+        ) : null}
+
         {/* Success */}
         {updated && (
-          <View style={styles.successBox}>
+          <View style={styles.successBox} accessibilityLiveRegion="polite">
             <CheckCircle2
               size={19}
               color="#22C55E"
@@ -272,19 +316,20 @@ export default function ChangePasswordScreen() {
         <TouchableOpacity
           style={[
             styles.updateButton,
-            !canSubmit && styles.updateButtonDisabled,
+            (!canSubmit || loading || updated) && styles.updateButtonDisabled,
           ]}
-          disabled={!canSubmit || updated}
+          disabled={!canSubmit || loading || updated}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canSubmit || loading || updated, busy: loading }}
           activeOpacity={0.85}
           onPress={handleUpdatePassword}
         >
-          <ShieldCheck
-            size={19}
-            color="#FFFFFF"
-          />
+          {loading ? <ActivityIndicator size="small" color="#FFFFFF" /> : (
+            <ShieldCheck size={19} color="#FFFFFF" />
+          )}
 
           <Text style={styles.updateButtonText}>
-            Update Password
+            {loading ? "Updating Password..." : "Update Password"}
           </Text>
         </TouchableOpacity>
 
@@ -521,6 +566,21 @@ const styles = StyleSheet.create({
 
   ruleTextValid: {
     color: "#86EFAC",
+  },
+
+  errorBox: {
+    borderRadius: 12,
+    backgroundColor: "rgba(239,68,68,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(239,68,68,0.22)",
+    padding: 14,
+    marginBottom: 17,
+  },
+
+  errorText: {
+    color: "#FCA5A5",
+    fontSize: 12,
+    lineHeight: 19,
   },
 
   successBox: {
