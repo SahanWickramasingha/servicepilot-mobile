@@ -214,4 +214,13 @@ export class ForegroundSharing {
     const generation = this.generation;
     try { await stopped; } finally { if (generation === this.generation) this.uid = undefined; }
   }
+
+  // Only for a confirmed administrative revocation. The trusted backend has
+  // already removed both coordinate documents. Normal logout still awaits stop().
+  endRevokedSession(): void {
+    this.cancelLocal();
+    this.uid = undefined;
+    this.optedIn = false;
+    this.update({ enabled: false, status: "off", error: "", revokeFailed: false });
+  }
 }

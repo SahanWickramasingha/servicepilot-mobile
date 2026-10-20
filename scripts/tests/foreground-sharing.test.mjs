@@ -223,3 +223,15 @@ test("a previous account's in-flight save cannot throttle the new technician's f
   assert.equal(state.writes.at(-1).uid, "tech-b"); assert.ok(state.writes.at(-1).point);
   assert.equal(sharing.getSnapshot().status, "sharing"); await sharing.stop();
 });
+
+
+test("administrative revocation cancels local GPS without a forbidden remote write and never auto-resumes", async () => {
+  const { sharing, state, point } = fixture();
+  await sharing.setSession("tech-a"); await sharing.enable();
+  const before = state.writes.length;
+  sharing.adapter.publish = async () => { throw new Error("permission denied"); };
+  sharing.endRevokedSession();
+  assert.equal(sharing.getSnapshot().status, "off"); assert.equal(state.removed, 1); assert.equal(state.timerRemoved, 1);
+  state.watch(point()); await sharing.setActive(false); await sharing.setActive(true);
+  assert.equal(state.writes.length, before); assert.equal(sharing.getSnapshot().enabled, false);
+});

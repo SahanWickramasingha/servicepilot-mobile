@@ -66,6 +66,8 @@ export interface UserProfile {
   address: string;
   role: UserRole;
   accountStatus?: "active" | "disabled" | "deleted" | string;
+  lifecyclePending?: boolean;
+  sessionRevokedAt?: number;
   emailVerified?: boolean;
   technicianApprovalStatus?: TechnicianApprovalStatus;
   reviewedBy?: string | null;

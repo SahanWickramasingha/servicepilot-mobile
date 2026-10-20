@@ -22,7 +22,11 @@ export type UserRecord = {
   address?: string;
   role?: UserRole;
   accountStatus?: AccountStatus;
+  lifecyclePending?: boolean;
+  lifecycleAction?: "disable" | "enable" | "delete";
+  sessionRevokedAt?: number;
   invitationStatus?: "pending" | "accepted" | string;
+  invitationDeliveryStatus?: string;
   dispatcherId?: string;
   emailVerified?: boolean;
   createdBy?: string;
@@ -95,6 +99,9 @@ export type ServiceReviewRecord = {
 export type AuditLogRecord = {
   id: string;
   action?: string;
+  outcome?: "pending" | "retryable" | "complete";
+  lastAttemptBy?: string;
+  completedAt?: unknown;
   actorUid?: string;
   actorRole?: string;
   targetUid?: string;

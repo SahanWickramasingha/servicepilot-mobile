@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,9 +20,11 @@ import { Apple, Eye, EyeOff, LockKeyhole, Mail } from "lucide-react-native";
 import {
   loginUser,
   logoutUser,
+  logoutRevokedUser,
   sendVerificationEmail,
 } from "@/src/services/auth.service";
 import { auth } from "@/src/firebase/config";
+import { accountSessionDenial } from "@/functions/src/domain/accountSession";
 import {
   getDashboardRouteForRole,
   getMobileAccessDecision,
@@ -42,6 +44,7 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
+  const submitting = useRef(false);
   const [sendingVerification, setSendingVerification] =
     useState(false);
   const [errorMessage, setErrorMessage] = useState(
@@ -54,6 +57,7 @@ export default function LoginScreen() {
     useState(params.needsVerification === "true");
 
   const handleLogin = async () => {
+    if (submitting.current) return;
     const cleanEmail = email.trim().toLowerCase();
 
     setErrorMessage("");
@@ -67,11 +71,13 @@ export default function LoginScreen() {
     }
 
     try {
+      submitting.current = true;
       setLoading(true);
 
       const credential = await loginUser(
         cleanEmail,
-        password
+        password,
+        rememberMe
       );
 
       let profile = await getUserProfile(
@@ -82,6 +88,16 @@ export default function LoginScreen() {
         setErrorMessage(
           "User profile not found. Please contact support."
         );
+        return;
+      }
+
+      const token = profile.sessionRevokedAt === undefined ? null : await credential.user.getIdTokenResult();
+      if (auth.currentUser !== credential.user) return;
+      const sessionDenial = accountSessionDenial(profile, token?.claims.auth_time as number | undefined);
+      if (sessionDenial) {
+        setErrorMessage(sessionDenial);
+        setShowVerifyRecovery(false);
+        await logoutRevokedUser();
         return;
       }
 
@@ -129,9 +145,13 @@ export default function LoginScreen() {
         getDashboardRouteForRole(profile.role) as never
       );
     } catch (error: any) {
-      console.error("Login error:", error);
-
       switch (error?.code) {
+        case "auth/user-disabled":
+          setErrorMessage("Your ServicePilot account has been disabled or deleted. Please contact support.");
+          break;
+        case "auth/persistence-unavailable":
+          setErrorMessage(error.message);
+          break;
         case "auth/invalid-email":
           setErrorMessage(
             "Please enter a valid email address."
@@ -159,6 +179,7 @@ export default function LoginScreen() {
           );
       }
     } finally {
+      submitting.current = false;
       setLoading(false);
     }
   };
@@ -322,6 +343,9 @@ export default function LoginScreen() {
             onPress={() => setRememberMe((current) => !current)}
             activeOpacity={0.8}
             disabled={loading}
+            accessibilityRole="checkbox"
+            accessibilityLabel="Remember me on this device"
+            accessibilityState={{ checked: rememberMe, disabled: loading }}
           >
             <View
               style={[styles.checkbox, rememberMe && styles.checkboxActive]}

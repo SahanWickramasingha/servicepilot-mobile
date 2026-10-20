@@ -1,6 +1,7 @@
 {
   "name": "functions",
   "scripts": {
+    "dispatcher:serve": "node lib/dispatcher-main.js",
     "lint": "eslint .",
     "build": "tsc",
     "build:watch": "tsc --watch",

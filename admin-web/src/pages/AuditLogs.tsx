@@ -15,6 +15,7 @@ export default function AuditLogs() {
       auditLogs.data.filter((log) =>
         [
           log.action,
+          log.outcome,
           log.actorUid,
           log.actorRole,
           log.targetUid,
@@ -59,6 +60,7 @@ export default function AuditLogs() {
               <thead>
                 <tr>
                   <th>Action</th>
+                  <th>Outcome</th>
                   <th>Actor</th>
                   <th>Target</th>
                   <th>Metadata</th>
@@ -71,6 +73,7 @@ export default function AuditLogs() {
                     <td>
                       <strong>{statusLabel(log.action)}</strong>
                     </td>
+                    <td>{statusLabel(log.outcome ?? "recorded")}</td>
                     <td>
                       <span>{displayText(log.actorRole)}</span>
                       <strong>{displayText(log.actorUid)}</strong>

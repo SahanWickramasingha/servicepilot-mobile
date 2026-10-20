@@ -42,7 +42,9 @@ export default function Login() {
         replace: true,
       });
     } catch (signInError) {
-      if (
+      if ((signInError as { code?: string })?.code === "auth/user-disabled") {
+        setError("Your ServicePilot account has been disabled or deleted. Please contact support.");
+      } else if (
         signInError instanceof Error &&
         signInError.message === "Access denied."
       ) {
@@ -55,6 +57,11 @@ export default function Login() {
           "Your ServicePilot account has been disabled. Please contact support.",
           "This ServicePilot account is no longer active.",
           "Admin profile not found.",
+          "Your account profile is unavailable. Please contact support.",
+          "This ServicePilot account has been deleted. Please contact support.",
+          "An administrator is updating your account. Access is blocked until the action completes.",
+          "Your previous session has ended. Please sign in again to start a new session.",
+          "Your account is not active. Please contact support.",
         ].includes(signInError.message)
       ) {
         setError(signInError.message);

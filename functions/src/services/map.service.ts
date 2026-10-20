@@ -1,14 +1,15 @@
 import { Firestore } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
+import { accountSessionDenial } from "../domain/accountSession";
 import { DISTRICTS, locationIsFresh, resolveServiceDistrictIds, validCoordinate } from "../domain/map";
 
-type Caller = { uid: string; token: { email_verified?: unknown } } | undefined;
+type Caller = { uid: string; token: { email_verified?: unknown; auth_time?: unknown } } | undefined;
 
 async function requireCustomer(db: Firestore, caller: Caller) {
   if (!caller) throw new HttpsError("unauthenticated", "Please sign in.");
   const profile = (await db.doc(`users/${caller.uid}`).get()).data();
   if (caller.token.email_verified !== true || profile?.role !== "customer" ||
-      (profile.accountStatus !== undefined && profile.accountStatus !== "active")) {
+      accountSessionDenial(profile ?? null, caller.token.auth_time as number | undefined)) {
     throw new HttpsError("permission-denied", "An active, verified Customer account is required.");
   }
   return caller.uid;

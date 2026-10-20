@@ -4,7 +4,7 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, onSnapshot } from "firebase/firestore";
 import { updateDoc, serverTimestamp } from "firebase/firestore";
 import {
   createContext,
@@ -16,7 +16,7 @@ import {
 } from "react";
 
 import { auth, db } from "../firebase/config";
-import { getEffectiveAccountStatus } from "../services/accountLifecycleService";
+import { accountSessionDenial } from "../../../functions/src/domain/accountSession";
 import type { UserRecord } from "../types";
 
 type AdminAuthState = {
@@ -42,47 +42,26 @@ export function getPortalHomeForRole(role?: string) {
   return "/login";
 }
 
-async function loadWebPortalProfile(uid: string) {
-  const snapshot = await getDoc(doc(db, "users", uid));
-
-  if (!snapshot.exists()) {
-    throw new Error("Admin profile not found.");
-  }
-
-  const profile = {
-    id: snapshot.id,
-    ...snapshot.data(),
-  } as UserRecord;
-
-  if (!["super_admin", "dispatcher"].includes(profile.role ?? "")) {
-    throw new Error("Access denied.");
-  }
-
-  const accountStatus = getEffectiveAccountStatus(profile.accountStatus);
-
-  if (accountStatus === "disabled") {
-    throw new Error(
-      "Your ServicePilot account has been disabled. Please contact support."
-    );
-  }
-
-  if (accountStatus === "deleted") {
-    throw new Error("This ServicePilot account is no longer active.");
-  }
-
-  if (
-    profile.role === "dispatcher" &&
-    profile.invitationStatus === "pending"
-  ) {
-    await updateDoc(doc(db, "users", uid), {
-      invitationStatus: "accepted",
-      updatedAt: serverTimestamp(),
-    });
-
+async function validateWebPortalProfile(user: User, profile: UserRecord | null) {
+  // Status is checked before waiting on token metadata, and again with auth_time.
+  const immediate = accountSessionDenial(profile, Number.POSITIVE_INFINITY);
+  if (immediate) throw new Error(immediate);
+  const token = profile?.sessionRevokedAt === undefined ? null : await user.getIdTokenResult();
+  const denial = accountSessionDenial(profile, token?.claims.auth_time as number | undefined);
+  if (denial) throw new Error(denial);
+  if (!profile || !["super_admin", "dispatcher"].includes(profile.role ?? "")) throw new Error("Access denied.");
+  if (auth.currentUser !== user) throw new Error("Your session changed. Please sign in again.");
+  if (profile.role === "dispatcher" && profile.invitationStatus === "pending") {
+    await updateDoc(doc(db, "users", user.uid), { invitationStatus: "accepted", updatedAt: serverTimestamp() });
     profile.invitationStatus = "accepted";
   }
-
+  if (auth.currentUser !== user) throw new Error("Your session changed. Please sign in again.");
   return profile;
+}
+
+async function loadWebPortalProfile(user: User) {
+  const snapshot = await getDoc(doc(db, "users", user.uid));
+  return validateWebPortalProfile(user, snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } as UserRecord : null);
 }
 
 export function AdminAuthProvider({
@@ -96,32 +75,47 @@ export function AdminAuthProvider({
   const [accessDenied, setAccessDenied] = useState("");
 
   useEffect(() => {
-    return onAuthStateChanged(auth, async (user) => {
+    let mounted = true, generation = 0;
+    let stopProfile: (() => void) | undefined;
+    const stopAuth = onAuthStateChanged(auth, (user) => {
+      if (!mounted) return;
+      stopProfile?.();
+      stopProfile = undefined;
+      const version = ++generation;
+      let revision = 0;
+      const current = () => mounted && version === generation && auth.currentUser === user;
       setLoading(true);
       setFirebaseUser(user);
-      setAccessDenied("");
-
-      if (!user) {
+      setProfile(null);
+      if (!user) { setLoading(false); return; }
+      stopProfile = onSnapshot(doc(db, "users", user.uid), async (snapshot) => {
+        const event = ++revision;
+        if (!current()) return;
+        // Close the route gate while validating each authoritative status update.
+        setLoading(true);
+        setProfile(null);
+        try {
+          const next = await validateWebPortalProfile(user,
+            snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } as UserRecord : null);
+          if (!current() || event !== revision) return;
+          setProfile(next);
+          setAccessDenied("");
+        } catch (error) {
+          if (!current() || event !== revision) return;
+          setAccessDenied(error instanceof Error ? error.message : "Unable to verify account access.");
+          await signOut(auth).catch(() => undefined);
+        } finally {
+          if (current() && event === revision) setLoading(false);
+        }
+      }, () => {
+        if (!current()) return;
         setProfile(null);
         setLoading(false);
-        return;
-      }
-
-      try {
-        const adminProfile = await loadWebPortalProfile(user.uid);
-        setProfile(adminProfile);
-      } catch (error) {
-        setProfile(null);
-        setAccessDenied(
-          error instanceof Error
-            ? error.message
-            : "Access denied. This portal is restricted to active Super Admin and Dispatcher accounts."
-        );
-        await signOut(auth);
-      } finally {
-        setLoading(false);
-      }
+        setAccessDenied("Unable to verify account access. Reconnect and sign in again.");
+        void signOut(auth).catch(() => undefined);
+      });
     });
+    return () => { mounted = false; generation++; stopProfile?.(); stopAuth(); };
   }, []);
 
   const value = useMemo<AdminAuthState>(
@@ -140,12 +134,10 @@ export function AdminAuthProvider({
             email.trim().toLowerCase(),
             password
           );
-          const adminProfile = await loadWebPortalProfile(
-            credential.user.uid
-          );
+          const adminProfile = await loadWebPortalProfile(credential.user);
 
-          setFirebaseUser(credential.user);
-          setProfile(adminProfile);
+          // Only the live, revision-guarded profile listener opens AdminRoute.
+          // A slower one-shot sign-in read must not override a newer denial.
           return adminProfile;
         } catch (error) {
           setProfile(null);

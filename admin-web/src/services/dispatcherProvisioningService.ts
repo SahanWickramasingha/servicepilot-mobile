@@ -1,222 +1,104 @@
-import {
-  FirebaseError,
-  getApp,
-  getApps,
-  initializeApp,
-} from "firebase/app";
-import {
-  createUserWithEmailAndPassword,
-  deleteUser,
-  getAuth,
-  inMemoryPersistence,
-  sendPasswordResetEmail,
-  setPersistence,
-  signOut,
-} from "firebase/auth";
-import {
-  deleteDoc,
-  doc,
-  getDoc,
-  serverTimestamp,
-  setDoc,
-} from "firebase/firestore";
+import { auth } from "../firebase/config";
 
-import {
-  auth as primaryAuth,
-  db as primaryDb,
-  firebaseConfig,
-} from "../firebase/config";
-
-const SECONDARY_APP_NAME = "dispatcher-provisioning";
-const DISPATCHER_ID_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-const secondaryApp = getApps().some((app) => app.name === SECONDARY_APP_NAME)
-  ? getApp(SECONDARY_APP_NAME)
-  : initializeApp(firebaseConfig, SECONDARY_APP_NAME);
-const secondaryAuth = getAuth(secondaryApp);
-const secondaryPersistenceReady = setPersistence(
-  secondaryAuth,
-  inMemoryPersistence
-);
-
-export type CreateDispatcherInput = {
-  fullName: string;
-  email: string;
-};
-
+export type CreateDispatcherInput = { fullName: string; email: string; requestId: string };
 export type CreateDispatcherResult = {
   uid: string;
   dispatcherId: string;
+  emailDelivery: "sent" | "failed" | "pending" | "emulated" | "unknown";
 };
 
-function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
+const settings = (import.meta as ImportMeta & { env: { VITE_DISPATCHER_API_URL?: string; DEV?: boolean } }).env;
 
-function generateToken(length: number): string {
-  const bytes = new Uint8Array(length);
-  crypto.getRandomValues(bytes);
-
-  return Array.from(bytes)
-    .map((byte) => DISPATCHER_ID_CHARS[byte % DISPATCHER_ID_CHARS.length])
-    .join("");
-}
-
-export function generateDispatcherId(): string {
-  const year = new Date().getFullYear().toString().slice(-2);
-  return `DSP-${year}-${generateToken(6)}`;
-}
-
-function generateTemporaryPassword(): string {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  const token = btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-
-  return `Sp1!${token}`;
-}
-
-function getProvisioningMessage(error: unknown): string {
-  if (error instanceof FirebaseError) {
-    switch (error.code) {
-      case "auth/email-already-in-use":
-        return "An account with this email already exists.";
-      case "auth/invalid-email":
-        return "Please enter a valid dispatcher email address.";
-      case "auth/network-request-failed":
-        return "Network error. Please check your connection and try again.";
-      case "permission-denied":
-        return "You do not have permission to create dispatcher profiles.";
-      default:
-        return error.message;
-    }
+async function callBackend(path: string, input: unknown): Promise<CreateDispatcherResult | { targetUid: string; accountStatus: string; outcome: "complete" }> {
+  const lifecycle = path === "/v1/accounts/lifecycle";
+  const user = auth.currentUser;
+  if (!user) throw new Error("Please sign in as Super Admin first.");
+  if (!settings.VITE_DISPATCHER_API_URL) {
+    throw new Error("Trusted account backend is not configured. Contact the portal administrator.");
   }
-
-  return error instanceof Error
-    ? error.message
-    : "Unable to create dispatcher account setup link.";
-}
-
-export async function createDispatcherInvitation({
-  fullName,
-  email,
-}: CreateDispatcherInput): Promise<CreateDispatcherResult> {
-  const superAdmin = primaryAuth.currentUser;
-  const cleanName = fullName.trim();
-  const cleanEmail = normalizeEmail(email);
-
-  if (!superAdmin) {
-    throw new Error("Please sign in as Super Admin first.");
+  const base = new URL(settings.VITE_DISPATCHER_API_URL);
+  const local = settings.DEV && ["localhost", "127.0.0.1"].includes(base.hostname);
+  if (base.username || base.password || base.search || base.hash || (base.protocol !== "https:" && !(local && base.protocol === "http:"))) {
+    throw new Error("Dispatcher provisioning requires a trusted HTTPS backend.");
   }
-
-  if (!cleanName) {
-    throw new Error("Full name is required.");
-  }
-
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-    throw new Error("Please enter a valid dispatcher email address.");
-  }
-
-  const dispatcherId = generateDispatcherId();
-  const temporaryPassword = generateTemporaryPassword();
-  let dispatcherUid = "";
-  let profileCreated = false;
-
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
   try {
-    await secondaryPersistenceReady;
-    await superAdmin.getIdToken(true);
-
-    const superAdminProfile = await getDoc(
-      doc(primaryDb, "users", superAdmin.uid)
-    );
-    const superAdminData = superAdminProfile.data();
-
-    if (
-      !superAdminProfile.exists() ||
-      superAdminData?.role !== "super_admin" ||
-      superAdminData?.accountStatus !== "active"
-    ) {
-      throw new Error(
-        "Your Super Admin profile must be active before creating dispatchers."
-      );
+    let token: string;
+    try {
+      token = await user.getIdToken();
+    } catch {
+      throw new Error("Unable to verify your session. Sign in again or retry when connected.");
     }
-
-    if (import.meta.env.DEV) {
-      console.debug("Dispatcher provisioning auth context", {
-        primaryUid: primaryAuth.currentUser?.uid ?? null,
-        secondaryUidBeforeCreate: secondaryAuth.currentUser?.uid ?? null,
-      });
-    }
-
-    const credential = await createUserWithEmailAndPassword(
-      secondaryAuth,
-      cleanEmail,
-      temporaryPassword
-    );
-    dispatcherUid = credential.user.uid;
-
-    if (primaryAuth.currentUser?.uid !== superAdmin.uid) {
-      throw new Error(
-        "Primary Super Admin session changed during dispatcher provisioning."
-      );
-    }
-
-    if (import.meta.env.DEV) {
-      console.debug("Dispatcher provisioning profile write context", {
-        primaryUid: primaryAuth.currentUser?.uid ?? null,
-        secondaryUidAfterCreate: secondaryAuth.currentUser?.uid ?? null,
-        dispatcherUid,
-      });
-    }
-
-    await setDoc(doc(primaryDb, "users", dispatcherUid), {
-      uid: dispatcherUid,
-      dispatcherId,
-      fullName: cleanName,
-      email: cleanEmail,
-      role: "dispatcher",
-      accountStatus: "active",
-      invitationStatus: "pending",
-      createdBy: superAdmin.uid,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+    if (auth.currentUser !== user) throw new Error("Your session changed. Please sign in again.");
+    const response = await fetch(`${base.href.replace(/\/$/, "")}${path}`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(input), signal: controller.signal, credentials: "omit", redirect: "error",
     });
-    profileCreated = true;
-
-    await sendPasswordResetEmail(primaryAuth, cleanEmail, {
-      url: `${window.location.origin}/login`,
-      handleCodeInApp: false,
-    });
-
-    return {
-      uid: dispatcherUid,
-      dispatcherId,
-    };
+    if (auth.currentUser !== user) throw new Error("Your session changed. Please sign in again.");
+    let result;
+    try {
+      result = await response.json();
+    } catch {
+      throw new Error("Backend response could not be confirmed. Retry the same request to check its outcome.");
+    }
+    if (auth.currentUser !== user) throw new Error("Your session changed. Please sign in again.");
+    if (!response.ok) {
+      const messages: Record<string, string> = {
+        "unauthenticated": "Your session is invalid or expired. Please sign in again.",
+        "permission-denied": "Only an active Super Admin can provision dispatchers.",
+        "already-exists": "An account with this email already exists or is being created.",
+        "operation-in-progress": "This request is in progress. Wait a moment and retry the same request.",
+        "operation-recovery-required": "Provisioning needs trusted administrator recovery. Do not create a duplicate account.",
+        "request-conflict": "This request ID has already been used. Close and reopen the form for different details.",
+        "failed-precondition": "Only active, pending dispatcher invitations can be resent.",
+        "invalid-argument": "Check the dispatcher name and email and try again.",
+      };
+      const lifecycleMessages: Record<string, string> = {
+        "request-conflict": "This account changed since the request. Refresh the account before confirming another action.",
+        "permission-denied": "Only an active Super Admin can manage accounts.",
+        "protected-account": "Your own account and Super Admin accounts cannot be managed here.",
+        "deleted-account": "Deleted accounts cannot be reactivated.",
+        "pending-action": "Another lifecycle action is incomplete. Retry that action before starting a different action.",
+        "operation-recovery-required": "An account operation stalled. Ask the backend operator to recover it before retrying.",
+        "lifecycle-incomplete": "Account access remains blocked. Retry this action to finish the Auth update.",
+        "invalid-argument": "The account action is invalid. Refresh the page and try again.",
+        "not-found": "Account profile not found. Refresh the page.",
+        "failed-precondition": "The account state cannot be managed automatically. Contact support.",
+      };
+      throw Object.assign(new Error((lifecycle ? lifecycleMessages[result?.code] : undefined) ?? messages[result?.code] ??
+        "The backend outcome is unconfirmed. Retry the same action shortly."), { code: result?.code });
+    }
+    if (lifecycle) {
+      if (!result || typeof result.targetUid !== "string" || !["active", "disabled", "deleted"].includes(result.accountStatus) || result.outcome !== "complete") {
+        throw new Error("Account action could not be confirmed. Retry the same action.");
+      }
+      return { targetUid: result.targetUid, accountStatus: result.accountStatus, outcome: "complete" };
+    }
+    if (!result || typeof result.uid !== "string" || typeof result.dispatcherId !== "string" ||
+      !["sent", "failed", "pending", "emulated", "unknown"].includes(result.emailDelivery)) {
+      throw new Error("Provisioning response could not be confirmed. Retry the same request.");
+    }
+    return { uid: result.uid, dispatcherId: result.dispatcherId, emailDelivery: result.emailDelivery };
   } catch (error) {
-    const secondaryUser = secondaryAuth.currentUser;
-    const cleanupIssues: string[] = [];
-
-    if (profileCreated && dispatcherUid) {
-      await deleteDoc(doc(primaryDb, "users", dispatcherUid)).catch(() => {
-        cleanupIssues.push("Firestore profile cleanup failed");
-      });
+    if (controller.signal.aborted || error instanceof TypeError) {
+      throw new Error("Backend connection failed. The request may still be processing; retry the same request to check its outcome.");
     }
-
-    if (secondaryUser) {
-      await deleteUser(secondaryUser).catch(() => {
-        cleanupIssues.push("Auth user cleanup failed");
-      });
-    }
-
-    const message = getProvisioningMessage(error);
-    throw new Error(
-      cleanupIssues.length > 0
-        ? `${message} ${cleanupIssues.join("; ")}. Manual cleanup may be required.`
-        : message
-    );
+    throw error;
   } finally {
-    await signOut(secondaryAuth).catch(() => undefined);
+    clearTimeout(timeout);
   }
+}
+
+export function createDispatcherInvitation(input: CreateDispatcherInput) {
+  // Never send actor UID, trusted role, status, password, or dispatcher ID.
+  return callBackend("/v1/dispatchers", { fullName: input.fullName, email: input.email, requestId: input.requestId }) as Promise<CreateDispatcherResult>;
+}
+
+export function resendDispatcherInvitation(uid: string) {
+  return callBackend("/v1/dispatchers/resend-invitation", { uid }) as Promise<CreateDispatcherResult>;
+}
+
+export async function callAccountLifecycleBackend(input: { targetUid: string; action: string; requestId: string }): Promise<void> {
+  await callBackend("/v1/accounts/lifecycle", input);
 }

@@ -1,5 +1,5 @@
 import { Mail, Plus, Search, ShieldCheck, UserRound, X } from "lucide-react";
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { useAdminAuth } from "../auth/AdminAuthContext";
 import {
@@ -16,7 +16,8 @@ import {
 } from "../services/accountLifecycleService";
 import {
   createDispatcherInvitation,
-  generateDispatcherId,
+  resendDispatcherInvitation,
+  type CreateDispatcherResult,
 } from "../services/dispatcherProvisioningService";
 import type { UserRecord } from "../types";
 import { displayText, formatDateTime } from "../utils/format";
@@ -44,7 +45,11 @@ export default function Dispatchers() {
     action: AccountLifecycleAction;
   } | null>(null);
   const [form, setForm] = useState<DispatcherForm>(emptyForm);
-  const [previewId, setPreviewId] = useState(generateDispatcherId());
+  const requestId = useRef("");
+  const submitting = useRef(false);
+  const resending = useRef(false);
+  const [resendingUid, setResendingUid] = useState("");
+  const [invitationError, setInvitationError] = useState("");
   const [saving, setSaving] = useState(false);
   const [savingLifecycle, setSavingLifecycle] = useState(false);
   const [lifecycleError, setLifecycleError] = useState("");
@@ -104,24 +109,23 @@ export default function Dispatchers() {
     setForm(emptyForm);
     setFormError("");
     setMessage("");
-    setPreviewId(generateDispatcherId());
+    requestId.current = crypto.randomUUID();
     setModalOpen(true);
   };
 
   const createDispatcher = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submitting.current) return;
     setFormError("");
     setMessage("");
 
     try {
+      submitting.current = true;
       setSaving(true);
-      await createDispatcherInvitation(form);
-      setMessage(
-        "Dispatcher account created successfully. A password setup link has been sent to the dispatcher's email."
-      );
+      const result = await createDispatcherInvitation({ ...form, requestId: requestId.current });
+      setMessage(`Dispatcher ${result.dispatcherId} created. ${deliveryMessage(result)}`);
       setModalOpen(false);
       setForm(emptyForm);
-      setPreviewId(generateDispatcherId());
     } catch (error) {
       setFormError(
         error instanceof Error
@@ -129,6 +133,7 @@ export default function Dispatchers() {
           : "Unable to create dispatcher account setup link."
       );
     } finally {
+      submitting.current = false;
       setSaving(false);
     }
   };
@@ -154,6 +159,7 @@ export default function Dispatchers() {
       </div>
 
       {message && <div className="form-success">{message}</div>}
+      {invitationError && <div className="form-error" role="alert">{invitationError}</div>}
 
       <section className="dashboard-card">
         <div className="table-toolbar">
@@ -213,6 +219,11 @@ export default function Dispatchers() {
                           value={pending ? "Invited" : "Accepted"}
                           tone={pending ? "yellow" : "green"}
                         />
+                        {pending && dispatcher.invitationDeliveryStatus && (
+                          <span>{dispatcher.invitationDeliveryStatus === "sent" ? "Email submitted" :
+                            dispatcher.invitationDeliveryStatus === "failed" ? "Email failed — resend available" :
+                            dispatcher.invitationDeliveryStatus === "emulated" ? "Local test — no email sent" : "Email delivery pending"}</span>
+                        )}
                       </td>
                       <td>
                         <StatusChip
@@ -232,6 +243,24 @@ export default function Dispatchers() {
                             setLifecycleDialog({ account: dispatcher, action });
                           }}
                         />
+                        {pending && dispatcher.accountStatus === "active" && (
+                          <button className="secondary-action" disabled={!!resendingUid}
+                            onClick={async () => {
+                              if (resending.current) return;
+                              resending.current = true;
+                              const uid = dispatcher.uid ?? dispatcher.id;
+                              setResendingUid(uid); setInvitationError(""); setMessage("");
+                              try {
+                                setMessage(deliveryMessage(await resendDispatcherInvitation(uid)));
+                              } catch (error) {
+                                setInvitationError(error instanceof Error ? error.message : "Unable to resend invitation.");
+                              } finally {
+                                resending.current = false; setResendingUid("");
+                              }
+                            }}>
+                            {resendingUid === (dispatcher.uid ?? dispatcher.id) ? "Sending..." : "Resend invitation"}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -253,6 +282,7 @@ export default function Dispatchers() {
               <button
                 className="modal-close"
                 type="button"
+                disabled={saving}
                 onClick={() => setModalOpen(false)}
               >
                 <X size={19} />
@@ -260,10 +290,10 @@ export default function Dispatchers() {
             </div>
 
             <div className="generated-id-panel">
-              <span>Generated Dispatcher ID</span>
-              <strong>{previewId}</strong>
+              <span>Dispatcher ID</span>
+              <strong>Assigned securely after creation</strong>
               <small>
-                The final ID is generated cryptographically during provisioning.
+                The server generates the final ID during provisioning.
               </small>
             </div>
 
@@ -273,7 +303,7 @@ export default function Dispatchers() {
                 label="Full Name"
                 value={form.fullName}
                 onChange={(value) =>
-                  setForm((current) => ({ ...current, fullName: value }))
+                  { requestId.current = crypto.randomUUID(); setForm((current) => ({ ...current, fullName: value })); }
                 }
                 disabled={saving}
               />
@@ -283,7 +313,7 @@ export default function Dispatchers() {
                 type="email"
                 value={form.email}
                 onChange={(value) =>
-                  setForm((current) => ({ ...current, email: value }))
+                  { requestId.current = crypto.randomUUID(); setForm((current) => ({ ...current, email: value })); }
                 }
                 disabled={saving}
               />
@@ -402,6 +432,15 @@ export default function Dispatchers() {
       )}
     </>
   );
+}
+
+function deliveryMessage(result: CreateDispatcherResult): string {
+  switch (result.emailDelivery) {
+    case "sent": return "The password setup email was submitted to the mail provider.";
+    case "emulated": return "Local test invitation generated; no real email was sent.";
+    case "failed": return "The setup email failed. Use Resend invitation to retry without creating another account.";
+    default: return "Email delivery is not confirmed. Use Resend invitation to check or retry; the account already exists.";
+  }
 }
 
 function Detail({ label, value }: { label: string; value?: string }) {

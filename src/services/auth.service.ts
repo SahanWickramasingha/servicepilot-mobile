@@ -65,8 +65,11 @@ export async function registerUser(
 
 export async function loginUser(
   email: string,
-  password: string
+  password: string,
+  rememberMe: boolean = false
 ): Promise<UserCredential> {
+  const { applyLoginPersistence } = await import("@/src/firebase/authPersistence");
+  await applyLoginPersistence(auth, rememberMe);
   return await signInWithEmailAndPassword(
     auth,
     email.trim(),
@@ -248,5 +251,15 @@ export async function logoutUser(): Promise<void> {
   // Confirm marker removal before invalidating the session that authorizes it.
   const { foregroundSharing } = await import("@/src/services/foreground-location.service");
   await foregroundSharing.stop();
+  await signOut(auth);
+}
+
+export async function logoutRevokedUser(): Promise<void> {
+  const user = auth.currentUser;
+  const { foregroundSharing } = await import("@/src/services/foreground-location.service");
+  if (auth.currentUser !== user) return;
+  // Cancel local tracking immediately. Do not wait on a now-forbidden network
+  // cleanup write: the backend atomically removed the shared coordinates.
+  foregroundSharing.endRevokedSession();
   await signOut(auth);
 }

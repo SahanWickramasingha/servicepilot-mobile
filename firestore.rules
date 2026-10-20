@@ -6,6 +6,16 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Keep a private own-profile read available for live account-status denial.
+    // All other protected operations also require this authoritative session gate.
+    function hasActiveSession() {
+      let profile = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return signedIn() && profileHasActiveAccount(profile) &&
+        profile.get("lifecyclePending", false) == false &&
+        (!profile.keys().hasAny(["sessionRevokedAt"]) ||
+          request.auth.token.auth_time > profile.sessionRevokedAt);
+    }
+
     function isOwner(userId) {
       return signedIn() && request.auth.uid == userId;
     }
@@ -151,45 +161,6 @@ service cloud.firestore {
         );
     }
 
-    function validSuperAdminDispatcherCreate(userId) {
-      return isSuperAdmin() &&
-        request.resource.data.keys().hasOnly([
-          "uid",
-          "dispatcherId",
-          "fullName",
-          "email",
-          "role",
-          "accountStatus",
-          "invitationStatus",
-          "createdBy",
-          "createdAt",
-          "updatedAt"
-        ]) &&
-        request.resource.data.keys().hasAll([
-          "uid",
-          "dispatcherId",
-          "fullName",
-          "email",
-          "role",
-          "accountStatus",
-          "invitationStatus",
-          "createdBy",
-          "createdAt",
-          "updatedAt"
-        ]) &&
-        request.resource.data.uid == userId &&
-        request.resource.data.dispatcherId is string &&
-        request.resource.data.dispatcherId.size() > 0 &&
-        request.resource.data.fullName is string &&
-        request.resource.data.fullName.size() > 0 &&
-        request.resource.data.email is string &&
-        request.resource.data.email.size() > 0 &&
-        request.resource.data.role == "dispatcher" &&
-        request.resource.data.accountStatus == "active" &&
-        request.resource.data.invitationStatus == "pending" &&
-        request.resource.data.createdBy == request.auth.uid;
-    }
-
     function ownerMutableFieldsOnly() {
       return request.resource.data
         .diff(resource.data)
@@ -258,83 +229,6 @@ service cloud.firestore {
         projection.updatedAt == request.time;
     }
 
-    function validSuperAdminAccountDisable() {
-      return profileHasActiveAccount(resource.data) &&
-        request.resource.data.accountStatus == "disabled" &&
-        request.resource.data.disabledBy == request.auth.uid &&
-        request.resource.data.disabledAt is timestamp &&
-        request.resource.data
-          .diff(resource.data)
-          .affectedKeys()
-          .hasAll([
-            "accountStatus",
-            "disabledAt",
-            "disabledBy",
-            "updatedAt"
-          ]);
-    }
-
-    function validSuperAdminAccountEnable() {
-      return resource.data.accountStatus == "disabled" &&
-        request.resource.data.accountStatus == "active" &&
-        request.resource.data.enabledBy == request.auth.uid &&
-        request.resource.data.enabledAt is timestamp &&
-        request.resource.data
-          .diff(resource.data)
-          .affectedKeys()
-          .hasAll([
-            "accountStatus",
-            "enabledAt",
-            "enabledBy",
-            "updatedAt"
-          ]);
-    }
-
-    function validSuperAdminAccountDelete() {
-      return resource.data.accountStatus != "deleted" &&
-        request.resource.data.accountStatus == "deleted" &&
-        request.resource.data.deletedBy == request.auth.uid &&
-        request.resource.data.deletedAt is timestamp &&
-        request.resource.data
-          .diff(resource.data)
-          .affectedKeys()
-          .hasAll([
-            "accountStatus",
-            "deletedAt",
-            "deletedBy",
-            "updatedAt"
-          ]);
-    }
-
-    function validSuperAdminAccountLifecycleUpdate() {
-      return isSuperAdmin() &&
-        resource.data.role in [
-          "customer",
-          "technician",
-          "dispatcher"
-        ] &&
-        request.resource.data.role == resource.data.role &&
-        request.resource.data.uid == resource.data.uid &&
-        request.resource.data
-          .diff(resource.data)
-          .affectedKeys()
-          .hasOnly([
-            "accountStatus",
-            "disabledAt",
-            "disabledBy",
-            "enabledAt",
-            "enabledBy",
-            "deletedAt",
-            "deletedBy",
-            "updatedAt"
-          ]) &&
-        (
-          validSuperAdminAccountDisable() ||
-          validSuperAdminAccountEnable() ||
-          validSuperAdminAccountDelete()
-        );
-    }
-
     function validDispatcherTechnicianReview() {
       return isActiveDispatcher() &&
         resource.data.role == "technician" &&
@@ -382,13 +276,6 @@ service cloud.firestore {
             "updatedAt"
           ]) &&
         request.resource.data.invitationStatus == "accepted";
-    }
-
-    function validSuperAdminFailedDispatcherCleanup() {
-      return isSuperAdmin() &&
-        resource.data.role == "dispatcher" &&
-        resource.data.invitationStatus == "pending" &&
-        resource.data.createdBy == request.auth.uid;
     }
 
     function isTechnicianProfile() {
@@ -498,73 +385,6 @@ service cloud.firestore {
             /databases/$(database)/documents/users/$(technicianId)
           ).data
         );
-    }
-
-    function validLifecycleAuditAction() {
-      return (
-        request.resource.data.targetRole == "customer" &&
-        request.resource.data.action in [
-          "SUPER_ADMIN_DISABLED_CUSTOMER",
-          "SUPER_ADMIN_ENABLED_CUSTOMER",
-          "SUPER_ADMIN_DELETED_CUSTOMER"
-        ]
-      ) ||
-      (
-        request.resource.data.targetRole == "technician" &&
-        request.resource.data.action in [
-          "SUPER_ADMIN_DISABLED_TECHNICIAN",
-          "SUPER_ADMIN_ENABLED_TECHNICIAN",
-          "SUPER_ADMIN_DELETED_TECHNICIAN"
-        ]
-      ) ||
-      (
-        request.resource.data.targetRole == "dispatcher" &&
-        request.resource.data.action in [
-          "SUPER_ADMIN_DISABLED_DISPATCHER",
-          "SUPER_ADMIN_ENABLED_DISPATCHER",
-          "SUPER_ADMIN_DELETED_DISPATCHER"
-        ]
-      );
-    }
-
-    function validSuperAdminLifecycleAuditCreate() {
-      return isSuperAdmin() &&
-        request.resource.data.keys().hasOnly([
-          "action",
-          "actorUid",
-          "actorRole",
-          "targetUid",
-          "targetRole",
-          "targetType",
-          "createdAt"
-        ]) &&
-        request.resource.data.keys().hasAll([
-          "action",
-          "actorUid",
-          "actorRole",
-          "targetUid",
-          "targetRole",
-          "targetType",
-          "createdAt"
-        ]) &&
-        request.resource.data.actorUid == request.auth.uid &&
-        request.resource.data.actorRole == "super_admin" &&
-        request.resource.data.targetUid is string &&
-        request.resource.data.targetUid.size() > 0 &&
-        exists(
-          /databases/$(database)/documents/users/$(request.resource.data.targetUid)
-        ) &&
-        get(
-          /databases/$(database)/documents/users/$(request.resource.data.targetUid)
-        ).data.role == request.resource.data.targetRole &&
-        request.resource.data.targetRole in [
-          "customer",
-          "technician",
-          "dispatcher"
-        ] &&
-        request.resource.data.targetType == "user" &&
-        request.resource.data.createdAt is timestamp &&
-        validLifecycleAuditAction();
     }
 
     function validSystemMessageAuditCreate() {
@@ -1204,13 +1024,13 @@ service cloud.firestore {
     }
 
     match /technician_map_profiles/{technicianId} {
-      allow get: if ownsTechnicianLocation(technicianId) || isSuperAdmin() || isActiveDispatcher() ||
-        (isVerifiedCustomer() && resource.data.approved == true && isApprovedTechnicianId(technicianId));
+      allow get: if hasActiveSession() && (ownsTechnicianLocation(technicianId) || isSuperAdmin() || isActiveDispatcher() ||
+        (isVerifiedCustomer() && resource.data.approved == true && isApprovedTechnicianId(technicianId)));
       // Query snapshot approval; validate current approval with the get above before display.
       // No private profile or coordinates are exposed through this display-only query.
-      allow list: if isVerifiedCustomer() && request.query.limit != null && request.query.limit <= 24 &&
+      allow list: if hasActiveSession() && isVerifiedCustomer() && request.query.limit != null && request.query.limit <= 24 &&
         resource.data.approved == true;
-      allow create, update: if validMapProfile(technicianId);
+      allow create, update: if hasActiveSession() && validMapProfile(technicianId);
       allow delete: if false;
     }
 
@@ -1222,9 +1042,9 @@ service cloud.firestore {
 
     match /technician_location_access/{technicianId}/customers/{customerId} {
       // A Customer may provide their own job reference, never an arbitrary grant.
-      allow get: if isOwner(customerId) && isVerifiedCustomer();
+      allow get: if hasActiveSession() && isOwner(customerId) && isVerifiedCustomer();
       allow list, delete: if false;
-      allow create, update: if isOwner(customerId) && isVerifiedCustomer() &&
+      allow create, update: if hasActiveSession() && isOwner(customerId) && isVerifiedCustomer() &&
         request.resource.data.keys().hasAll(["requestId", "technicianId", "customerId", "updatedAt"]) &&
         request.resource.data.keys().hasOnly(["requestId", "technicianId", "customerId", "updatedAt"]) &&
         request.resource.data.customerId == customerId && request.resource.data.technicianId == technicianId &&
@@ -1281,21 +1101,21 @@ service cloud.firestore {
 
     match /technician_locations/{technicianId} {
       // Single-document access rechecks the authoritative job on every server read.
-      allow get: if ownsTechnicianLocation(technicianId) || (signedIn() && canGetJobLocation(technicianId));
+      allow get: if hasActiveSession() && (ownsTechnicianLocation(technicianId) || canGetJobLocation(technicianId));
       allow list, delete: if false;
-      allow create, update: if validPrivateLocation(technicianId);
+      allow create, update: if hasActiveSession() && validPrivateLocation(technicianId);
     }
 
     match /technician_map_locations/{technicianId} {
       // Only fixed approved Technician IDs from the safe map directory; no broad query.
-      allow get: if ownsTechnicianLocation(technicianId) ||
-        (isVerifiedCustomer() && isApprovedTechnicianId(technicianId));
+      allow get: if hasActiveSession() && (ownsTechnicianLocation(technicianId) ||
+        (isVerifiedCustomer() && isApprovedTechnicianId(technicianId)));
       allow list, delete: if false;
-      allow create, update: if validApproximateLocation(technicianId);
+      allow create, update: if hasActiveSession() && validApproximateLocation(technicianId);
     }
 
     function mapApprovalFollowsUser(userId) {
-      // Trusted client lifecycle/approval updates must revoke the display snapshot atomically.
+      // Client approval updates must revoke the display snapshot atomically.
       let projection = /databases/$(database)/documents/technician_map_profiles/$(userId);
       return resource.data.role != "technician" ||
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(["accountStatus", "technicianApprovalStatus"]) ||
@@ -1304,21 +1124,20 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow create: if validPublicUserCreate(userId) ||
-        validSuperAdminDispatcherCreate(userId);
-      allow get: if canGetUserProfile(userId);
-      allow list: if canListUserProfiles();
-      allow update: if (validOwnerUpdate(userId) ||
+      // Privileged Dispatcher profiles are created only by the trusted Admin SDK.
+      allow create: if validPublicUserCreate(userId);
+      allow get: if isOwner(userId) || (hasActiveSession() && canGetUserProfile(userId));
+      allow list: if hasActiveSession() && canListUserProfiles();
+      allow update: if hasActiveSession() && (validOwnerUpdate(userId) ||
         validTechnicianAvailabilityUpdate(userId) ||
-        validSuperAdminAccountLifecycleUpdate() ||
         validDispatcherInvitationAccept(userId) ||
         validDispatcherTechnicianReview()) && mapApprovalFollowsUser(userId);
-      allow delete: if validSuperAdminFailedDispatcherCleanup();
+      allow delete: if false;
     }
 
     match /service_requests/{requestId} {
-      allow create: if validCustomerRequestCreate();
-      allow read: if signedIn() &&
+      allow create: if hasActiveSession() && validCustomerRequestCreate();
+      allow read: if hasActiveSession() &&
         (
           isSuperAdmin() ||
           resource.data.customerId == request.auth.uid ||
@@ -1327,42 +1146,59 @@ service cloud.firestore {
             isApprovedTechnicianId(request.auth.uid)
           )
         );
-      allow update: if validCustomerRequestCancel() ||
-        validTechnicianRequestStatusUpdate();
+      allow update: if hasActiveSession() && (validCustomerRequestCancel() ||
+        validTechnicianRequestStatusUpdate());
       allow delete: if false;
     }
 
     match /notifications/{notificationId} {
-      allow create: if validRequestNotificationCreate();
-      allow read: if signedIn() &&
+      allow create: if hasActiveSession() && validRequestNotificationCreate();
+      allow read: if hasActiveSession() &&
         resource.data.userId == request.auth.uid;
-      allow update: if validNotificationReadUpdate();
+      allow update: if hasActiveSession() && validNotificationReadUpdate();
       allow delete: if false;
     }
 
     match /system_messages/{messageId} {
-      allow create: if validSystemMessageCreate();
-      allow read: if canReadSystemMessage();
+      allow create: if hasActiveSession() && validSystemMessageCreate();
+      allow read: if hasActiveSession() && canReadSystemMessage();
       allow update, delete: if false;
     }
 
     match /message_reads/{readId} {
-      allow read: if signedIn() &&
+      allow read: if hasActiveSession() &&
         resource.data.userId == request.auth.uid;
-      allow create, update: if validMessageReadWrite(readId);
+      allow create, update: if hasActiveSession() && validMessageReadWrite(readId);
       allow delete: if false;
     }
 
     match /service_reviews/{reviewId} {
-      allow create: if validReviewCreate(reviewId);
-      allow read: if canReadServiceReview();
+      allow create: if hasActiveSession() && validReviewCreate(reviewId);
+      allow read: if hasActiveSession() && canReadServiceReview();
       allow update, delete: if false;
     }
 
+    match /account_lifecycle_locks/{targetUid} {
+      allow read, write: if false;
+    }
+    match /account_lifecycle_requests/{requestId} {
+      allow read, write: if false;
+    }
+
+    // Provisioning reservations and delivery receipts are server-only.
+    match /dispatcher_provisioning_operations/{operationId} {
+      allow read, write: if false;
+    }
+    match /dispatcher_provisioning_emails/{emailHash} {
+      allow read, write: if false;
+    }
+    match /dispatcher_invitation_deliveries/{userId} {
+      allow read, write: if false;
+    }
+
     match /audit_logs/{auditLogId} {
-      allow read: if isSuperAdmin();
-      allow create: if validSuperAdminLifecycleAuditCreate() ||
-        validSystemMessageAuditCreate();
+      allow read: if hasActiveSession() && isSuperAdmin();
+      allow create: if hasActiveSession() && validSystemMessageAuditCreate();
       allow update, delete: if false;
     }
   }

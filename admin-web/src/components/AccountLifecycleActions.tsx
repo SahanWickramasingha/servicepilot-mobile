@@ -5,7 +5,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import type { UserRecord } from "../types";
 import {
@@ -53,7 +53,7 @@ export function AccountLifecycleActions({
         View
       </button>
 
-      {status === "active" && (
+      {!account.lifecyclePending && status === "active" && (
         <button
           className="row-action disable"
           onClick={() => onAction("disable")}
@@ -64,7 +64,7 @@ export function AccountLifecycleActions({
         </button>
       )}
 
-      {status === "disabled" && (
+      {!account.lifecyclePending && status === "disabled" && (
         <button
           className="row-action enable"
           onClick={() => onAction("enable")}
@@ -75,7 +75,12 @@ export function AccountLifecycleActions({
         </button>
       )}
 
-      {status !== "deleted" && (
+      {account.lifecyclePending && account.lifecycleAction && (
+        <button className="row-action enable" disabled={busy} onClick={() => onAction(account.lifecycleAction!)}>
+          <RotateCcw size={14} /> Retry {account.lifecycleAction}
+        </button>
+      )}
+      {!account.lifecyclePending && status !== "deleted" && (
         <button
           className="row-action delete"
           onClick={() => onAction("delete")}
@@ -102,8 +107,9 @@ export function AccountLifecycleDialog({
   busy: boolean;
   error: string;
   onCancel: () => void;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
 }) {
+  const submitting = useRef(false);
   const [confirmationText, setConfirmationText] = useState("");
   const roleLabel = accountRoleLabel(account.role);
   const requiresDeleteText = action === "delete";
@@ -122,14 +128,14 @@ export function AccountLifecycleDialog({
     if (action === "enable") {
       return {
         title: `Enable ${roleLabel} Account?`,
-        body: "The user will regain access to ServicePilot after this account is re-enabled.",
+        body: "The user must sign in again after enabling. Technician approval and verification are preserved; location sharing stays off.",
         button: "Enable Account",
       };
     }
 
     return {
       title: `Delete ${roleLabel} Account?`,
-      body: "This user will permanently lose ServicePilot access. Existing service history will remain for audit and reporting.",
+      body: "This soft-deletes the account and blocks sign-in. The profile, bookings, reviews and audit history are retained. Ordinary Enable cannot restore it.",
       button: "Delete Account",
     };
   }, [action, roleLabel]);
@@ -174,7 +180,11 @@ export function AccountLifecycleDialog({
           </button>
           <button
             className={action === "delete" ? "danger-action" : "primary-action"}
-            onClick={onConfirm}
+            onClick={async () => {
+              if (!canConfirm || submitting.current) return;
+              submitting.current = true;
+              try { await onConfirm(); } finally { submitting.current = false; }
+            }}
             disabled={!canConfirm}
           >
             {busy ? "Saving..." : copy.button}

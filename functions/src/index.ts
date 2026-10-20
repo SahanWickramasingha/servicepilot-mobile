@@ -1,3 +1,4 @@
+import { accountSessionDenial } from "./domain/accountSession";
 import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import {
@@ -54,6 +55,10 @@ export const sendServicePilotVerificationEmail = onCall(
 
     const uid = request.auth.uid;
     const user = await adminAuth.getUser(uid);
+    const profile = (await db.doc(`users/${uid}`).get()).data();
+    if (user.disabled || accountSessionDenial(profile ?? null, request.auth.token.auth_time)) {
+      throw new HttpsError("permission-denied", "An active account and a new sign-in session are required.");
+    }
 
     if (!user.email) {
       throw new HttpsError(

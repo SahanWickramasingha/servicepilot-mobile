@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, connectAuthEmulator } from "firebase/auth";
+import { connectAuthEmulator } from "firebase/auth";
+import { createAppAuth } from "./authPersistence";
 import {
   getFirestore,
   initializeFirestore,
@@ -37,7 +38,7 @@ function getConfiguredFirestore(): Firestore {
   }
 }
 
-export const auth = getAuth(app);
+export const auth = createAppAuth(app);
 export const db = getConfiguredFirestore();
 export const storage = getStorage(app);
 if (demoMode && firstInitialization) {
