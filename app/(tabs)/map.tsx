@@ -2,7 +2,7 @@ import { router, useFocusEffect } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Linking, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
-import { MapPinned, Star, Wrench } from "lucide-react-native";
+import { MapPinned, Wrench } from "lucide-react-native";
 import { browsingDistanceKm, Coordinate, DISTRICTS, locationIsFresh, pointInDistrict } from "@/functions/src/domain/map";
 import { declaredServiceAreaLabel } from "@/functions/src/domain/serviceAreas";
 import { useCustomerMapLocation } from "@/src/hooks/useCustomerMapLocation";
@@ -16,6 +16,7 @@ import { MAP_MAX_ITEMS } from "@/functions/src/domain/mapProjection";
 import { mapServiceErrorMessage } from "@/src/utils/mapServiceError";
 import { technicianServiceAreaReference } from "@/src/utils/mapViewActions";
 import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
+import { TechnicianRating } from "@/src/components/technicians/TechnicianRating";
 import { availabilityDisplay } from "@/functions/src/domain/availability";
 
 function updateLabel(location: SharedMapLocation | undefined, now: number): string {
@@ -277,8 +278,10 @@ function TechnicianCard({ technician, location, now, districtId, customerLocatio
   return <View style={styles.card} accessibilityLiveRegion="polite">
     <View style={styles.cardHeader}><View style={styles.avatar}><Wrench size={22} color="#60A5FA" /></View><View style={{ flex: 1 }}>
       <Text style={styles.cardTitle}>{technician.fullName}</Text><Text style={styles.subtitle}>{technician.specialization}</Text>
-    </View><Star size={15} color="#F59E0B" /><Text style={styles.rating}>{technician.reviewCount > 0 ? technician.averageRating.toFixed(1) : "New"}</Text></View>
-    <Text style={styles.subtitle}>{technician.reviewCount} review{technician.reviewCount === 1 ? "" : "s"} • Serves {declaredServiceAreaLabel(districtId, technician.serviceAreasByDistrict)}</Text>
+    </View><View style={{ alignItems: "center", maxWidth: 110 }}>
+      <TechnicianRating technicianId={technician.uid} valueStyle={styles.rating} countStyle={styles.subtitle} />
+    </View></View>
+    <Text style={styles.subtitle}>Serves {declaredServiceAreaLabel(districtId, technician.serviceAreasByDistrict)}</Text>
     <AvailabilityBadge availability={technician.availability} showDescription />
     <Text style={[styles.subtitle, location && !locationIsFresh(location.updatedAtMs, now) && styles.stale]}>{updateLabel(location, now)}</Text>
     {location?.updatedAtMs && <Text style={styles.subtitle}>Last updated: {new Date(location.updatedAtMs).toLocaleString()}</Text>}

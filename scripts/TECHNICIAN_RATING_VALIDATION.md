@@ -1,5 +1,12 @@
 # Technician rating consistency
 
+The current local follow-up is documented in
+[`TECHNICIAN_RATING_FOLLOWUP.md`](TECHNICIAN_RATING_FOLLOWUP.md). It confirms this
+profile/dashboard fix already exists and extends authoritative ratings to the
+remaining cards/list/map/request and bounded Admin displays. The production
+inspection and validation below describe the earlier task; no production
+inspection was repeated in the follow-up.
+
 On October 4, 2026, a targeted **read-only** inspection of `servicepilot-756d9` confirmed the reported Gihan case. `users/Z3o2tljh2XS1ubdmOR5lJdrvTfg1` has neither `averageRating` nor `reviewCount`. Its public map projection has `averageRating: 0` and `reviewCount: 0`. The complete technician-scoped review query returns exactly one eligible review: rating `5`, reviewer snapshot `Bandara`, and the same technician ID. No production writes, migrations or deployments were performed.
 
 The customer profile previously subscribed to `service_reviews` using its route ID and calculated the average from that complete result, before showing the latest five cards. Its empty-result fallback used public projection aggregates. The technician workspace subscribes to `users/{authenticatedUid}` and jobs, but previously never subscribed to reviews. Its Profile, Dashboard, Performance and History read the private aggregate fields and defaulted missing values to zero. The optional existing `updateTechnicianReviewAggregate` document-create Cloud Function writes these private fields; its deployment/execution status was not verified. The confirmed cause is missing/stale aggregates combined with two different UI sources, not a technician-ID mismatch or a reviewer-name error.

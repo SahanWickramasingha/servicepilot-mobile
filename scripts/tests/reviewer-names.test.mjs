@@ -23,7 +23,7 @@ if (![host, authHost].every((value) => value && /^(127\.0\.0\.1|localhost):\d+$/
 const rootRequire = createRequire(new URL("../../package.json", import.meta.url));
 const functionsRequire = createRequire(new URL("../../functions/package.json", import.meta.url));
 const { initializeApp: adminApp } = functionsRequire("firebase-admin/app");
-const { getFirestore: adminFirestore } = functionsRequire("firebase-admin/firestore");
+const { getFirestore: adminFirestore, FieldValue } = functionsRequire("firebase-admin/firestore");
 const { getAuth: adminAuth } = functionsRequire("firebase-admin/auth");
 const trustedApp = adminApp({ projectId: PROJECT_ID });
 const admin = adminFirestore(trustedApp);
@@ -383,9 +383,9 @@ test("Customer broadcast receipt and read markers retain their existing permissi
 function ratingStream(db, uid, technicianId) {
   const values = [];
   let failure;
-  const stop = services(db, uid).technician.subscribeToTechnicianReviews(technicianId, (reviews, metadata) => {
+  const stop = services(db, uid).technician.subscribeToTechnicianReviews(technicianId, (reviews, metadata, summary) => {
     if (!metadata.fromCache && !metadata.hasPendingWrites) values.push({
-      summary: ratingUi.summarizeTechnicianReviews(reviews), reviews,
+      summary, reviews,
     });
   }, (error) => { failure = error; });
   return { stop, values, async until(count) {
@@ -437,4 +437,61 @@ test("an approved technician's confirmed empty query gives zero reviews; other t
   finally { stream.stop(); }
   await denied(getDocs(query(collection(client("rating-zero"), "service_reviews"), where("technicianId", "==", "rating-gihan"))));
   await denied(getDoc(doc(client("rating-gihan"), "users", "customer")));
+});
+
+test("real Customer and Technician Auth sessions share current ratings despite missing/stale aggregate documents", async () => {
+  const identities = [["rating-auth-buyer", "customer", "Bandara"], ["rating-auth-technician", "technician", "Live Technician"]];
+  const sessions = [], stops = [], states = [[], []];
+  try {
+    for (const [uid, role, fullName] of identities) {
+      const email = `${uid}@example.test`, password = "Emulator-only-rating-auth-42";
+      await adminAuth(trustedApp).createUser({ uid, email, password, emailVerified: true });
+      await admin.doc(`users/${uid}`).set({ uid, fullName, email, role, accountStatus: "active", emailVerified: true,
+        ...(role === "technician" ? { technicianApprovalStatus: "approved", averageRating: 1, reviewCount: 99 } : {}) });
+      const app = clientApp({ projectId: PROJECT_ID, apiKey: "emulator-only" }, uid);
+      clientApps.push(app);
+      const auth = getAuth(app), db = getFirestore(app);
+      connectAuthEmulator(auth, `http://${authHost}`, { disableWarnings: true });
+      const [hostname, port] = host.split(":"); connectFirestoreEmulator(db, hostname, Number(port));
+      clients.set(uid, db);
+      await signInWithEmailAndPassword(auth, email, password);
+      sessions.push({ uid, auth, db });
+    }
+    const technicianId = identities[1][0];
+    let failure;
+    for (const [i, session] of sessions.entries()) {
+      const service = services(session.db, session.uid, session.auth).technician;
+      // Multiple same-session displays must receive the very same shared summary.
+      for (let consumer = 0; consumer < 3; consumer++) stops.push(service.subscribeToTechnicianReviews(technicianId, (_, metadata, summary) => {
+        if (!metadata.fromCache && !metadata.hasPendingWrites && summary) states[i].push(summary);
+      }, (error) => { failure = error; }));
+    }
+    const waitFor = async (count) => {
+      const deadline = Date.now() + 15000;
+      while (!states.every((values) => values.some((summary) => summary.count === count))) {
+        if (failure) throw failure;
+        if (Date.now() > deadline) throw new Error("A real Auth session did not receive its rating summary.");
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    };
+    await waitFor(0);
+    const customer = sessions[0], submit = services(customer.db, customer.uid, customer.auth).review;
+    for (const [index, stars] of [5, 4, 4].entries()) {
+      const requestId = `real-auth-rating-${index}`;
+      await request(requestId, { customerId: customer.uid, technicianId });
+      await submit.submitServiceReview({ requestId, customerId: customer.uid, technicianId, rating: stars, comment: "Local rating check" });
+      await waitFor(index + 1);
+    }
+    for (const values of states) {
+      const last = values.at(-1);
+      assert.equal(ratingUi.getTechnicianRatingDisplay({ status: "ready", summary: last, errorMessage: "" }).label, "4.3 (3 reviews)");
+      assert.equal(values.at(-2), last); assert.equal(values.at(-3), last);
+    }
+    const stale = (await admin.doc(`users/${technicianId}`).get()).data();
+    assert.equal(stale.averageRating, 1); assert.equal(stale.reviewCount, 99);
+    await denied(updateDoc(doc(sessions[1].db, "users", technicianId), { averageRating: 5, reviewCount: 100 }));
+    await denied(getDoc(doc(sessions[1].db, "users", customer.uid)));
+    await admin.doc(`users/${technicianId}`).update({ averageRating: FieldValue.delete(), reviewCount: FieldValue.delete() });
+    assert.equal(states[0].at(-1).count, 3); assert.equal(states[1].at(-1).count, 3);
+  } finally { stops.forEach((stop) => stop()); }
 });

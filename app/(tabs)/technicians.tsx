@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/src/firebase/config";
 import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
+import { TechnicianRating } from "@/src/components/technicians/TechnicianRating";
 import {
   ActivityIndicator,
   FlatList,
@@ -18,7 +19,6 @@ import {
   Filter,
   MapPin,
   Search,
-  Star,
   UserRound,
   Wrench,
 } from "lucide-react-native";
@@ -283,11 +283,6 @@ const TechnicianCard = memo(function TechnicianCard({
 }: {
   technician: PublicTechnicianProfile;
 }) {
-  const rating =
-    technician.averageRating > 0
-      ? technician.averageRating.toFixed(1)
-      : "New";
-
   return (
     <TouchableOpacity
       style={styles.card}
@@ -322,15 +317,7 @@ const TechnicianCard = memo(function TechnicianCard({
         </Text>
       </View>
       <View style={styles.ratingBox}>
-        <Star
-          size={15}
-          color="#F59E0B"
-          fill={technician.averageRating > 0 ? "#F59E0B" : "transparent"}
-        />
-        <Text style={styles.ratingText}>{rating}</Text>
-        <Text style={styles.reviewText}>
-          {technician.reviewCount} reviews
-        </Text>
+        <TechnicianRating technicianId={technician.uid} valueStyle={styles.ratingText} countStyle={styles.reviewText} />
       </View>
     </TouchableOpacity>
   );

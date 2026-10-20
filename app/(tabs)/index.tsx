@@ -8,7 +8,6 @@ import {
   ClipboardPlus,
   MapPin,
   Plus,
-  Star,
   Wrench,
 } from "lucide-react-native";
 import {
@@ -29,6 +28,7 @@ import {
 } from "@/src/constants/serviceRequests";
 import { auth } from "@/src/firebase/config";
 import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
+import { TechnicianRating } from "@/src/components/technicians/TechnicianRating";
 import {
   formatRequestDate,
   ServiceRequest,
@@ -519,20 +519,8 @@ function TechnicianSection({
                 </View>
               </View>
               <View style={styles.technicianRating}>
-                <Star
-                  size={13}
-                  color="#F59E0B"
-                  fill={
-                    technician.averageRating > 0
-                      ? "#F59E0B"
-                      : "transparent"
-                  }
-                />
-                <Text style={styles.technicianRatingText}>
-                  {technician.averageRating > 0
-                    ? technician.averageRating.toFixed(1)
-                    : "New"}
-                </Text>
+                <TechnicianRating technicianId={technician.uid} iconSize={13}
+                  valueStyle={styles.technicianRatingText} countStyle={styles.technicianMiniMeta} />
               </View>
             </TouchableOpacity>
           ))}
@@ -832,8 +820,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   technicianRating: {
-    width: 56,
-    height: 50,
+    width: 80,
+    minHeight: 64,
+    paddingVertical: 8,
+    gap: 2,
     borderRadius: 12,
     backgroundColor: "#101F30",
     alignItems: "center",

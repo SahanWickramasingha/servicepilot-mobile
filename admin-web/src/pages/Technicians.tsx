@@ -9,6 +9,7 @@ import {
   statusChipTone,
 } from "../components/AccountLifecycleActions";
 import { DataState, StatusChip } from "../components/DataState";
+import { TechnicianRating } from "../components/TechnicianRating";
 import { useCollectionData } from "../hooks/useCollectionData";
 import {
   updateManagedAccountLifecycle,
@@ -22,6 +23,7 @@ export default function Technicians() {
   const users = useCollectionData<UserRecord>("users");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [ratingTechnicianUid, setRatingTechnicianUid] = useState<string | null>(null);
   const [selectedTechnician, setSelectedTechnician] =
     useState<UserRecord | null>(null);
   const [lifecycleDialog, setLifecycleDialog] = useState<{
@@ -130,9 +132,10 @@ export default function Technicians() {
                       </td>
                       <td>{displayText(technician.experience)}</td>
                       <td>
-                        {technician.averageRating
-                          ? `${technician.averageRating.toFixed(1)} (${technician.reviewCount ?? 0})`
-                          : "0"}
+                        {ratingTechnicianUid === (technician.uid ?? technician.id)
+                          ? <><TechnicianRating technicianId={technician.uid ?? technician.id} />
+                            <button className="row-action view" onClick={() => setRatingTechnicianUid(null)}>Close rating</button></>
+                          : <button className="row-action view" onClick={() => setRatingTechnicianUid(technician.uid ?? technician.id)}>View rating</button>}
                       </td>
                       <td>
                         <StatusChip

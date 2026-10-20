@@ -7,6 +7,8 @@ const program = ts.createProgram([
   "app/(tabs)/technician-profile.tsx", "app/technician/(tabs)/profile.tsx",
   "app/technician/(tabs)/index.tsx", "app/technician/(tabs)/history.tsx",
   "app/technician/performance.tsx",
+  "app/(tabs)/index.tsx", "app/(tabs)/technicians.tsx", "app/(tabs)/map.tsx",
+  "app/(tabs)/create-request.tsx", "src/components/technicians/TechnicianRating.tsx",
 ], { ...parsed.options, noEmit: true, incremental: false });
 const diagnostics = ts.getPreEmitDiagnostics(program);
 if (diagnostics.length) console.error(ts.formatDiagnosticsWithColorAndContext(diagnostics, {

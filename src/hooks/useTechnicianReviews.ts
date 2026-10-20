@@ -6,10 +6,7 @@ import {
   subscribeToTechnicianReviews,
   type TechnicianReviewSummary,
 } from "@/src/services/technician.service";
-import {
-  summarizeTechnicianReviews,
-  type TechnicianRatingLoadState,
-} from "@/src/utils/technicianRating";
+import { type TechnicianRatingLoadState } from "@/src/utils/technicianRating";
 
 type ReviewsState = TechnicianRatingLoadState & {
   reviews: TechnicianReviewSummary[];
@@ -43,12 +40,12 @@ export function useTechnicianReviews(technicianId: string | null): ReviewsState 
       const isCurrent = () => active && version === generation && auth.currentUser?.uid === user.uid;
       unsubscribeReviews = subscribeToTechnicianReviews(
         technicianId,
-        (reviews, metadata) => {
+        (reviews, metadata, summary) => {
           // A cache-only empty result cannot prove that a technician has no reviews.
           // Wait for the complete server query, including metadata-only confirmation.
-          if (!isCurrent() || metadata.fromCache || metadata.hasPendingWrites) return;
+          if (!isCurrent() || metadata.fromCache || metadata.hasPendingWrites || !summary) return;
           setState({ ...identity, status: "ready", reviews,
-            summary: summarizeTechnicianReviews(reviews), errorMessage: "" });
+            summary, errorMessage: "" });
         },
         (error) => {
           if (!isCurrent()) return;

@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
+import { TechnicianRating } from "@/src/components/technicians/TechnicianRating";
 import { availabilityDisplay } from "@/functions/src/domain/availability";
 import DateTimePicker, {
   DateTimePickerEvent,
@@ -14,7 +15,6 @@ import {
   ImagePlus,
   MapPin,
   Save,
-  Star,
   UserRound,
   Wrench,
 } from "lucide-react-native";
@@ -415,21 +415,8 @@ export default function CreateRequestScreen() {
                 {technician.specialization}
               </Text>
               <View style={styles.technicianRow}>
-                <Star
-                  size={13}
-                  color="#F59E0B"
-                  fill={
-                    technician.averageRating > 0
-                      ? "#F59E0B"
-                      : "transparent"
-                  }
-                />
-                <Text style={styles.technicianSmallText}>
-                  {technician.averageRating > 0
-                    ? technician.averageRating.toFixed(1)
-                    : "New"}{" "}
-                  • {technician.serviceDivision}
-                </Text>
+                <TechnicianRating technicianId={technician.uid} iconSize={13} valueStyle={styles.technicianSmallText} />
+                <Text style={styles.technicianSmallText}>{technician.serviceDivision}</Text>
               </View>
             </View>
             <TouchableOpacity

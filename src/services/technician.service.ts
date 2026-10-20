@@ -20,7 +20,7 @@ import { readTechnicianAvailability, TechnicianAvailability } from "@/functions/
 import { districtIdForName } from "@/functions/src/domain/map";
 import { declaredServiceAreaLabel, StoredServiceAreasByDistrict } from "@/functions/src/domain/serviceAreas";
 import { MAP_MAX_ITEMS, MAP_PAGE_SIZE } from "@/functions/src/domain/mapProjection";
-import { isEligibleReviewRating } from "@/src/utils/technicianRating";
+import { isEligibleReviewRating, summarizeTechnicianReviews, type TechnicianRatingSummary } from "@/src/utils/technicianRating";
 
 export interface PublicTechnicianProfile {
   uid: string;
@@ -192,12 +192,12 @@ export function subscribeToApprovedTechnician(technicianId: string,
   return () => { alive = false; generation++; stop(); };
 }
 
-const reviewsStream = createSessionStream<[TechnicianReviewSummary[], SnapshotMetadata]>(() => [[], {
+const reviewsStream = createSessionStream<[TechnicianReviewSummary[], SnapshotMetadata, TechnicianRatingSummary | null]>(() => [[], {
   fromCache: true, hasPendingWrites: false,
-} as SnapshotMetadata]);
+} as SnapshotMetadata, null]);
 export function subscribeToTechnicianReviews(
   technicianId: string,
-  onNext: (reviews: TechnicianReviewSummary[], metadata: SnapshotMetadata) => void,
+  onNext: (reviews: TechnicianReviewSummary[], metadata: SnapshotMetadata, summary: TechnicianRatingSummary | null) => void,
   onError: (error: Error) => void
 ) {
   const reviewsQuery = query(
@@ -225,7 +225,10 @@ export function subscribeToTechnicianReviews(
           return secondMillis - firstMillis;
         });
 
-      emit(reviews, snapshot.metadata);
+      // Compute once per shared query emission, then reuse for every screen/card.
+      // Cached/pending snapshots cannot establish an authoritative review count.
+      const summary = snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites ? null : summarizeTechnicianReviews(reviews);
+      emit(reviews, snapshot.metadata, summary);
     },
     fail
     );
