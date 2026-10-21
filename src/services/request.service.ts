@@ -2,13 +2,14 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   onSnapshot,
   query,
   serverTimestamp,
   Timestamp,
-  updateDoc,
   where,
   runTransaction,
+  type Transaction,
 } from "firebase/firestore";
 
 import {
@@ -20,12 +21,9 @@ import { auth, db } from "@/src/firebase/config";
 import { createSessionStream } from "./session-subscriptions";
 import { liveDocuments } from "@/src/utils/liveDocuments";
 import { requireAvailableTechnician } from "@/functions/src/domain/availability";
-import { createPersonalNotification } from "@/src/services/notification.service";
+import { actionableBookingError, bookingAccount, bookingTechnician, BookingError, requireBookingTransition } from "@/functions/src/domain/booking";
 import { UserProfile } from "@/src/services/user.service";
-import {
-  getApprovedTechnician,
-  PublicTechnicianProfile,
-} from "@/src/services/technician.service";
+import { type PublicTechnicianProfile } from "@/src/services/technician.service";
 
 export interface ServiceRequest {
   id: string;
@@ -78,6 +76,8 @@ export type RequestTechnicianReviewTarget =
     };
 
 export type CreateServiceRequestInput = {
+  /** Stable for one form submission and its retries; a new intent gets a new ID. */
+  attemptId?: string;
   profile: UserProfile;
   technician: PublicTechnicianProfile;
   serviceCategory: ServiceCategory;
@@ -103,8 +103,8 @@ function mapServiceRequest(
     customerEmail: String(data.customerEmail ?? ""),
     customerPhone: String(data.customerPhone ?? ""),
     technicianId: String(
-      data.technicianId ??
-        data.assignedTechnicianId ??
+      data.technicianId ||
+        data.assignedTechnicianId ||
         ""
     ),
     technicianName: String(
@@ -166,82 +166,84 @@ function sortByCreatedDesc(
   });
 }
 
-export async function createServiceRequest(
-  input: CreateServiceRequestInput
-): Promise<string> {
-  const currentUser = auth.currentUser;
+export function createServiceRequestAttemptId(): string { return doc(collection(db, "service_requests")).id; }
 
-  if (!currentUser) {
-    throw new Error("Please sign in before creating a request.");
+function bookingSession(uid: string) {
+  if (auth.currentUser?.uid !== uid || auth.currentUser.emailVerified !== true) {
+    throw new BookingError("booking/session", "Please sign in with your verified account before saving this booking.");
   }
+}
 
-  if (currentUser.uid !== input.profile.uid) {
-    throw new Error("Unable to create request for this account.");
-  }
-
-  const approvedTechnician = await getApprovedTechnician(
-    input.technician.uid
-  );
-
-  if (!approvedTechnician) {
-    throw new Error(
-      "Please select an approved technician before creating a request."
-    );
-  }
-
-  requireAvailableTechnician(approvedTechnician.availability);
-
-  const requestRef = doc(collection(db, "service_requests"));
-  try { await runTransaction(db, async (transaction) => {
-    const projection = (await transaction.get(doc(db, "technician_map_profiles", approvedTechnician.uid))).data();
-    if (auth.currentUser?.uid !== currentUser.uid) throw new Error("Your account changed. Please sign in again.");
-    if (!projection || projection.approved !== true) throw new Error("This technician is no longer approved for requests.");
-    requireAvailableTechnician(projection.availability);
-    // A concurrent availability change retries the read or is denied at commit.
-    // Rules also validate the authoritative private profile at the commit.
-    transaction.set(requestRef, {
-      customerId: currentUser.uid,
-      customerName: input.profile.fullName.trim(),
-      customerEmail: input.profile.email.trim().toLowerCase(),
-      customerPhone: input.profile.phone.trim(),
-      technicianId: approvedTechnician.uid,
-      technicianName: projection.fullName,
-      serviceCategory: input.serviceCategory,
-      title: input.title.trim(),
-      description: input.description.trim(),
-      address: input.address.trim(),
-      serviceArea:
-        input.division?.trim() ||
-        approvedTechnician.serviceDivision,
-      division:
-        input.division?.trim() ||
-        approvedTechnician.serviceDivision,
-      preferredDate: input.preferredDate.trim(),
-      preferredTime: input.preferredTime?.trim() ?? "",
-      scheduledAt: Timestamp.fromDate(input.scheduledAt),
-      priority: input.priority,
-      status: "requested",
-      imageUrls: input.imageUrls ?? [],
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  }); } catch (error) {
-    if ((error as { code?: string }).code === "permission-denied") {
-      throw Object.assign(new Error("Request could not be created. Technician availability or approval may have changed. Confirm your account, refresh and retry."), { code: "permission-denied" });
-    }
-    throw error;
-  }
-
-  await createPersonalNotification({
-    userId: approvedTechnician.uid,
-    type: "new_customer_request",
-    title: "New Customer Request",
-    message: `${input.profile.fullName.trim()} requested ${input.title.trim() || input.serviceCategory}.`,
-    requestId: requestRef.id,
-    priority: input.priority === "urgent" ? "important" : "normal",
+function bookingNotification(transaction: Transaction, requestId: string, data: {
+  userId: string; type: string; title: string; message: string; priority: string;
+}) {
+  // The booking and its existing personal notification succeed or fail together.
+  transaction.set(doc(db, "notifications", `${requestId}_${data.type}`), {
+    ...data, requestId, read: false, createdAt: serverTimestamp(),
   });
+}
 
-  return requestRef.id;
+export async function createServiceRequest(input: CreateServiceRequestInput): Promise<string> {
+  const uid = auth.currentUser?.uid;
+  if (!uid || uid !== input.profile.uid) throw new BookingError("booking/session", "Unable to create a request for this account. Please sign in again.");
+  bookingSession(uid);
+  const attemptId = input.attemptId ?? createServiceRequestAttemptId();
+  if (!/^[A-Za-z0-9]{20}$/.test(attemptId)) throw new BookingError("booking/invalid", "Invalid submission. Reopen the booking form.");
+  const requestRef = doc(db, "service_requests", attemptId);
+  const receiptRef = doc(db, "booking_attempts", uid, "requests", attemptId);
+  try {
+    return await runTransaction(db, async (transaction) => {
+      const profile = (await transaction.get(doc(db, "users", uid))).data();
+      const receipt = await transaction.get(receiptRef);
+      bookingSession(uid); bookingAccount(profile, "customer");
+      if (receipt.exists()) {
+        const saved = (await transaction.get(requestRef)).data();
+        if (!saved || saved.customerId !== uid) throw new BookingError("booking/conflict", "The saved submission could not be confirmed. Contact support.");
+        // A receipt is an immutable identity for the original intent, not a capacity lock.
+        return requestRef.id;
+      }
+      const projection = (await transaction.get(doc(db, "technician_map_profiles", input.technician.uid))).data();
+      bookingSession(uid);
+      if (!projection || projection.technicianId !== input.technician.uid || projection.approved !== true) {
+        throw new BookingError("booking/account", "This technician is no longer approved. Select an approved technician and retry.");
+      }
+      requireAvailableTechnician(projection.availability);
+      if (!(input.scheduledAt instanceof Date) || !Number.isFinite(input.scheduledAt.getTime()) || input.scheduledAt.getTime() <= Date.now()) {
+        throw new BookingError("booking/invalid", "Please select a valid future preferred date and time.");
+      }
+      const area = input.division?.trim() || input.technician.serviceDivision;
+      transaction.set(requestRef, {
+        customerId: uid, customerName: profile!.fullName, customerEmail: profile!.email, customerPhone: profile!.phone,
+        technicianId: projection.technicianId, technicianName: projection.fullName,
+        serviceCategory: input.serviceCategory, title: input.title.trim(), description: input.description.trim(), address: input.address.trim(),
+        serviceArea: area, division: area, preferredDate: input.preferredDate.trim(), preferredTime: input.preferredTime?.trim() ?? "",
+        scheduledAt: Timestamp.fromDate(input.scheduledAt), priority: input.priority, status: "requested", imageUrls: input.imageUrls ?? [],
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      });
+      transaction.set(receiptRef, { requestId: requestRef.id, customerId: uid, createdAt: serverTimestamp() });
+      bookingNotification(transaction, requestRef.id, {
+        userId: projection.technicianId, type: "new_customer_request", title: "New Customer Request",
+        message: `${profile!.fullName} requested ${input.title.trim() || input.serviceCategory}.`, priority: input.priority === "urgent" ? "important" : "normal",
+      });
+      return requestRef.id;
+    });
+  } catch (error) {
+    // A concurrent create-only commit can be denied by rules before Firestore
+    // retries its stale read. Confirm THIS attempt's persisted result, never a
+    // query for a similar booking or a guess based on an error code.
+    if (["permission-denied", "already-exists", "aborted"].includes((error as { code?: string }).code ?? "")) {
+      try {
+        bookingSession(uid);
+        const receipt = (await getDocFromServer(receiptRef)).data();
+        if (receipt?.requestId === attemptId && receipt.customerId === uid) {
+          const saved = (await getDocFromServer(requestRef)).data();
+          bookingSession(uid);
+          if (saved?.customerId === uid) return requestRef.id;
+        }
+      } catch { /* An unconfirmed or unauthorized read cannot turn failure into success. */ }
+    }
+    throw actionableBookingError(error);
+  }
 }
 
 const requestsStream = createSessionStream<[ServiceRequest[]]>(() => [[]]);
@@ -394,27 +396,21 @@ export async function cancelServiceRequest(
     throw new Error("You can only cancel your own request.");
   }
 
-  const request = await getServiceRequest(requestId);
-
-  if (!request || request.customerId !== customerId) {
-    throw new Error("Request not found.");
-  }
-
-  await updateDoc(doc(db, "service_requests", requestId), {
-    status: "cancelled",
-    cancelledAt: serverTimestamp(),
-    cancelledBy: "customer",
-    updatedAt: serverTimestamp(),
-  });
-
-  await createPersonalNotification({
-    userId: request.technicianId,
-    type: "customer_cancelled_request",
-    title: "Customer Cancelled Request",
-    message: `${request.customerName || "A customer"} cancelled ${request.title || "a service request"}.`,
-    requestId,
-    priority: "important",
-  });
+  try {
+    await runTransaction(db, async (transaction) => {
+      const reference = doc(db, "service_requests", requestId);
+      const job = (await transaction.get(reference)).data();
+      const profile = (await transaction.get(doc(db, "users", currentUser.uid))).data();
+      bookingSession(currentUser.uid); bookingAccount(profile, "customer");
+      if (!job || job.customerId !== currentUser.uid) throw new BookingError("booking/account", "You can only cancel your own request.");
+      if (job.status === "cancelled" && job.cancelledBy === "customer") return;
+      requireBookingTransition(job.status, "cancelled", "customer");
+      const technicianId = bookingTechnician(job);
+      transaction.update(reference, { status: "cancelled", cancelledAt: serverTimestamp(), cancelledBy: "customer", updatedAt: serverTimestamp() });
+      bookingNotification(transaction, requestId, { userId: technicianId, type: "customer_cancelled_request", title: "Customer Cancelled Request",
+        message: `${job.customerName || "A customer"} cancelled ${job.title || "a service request"}.`, priority: "important" });
+    });
+  } catch (error) { throw actionableBookingError(error); }
 }
 
 export async function updateTechnicianRequestStatus(
@@ -469,16 +465,20 @@ export async function updateTechnicianRequestStatus(
     updatePayload.technicianCancellationReason = reason;
   }
 
-  const request = await runTransaction(db, async (transaction) => {
+  await runTransaction(db, async (transaction) => {
     const requestRef = doc(db, "service_requests", requestId);
     const snapshot = await transaction.get(requestRef);
     if (!snapshot.exists()) throw new Error("Request not found.");
-    const job = mapServiceRequest(snapshot.id, snapshot.data());
-    if (job.technicianId !== currentUser.uid || auth.currentUser?.uid !== currentUser.uid) {
+    const data = snapshot.data();
+    const job = mapServiceRequest(snapshot.id, data);
+    if (bookingTechnician(data) !== currentUser.uid || auth.currentUser?.uid !== currentUser.uid) {
       throw new Error("You can only update your assigned requests.");
     }
+    const profile = (await transaction.get(doc(db, "users", currentUser.uid))).data();
+    bookingSession(currentUser.uid); bookingAccount(profile, "technician");
+    if (job.status === status && (status !== "cancelled" || data.cancelledBy === "technician")) return;
+    requireBookingTransition(job.status, status, "technician");
     if (status === "accepted") {
-      const profile = (await transaction.get(doc(db, "users", currentUser.uid))).data();
       const projection = (await transaction.get(doc(db, "technician_map_profiles", currentUser.uid))).data();
       if (profile?.role !== "technician" || profile.technicianApprovalStatus !== "approved" ||
           (profile.accountStatus !== undefined && profile.accountStatus !== "active") || projection?.approved !== true) {
@@ -489,52 +489,44 @@ export async function updateTechnicianRequestStatus(
     }
     // Never update availability on acceptance/completion: no automatic one-job cap.
     transaction.update(requestRef, updatePayload);
-    return job;
-  }).catch((error: unknown) => {
-    if (status === "accepted" && (error as { code?: string }).code === "permission-denied") {
-      throw Object.assign(new Error("Request could not be accepted. Confirm you are Available and this request is still pending, then refresh and retry."), { code: "permission-denied" });
-    }
-    throw error;
-  });
-
-  const notificationByStatus = {
+    const notificationByStatus = {
     accepted: {
       type: "technician_accepted_request" as const,
       title: "Technician Accepted Request",
-      message: `${request.technicianName || "Your technician"} accepted ${request.title || "your service request"}.`,
+      message: `${job.technicianName || "Your technician"} accepted ${job.title || "your service request"}.`,
       priority: "normal" as const,
     },
     rejected: {
       type: "technician_rejected_request" as const,
       title: "Technician Rejected Request",
-      message: `${request.technicianName || "Your technician"} rejected ${request.title || "your service request"}.`,
+      message: `${job.technicianName || "Your technician"} rejected ${job.title || "your service request"}.`,
       priority: "important" as const,
     },
     in_progress: {
       type: "job_started" as const,
       title: "Job Started",
-      message: `${request.technicianName || "Your technician"} started your service job.`,
+      message: `${job.technicianName || "Your technician"} started your service job.`,
       priority: "normal" as const,
     },
     completed: {
       type: "job_completed" as const,
       title: "Job Completed",
-      message: `${request.technicianName || "Your technician"} marked your service job complete.`,
+      message: `${job.technicianName || "Your technician"} marked your service job complete.`,
       priority: "important" as const,
     },
     cancelled: {
       type: "technician_cancelled_job" as const,
       title: "Technician Cancelled Job",
-      message: `${request.technicianName || "Your technician"} cancelled ${request.title || "your service job"}.`,
+      message: `${job.technicianName || "Your technician"} cancelled ${job.title || "your service job"}.`,
       priority: "critical" as const,
     },
   }[status];
 
-  await createPersonalNotification({
-    userId: request.customerId,
+    bookingNotification(transaction, requestId, {
+    userId: job.customerId,
     ...notificationByStatus,
-    requestId,
   });
+  }).catch((error: unknown) => { throw actionableBookingError(error); });
 }
 
 export function formatRequestDate(

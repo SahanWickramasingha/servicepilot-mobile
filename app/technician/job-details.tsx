@@ -1,6 +1,6 @@
 // sahan 
 import { router } from "expo-router";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -28,6 +28,7 @@ import {
 import { normalizeRequestStatus } from "@/src/constants/serviceRequests";
 import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
 import { updateTechnicianRequestStatus } from "@/src/services/request.service";
+import { auth } from "@/src/firebase/config";
 import { availabilityDisplay } from "@/functions/src/domain/availability";
 import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
 import {
@@ -44,6 +45,7 @@ export default function TechnicianJobDetailsScreen() {
   const { request, profile, loading, errorMessage } = useTechnicianRequest();
   const canAccept = availabilityDisplay(profile?.availability).canRequest;
   const [updating, setUpdating] = useState(false);
+  const updateInFlight = useRef(false);
   const [reasonAction, setReasonAction] =
     useState<ReasonAction | null>(null);
   const [reason, setReason] = useState("");
@@ -70,16 +72,18 @@ export default function TechnicianJobDetailsScreen() {
       | "cancelled",
     actionReason?: string
   ): Promise<boolean> => {
-    if (!request) {
+    if (!request || updateInFlight.current) {
       return false;
     }
+    const actor = auth.currentUser?.uid;
 
     try {
+      updateInFlight.current = true;
       setUpdating(true);
       await updateTechnicianRequestStatus(request.id, status, {
         reason: actionReason,
       });
-      return true;
+      return !!actor && auth.currentUser?.uid === actor;
     } catch (error: any) {
       Alert.alert(
         "Job Update Failed",
@@ -87,6 +91,7 @@ export default function TechnicianJobDetailsScreen() {
       );
       return false;
     } finally {
+      updateInFlight.current = false;
       setUpdating(false);
     }
   };

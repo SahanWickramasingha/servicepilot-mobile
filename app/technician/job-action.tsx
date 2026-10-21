@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
@@ -26,6 +26,7 @@ import {
 import { normalizeRequestStatus } from "@/src/constants/serviceRequests";
 import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
 import { updateTechnicianRequestStatus } from "@/src/services/request.service";
+import { auth } from "@/src/firebase/config";
 import {
   getRequestDisplayTitle,
   getStatusUi,
@@ -38,6 +39,7 @@ export default function TechnicianJobActionScreen() {
   const [seconds, setSeconds] = useState(0);
   const [running, setRunning] = useState(true);
   const [completing, setCompleting] = useState(false);
+  const completionInFlight = useRef(false);
 
   // UI mock completion states
   const [beforeDone] = useState(false);
@@ -94,16 +96,20 @@ export default function TechnicianJobActionScreen() {
         {
           text: "Complete Job",
           onPress: async () => {
+            if (completionInFlight.current) return;
+            const actor = auth.currentUser?.uid;
             try {
+              completionInFlight.current = true;
               setCompleting(true);
               await updateTechnicianRequestStatus(request.id, "completed");
-              router.replace("/technician/history");
+              if (actor && auth.currentUser?.uid === actor) router.replace("/technician/history");
             } catch (error: any) {
               Alert.alert(
                 "Complete Job Failed",
                 error?.message ?? "Unable to complete this job."
               );
             } finally {
+              completionInFlight.current = false;
               setCompleting(false);
             }
           },

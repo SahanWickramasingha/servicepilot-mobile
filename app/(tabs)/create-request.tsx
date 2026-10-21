@@ -39,7 +39,7 @@ import {
   getPriorityLabel,
 } from "@/src/constants/serviceRequests";
 import { auth } from "@/src/firebase/config";
-import { createServiceRequest } from "@/src/services/request.service";
+import { createServiceRequest, createServiceRequestAttemptId } from "@/src/services/request.service";
 import {
   getUserProfile,
   UserProfile,
@@ -164,6 +164,7 @@ export default function CreateRequestScreen() {
   const [successMessage, setSuccessMessage] = useState("");
   const sessionVersion = useRef(0);
   const submissionVersion = useRef<number | null>(null);
+  const submissionAttempt = useRef<{ uid: string; id: string } | null>(null);
 
   useEffect(() => {
     sessionVersion.current = sessionVersion.current + 1;
@@ -174,6 +175,7 @@ export default function CreateRequestScreen() {
       const isCurrent = () => version === sessionVersion.current && auth.currentUser?.uid === user?.uid;
       setProfile(null); setTechnician(null); setErrorMessage(""); setSuccessMessage("");
       setAddress(""); setDivision(""); setSubmitting(false); setLoading(true);
+      submissionAttempt.current = null;
       let profileLoaded = false, technicianLoaded = false;
       const finishLoading = () => { if (isCurrent() && profileLoaded && technicianLoaded) setLoading(false); };
       if (!user) { setErrorMessage("Please sign in again."); setLoading(false); return; }
@@ -280,7 +282,9 @@ export default function CreateRequestScreen() {
       setErrorMessage("");
       setSuccessMessage("");
 
+      if (submissionAttempt.current?.uid !== profile.uid) submissionAttempt.current = { uid: profile.uid, id: createServiceRequestAttemptId() };
       const requestId = await createServiceRequest({
+        attemptId: submissionAttempt.current.id,
         profile,
         serviceCategory,
         title,

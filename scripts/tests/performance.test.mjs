@@ -173,13 +173,14 @@ test('growing request lists page without changing totals, stable IDs or booking 
 test('two immediate Submit taps create only one request; a settled failure permits a retry', async () => {
   const auth = { currentUser: { uid: 'customer' } }, profile = { uid: 'customer' }, technician = { uid: 'gihan', availability: 'available', specialization: 'Electrical' };
   let creations = 0, finish;
+  const attempts = [];
   const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
   const h = renderHarness('app/(tabs)/create-request.tsx', { initial: [profile, technician, 'Electrical', 'Repair', 'Description', 'Private', 'Kandy', tomorrow,
     false, '11:00 AM', 'normal', 0, false, false, '', ''], dependencies: {
     'expo-router': { useLocalSearchParams: () => ({ technicianId: 'gihan' }), router: { replace() {} } }, '@/src/firebase/config': { auth },
     '@react-native-community/datetimepicker': { __esModule: true, default: 'DateTimePicker' },
     '@/src/services/user.service': {}, '@/src/services/technician.service': {},
-    '@/src/services/request.service': { createServiceRequest: () => { creations++; return new Promise((_, reject) => { finish = reject; }); } },
+    '@/src/services/request.service': { createServiceRequestAttemptId: () => 'testBookingAttempt01', createServiceRequest: (input) => { creations++; attempts.push(input.attemptId); return new Promise((_, reject) => { finish = reject; }); } },
     '@/src/components/technicians/AvailabilityBadge': { AvailabilityBadge: 'AvailabilityBadge' },
   } });
   h.render();
@@ -189,4 +190,5 @@ test('two immediate Submit taps create only one request; a settled failure permi
   const savedError = console.error; console.error = () => {};
   try { await Promise.all([first, duplicate]); const retry = submit(); assert.equal(creations, 2); finish(new Error('Test failure')); await retry; }
   finally { console.error = savedError; }
+  assert.deepEqual(attempts, ['testBookingAttempt01', 'testBookingAttempt01'], 'Retries must keep the original durable submission ID');
 });

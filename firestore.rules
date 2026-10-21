@@ -466,21 +466,41 @@ service cloud.firestore {
       let profile = getAfter(/databases/$(database)/documents/users/$(technicianId)).data;
       let projection = getAfter(/databases/$(database)/documents/technician_map_profiles/$(technicianId)).data;
       return profile.role == "technician" && profile.technicianApprovalStatus == "approved" &&
-        profileHasActiveAccount(profile) && profile.get("availability", "") == "available" &&
+        profileHasActiveAccount(profile) && profile.get("lifecyclePending", false) == false &&
+        profile.get("emailVerified", false) == true && profile.get("availability", "") == "available" &&
         projection.approved == true && projection.get("availability", "") == "available";
     }
 
-    function validCustomerRequestCreate() {
+    function bookingCustomerEligible(customerId) {
+      let profile = getAfter(/databases/$(database)/documents/users/$(customerId)).data;
+      return profile.role == "customer" && profileHasActiveAccount(profile) &&
+        profile.get("lifecyclePending", false) == false && profile.get("emailVerified", false) == true;
+    }
+
+    function validBookingAttempt(requestId) {
+      let receipt = getAfter(/databases/$(database)/documents/booking_attempts/$(request.auth.uid)/requests/$(requestId)).data;
+      return requestId.matches('^[A-Za-z0-9]{20}$') && receipt.requestId == requestId &&
+        receipt.customerId == request.auth.uid && receipt.createdAt == request.time;
+    }
+
+    function validCustomerRequestCreate(requestId) {
+      let customer = getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data;
       return isVerifiedCustomer() &&
         hasRequiredRequestCreateFields() &&
         hasOnlyCustomerRequestCreateFields() &&
         request.resource.data.customerId == request.auth.uid &&
+        request.resource.data.customerName is string && request.resource.data.customerEmail is string && request.resource.data.customerPhone is string &&
+        request.resource.data.customerName == customer.fullName &&
+        request.resource.data.customerEmail == customer.email && request.resource.data.customerPhone == customer.phone &&
         request.resource.data.technicianId is string &&
         request.resource.data.technicianName is string &&
+        request.resource.data.technicianName == getAfter(/databases/$(database)/documents/technician_map_profiles/$(request.resource.data.technicianId)).data.fullName &&
         isApprovedTechnicianId(request.resource.data.technicianId) &&
         technicianAcceptsNewRequests(request.resource.data.technicianId) &&
         request.resource.data.status == "requested" &&
+        request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time && validBookingAttempt(requestId) &&
         request.resource.data.scheduledAt is timestamp &&
+        request.resource.data.scheduledAt > request.time &&
         request.resource.data.priority in ["normal", "urgent"] &&
         request.resource.data.imageUrls is list;
     }
@@ -490,9 +510,9 @@ service cloud.firestore {
         resource.data.customerId == request.auth.uid &&
         resource.data.status in ["requested", "pending"] &&
         request.resource.data.customerId == resource.data.customerId &&
-        request.resource.data.technicianId == resource.data.technicianId &&
         request.resource.data.status == "cancelled" &&
         request.resource.data.cancelledBy == "customer" &&
+        request.resource.data.cancelledAt == request.time && request.resource.data.updatedAt == request.time &&
         request.resource.data
           .diff(resource.data)
           .affectedKeys()
@@ -505,11 +525,10 @@ service cloud.firestore {
     }
 
     function validTechnicianRequestStatusUpdate() {
-      return signedIn() &&
-        isApprovedTechnicianId(request.auth.uid) &&
-        resource.data.technicianId == request.auth.uid &&
-        request.resource.data.technicianId == resource.data.technicianId &&
+      return isVerifiedApprovedTechnician() &&
+        requestTechnicianMatches(resource.data, request.auth.uid) &&
         request.resource.data.customerId == resource.data.customerId &&
+        request.resource.data.updatedAt == request.time &&
         request.resource.data
           .diff(resource.data)
           .affectedKeys()
@@ -529,28 +548,37 @@ service cloud.firestore {
           (
             resource.data.status in ["requested", "pending"] &&
             request.resource.data.status == "accepted" &&
+            request.resource.data.acceptedAt == request.time &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "acceptedAt", "updatedAt"]) &&
+            bookingCustomerEligible(resource.data.customerId) &&
             technicianAcceptsNewRequests(request.auth.uid)
           ) ||
           (
             resource.data.status in ["requested", "pending"] &&
             request.resource.data.status == "rejected" &&
+            request.resource.data.rejectedAt == request.time &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "rejectedAt", "rejectionReason", "updatedAt"]) &&
             request.resource.data.rejectionReason is string &&
             request.resource.data.rejectionReason.size() > 0
           ) ||
           (
             resource.data.status in ["accepted", "assigned"] &&
-            request.resource.data.status == "in_progress"
+            request.resource.data.status == "in_progress" && request.resource.data.startedAt == request.time &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "startedAt", "updatedAt"])
           ) ||
           (
             resource.data.status in ["accepted", "assigned"] &&
             request.resource.data.status == "cancelled" &&
+            request.resource.data.technicianCancelledAt == request.time &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "technicianCancelledAt", "cancelledBy", "technicianCancellationReason", "updatedAt"]) &&
             request.resource.data.cancelledBy == "technician" &&
             request.resource.data.technicianCancellationReason is string &&
             request.resource.data.technicianCancellationReason.size() > 0
           ) ||
           (
             resource.data.status == "in_progress" &&
-            request.resource.data.status == "completed"
+            request.resource.data.status == "completed" && request.resource.data.completedAt == request.time &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "completedAt", "updatedAt"])
           )
         );
     }
@@ -603,13 +631,11 @@ service cloud.firestore {
         ] &&
         request.resource.data.read == false &&
         request.resource.data.createdAt is timestamp &&
-        exists(
-          /databases/$(database)/documents/service_requests/$(request.resource.data.requestId)
-        );
+        notificationRequest().customerId is string;
     }
 
     function notificationRequest() {
-      return get(
+      return getAfter(
         /databases/$(database)/documents/service_requests/$(request.resource.data.requestId)
       ).data;
     }
@@ -664,7 +690,7 @@ service cloud.firestore {
           (
             request.resource.data.type == "customer_cancelled_request" &&
             notificationRequest().customerId == request.auth.uid &&
-            notificationRequest().technicianId == request.resource.data.userId &&
+            requestTechnicianMatches(notificationRequest(), request.resource.data.userId) &&
             notificationRequest().status == "cancelled"
           ) ||
           (
@@ -675,7 +701,7 @@ service cloud.firestore {
               "technician_cancelled_job",
               "job_completed"
             ] &&
-            notificationRequest().technicianId == request.auth.uid &&
+            requestTechnicianMatches(notificationRequest(), request.auth.uid) &&
             notificationRequest().customerId == request.resource.data.userId &&
             (
               (
@@ -1155,14 +1181,26 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /booking_attempts/{customerId}/requests/{requestId} {
+      allow get: if hasActiveSession() && isVerifiedCustomer() && request.auth.uid == customerId;
+      allow list, update, delete: if false;
+      allow create: if hasActiveSession() && isVerifiedCustomer() && request.auth.uid == customerId &&
+        requestId.matches('^[A-Za-z0-9]{20}$') &&
+        request.resource.data.keys().hasOnly(["requestId", "customerId", "createdAt"]) &&
+        request.resource.data.requestId == requestId && request.resource.data.customerId == customerId &&
+        request.resource.data.createdAt == request.time &&
+        getAfter(/databases/$(database)/documents/service_requests/$(requestId)).data.customerId == customerId &&
+        getAfter(/databases/$(database)/documents/service_requests/$(requestId)).data.createdAt == request.time;
+    }
+
     match /service_requests/{requestId} {
-      allow create: if hasActiveSession() && validCustomerRequestCreate();
+      allow create: if hasActiveSession() && validCustomerRequestCreate(requestId);
       allow read: if hasActiveSession() &&
         (
           isSuperAdmin() ||
           resource.data.customerId == request.auth.uid ||
           (
-            resource.data.technicianId == request.auth.uid &&
+            requestTechnicianMatches(resource.data, request.auth.uid) &&
             isApprovedTechnicianId(request.auth.uid)
           )
         );

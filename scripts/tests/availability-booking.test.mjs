@@ -47,17 +47,17 @@ function requestData(overrides = {}) {
   return { customerId: "availability-customer", customerName: "Availability Customer", customerEmail: "availability-customer@example.test",
     customerPhone: "Private", technicianId: "availability-tech", technicianName: "Availability Technician", serviceCategory: "Electrical",
     title: "Test booking", description: "Local test", address: "Private customer address", serviceArea: "Kandy", division: "Kandy",
-    preferredDate: "2026-10-10", preferredTime: "10:00 AM", scheduledAt: firestore.Timestamp.fromDate(new Date("2026-10-10T04:30:00Z")),
+    preferredDate: "2099-10-10", preferredTime: "10:00 AM", scheduledAt: firestore.Timestamp.fromDate(new Date("2099-10-10T04:30:00Z")),
     priority: "normal", status: "requested", imageUrls: [], createdAt: firestore.serverTimestamp(), updatedAt: firestore.serverTimestamp(), ...overrides };
 }
 async function input() {
   return { profile: (await admin.doc("users/availability-customer").get()).data(),
     technician: await customer().services.technician.getApprovedTechnician("availability-tech"), serviceCategory: "Electrical",
-    title: "Test booking", description: "Local test", address: "Private customer address", division: "Kandy", preferredDate: "2026-10-10",
-    preferredTime: "10:00 AM", scheduledAt: new Date("2026-10-10T04:30:00Z"), priority: "normal" };
+    title: "Test booking", description: "Local test", address: "Private customer address", division: "Kandy", preferredDate: "2099-10-10",
+    preferredTime: "10:00 AM", scheduledAt: new Date("2099-10-10T04:30:00Z"), priority: "normal" };
 }
 async function seedJob(id, status = "requested") {
-  await admin.doc(`service_requests/${id}`).set({ ...requestData(), status, scheduledAt: new Date("2026-10-10T04:30:00Z"), createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+  await admin.doc(`service_requests/${id}`).set({ ...requestData(), status, scheduledAt: new Date("2099-10-10T04:30:00Z"), createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
 }
 
 before(async () => {
@@ -67,8 +67,10 @@ before(async () => {
     ["availability-pending", "technician", { technicianApprovalStatus: "pending" }],
     ["availability-disabled", "technician", { accountStatus: "disabled" }],
     ["availability-unverified", "technician", {}], ["availability-customer", "customer", {}],
+    ["availability-customer-unverified", "customer", {}], ["availability-customer-disabled", "customer", { accountStatus: "disabled" }],
+    ["availability-customer-deleted", "customer", { accountStatus: "deleted" }],
     ["availability-dispatcher", "dispatcher", {}], ["availability-admin", "super_admin", {}]]) {
-    const email = `${uid}@example.test`, password = "Only-for-map-emulator-42", emailVerified = uid !== "availability-unverified";
+    const email = `${uid}@example.test`, password = "Only-for-map-emulator-42", emailVerified = !uid.endsWith("unverified");
     try { await getAdminAuth(app).createUser({ uid, email, password, emailVerified }); }
     catch (error) { if (error.code !== "auth/uid-already-exists") throw error; }
     const profile = { uid, role, fullName: uid === "availability-tech" ? "Availability Technician" : "Availability Customer",
@@ -83,6 +85,13 @@ before(async () => {
     await signInWithEmailAndPassword(auth, email, password);
     const session = { app: client, auth, db }; session.services = services(session); sessions.set(uid, session);
   }
+  const client = initializeApp({ projectId, apiKey: "emulator-only" }, "availability-customer-second-device");
+  const auth = getAuth(client), db = firestore.getFirestore(client);
+  connectAuthEmulator(auth, `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}`, { disableWarnings: true });
+  const [host, port] = process.env.FIRESTORE_EMULATOR_HOST.split(":"); firestore.connectFirestoreEmulator(db, host, Number(port));
+  await signInWithEmailAndPassword(auth, "availability-customer@example.test", "Only-for-map-emulator-42");
+  const secondDevice = { app: client, auth, db }; secondDevice.services = services(secondDevice);
+  sessions.set("availability-customer-second-device", secondDevice);
 });
 after(async () => {
   for (const session of sessions.values()) { await firestore.terminate(session.db); await deleteApp(session.app); }
@@ -238,6 +247,115 @@ test("GPS ON/OFF never changes availability and availability updates never chang
   assert.deepEqual((await source()).serviceAreasByDistrict, original.serviceAreasByDistrict);
   await tech().services.location.publishTechnicianLocation("availability-tech");
   assert.equal((await source()).availability, "busy");
+});
+
+test("one durable submission ID survives two devices, duplicate calls and a lost commit acknowledgement; a new intent remains allowed", async () => {
+  await setAvailability("available");
+  const details = { ...await input(), attemptId: customer().services.request.createServiceRequestAttemptId() };
+  const ids = await Promise.all([customer().services.request.createServiceRequest(details), sessions.get("availability-customer-second-device").services.request.createServiceRequest(details)]);
+  assert.equal(ids[0], ids[1]);
+  assert.equal((await admin.collection("notifications").where("requestId", "==", ids[0]).get()).size, 1);
+  assert.equal((await admin.doc(`booking_attempts/availability-customer/requests/${ids[0]}`).get()).data().requestId, ids[0]);
+  const second = { ...details, attemptId: customer().services.request.createServiceRequestAttemptId() };
+  let loseAck = true;
+  const flaky = services(customer(), { ...firestore, runTransaction: async (...args) => {
+    const result = await firestore.runTransaction(...args);
+    if (loseAck) { loseAck = false; throw Object.assign(new Error("Commit acknowledgement lost"), { code: "unavailable" }); }
+    return result;
+  } });
+  await assert.rejects(flaky.request.createServiceRequest(second), /retry the same submission/);
+  await setAvailability("busy");
+  assert.equal(await customer().services.request.createServiceRequest(second), second.attemptId);
+  assert.notEqual(second.attemptId, ids[0]);
+  assert.equal((await admin.collection("notifications").where("requestId", "==", second.attemptId).get()).size, 1);
+  await setAvailability("available");
+});
+
+test("invalid notification, forged display identity or past schedule rolls back the request/receipt, and direct writes cannot bypass receipts", async () => {
+  await setAvailability("available");
+  const details = { ...await input(), attemptId: customer().services.request.createServiceRequestAttemptId() };
+  for (const invalid of ["notification", "technicianName", "customerName", "scheduledAt"]) {
+    const forged = services(customer(), { ...firestore, runTransaction: (db, callback) => firestore.runTransaction(db, (tx) => callback({
+      get: tx.get.bind(tx), update: tx.update.bind(tx), set: (ref, data) => {
+        const next = invalid === "notification" && ref.path.startsWith("notifications/") ? { ...data, userId: "availability-other-tech" }
+          : invalid !== "notification" && ref.path.startsWith("service_requests/")
+            ? { ...data, [invalid]: invalid === "scheduledAt" ? firestore.Timestamp.fromMillis(1) : "Forged display identity" } : data;
+        return tx.set(ref, next);
+      },
+    })) });
+    await denied(forged.request.createServiceRequest(details));
+  }
+  assert.equal((await admin.doc(`service_requests/${details.attemptId}`).get()).exists, false);
+  const receipt = firestore.doc(customer().db, "booking_attempts", "availability-customer", "requests", details.attemptId);
+  assert.equal((await firestore.getDocFromServer(receipt)).exists(), false);
+  await denied(firestore.setDoc(firestore.doc(customer().db, "service_requests", details.attemptId), requestData()));
+  await denied(firestore.setDoc(receipt, { requestId: details.attemptId, customerId: "availability-customer", createdAt: firestore.serverTimestamp() }));
+  assert.equal(await customer().services.request.createServiceRequest(details), details.attemptId);
+  await denied(firestore.deleteDoc(receipt));
+  await denied(firestore.updateDoc(receipt, { requestId: "another" }));
+  await denied(firestore.getDocFromServer(firestore.doc(tech().db, "booking_attempts", "availability-customer", "requests", details.attemptId)));
+});
+
+test("creation derives customer fields, rejects forged actors and checks unverified/disabled/deleted/lifecycle accounts", async () => {
+  await setAvailability("available"); const details = await input();
+  const id = await customer().services.request.createServiceRequest({ ...details, profile: { ...details.profile, fullName: "Forged", email: "forged@example.test", phone: "Forged" } });
+  const saved = (await admin.doc(`service_requests/${id}`).get()).data();
+  assert.equal(saved.customerName, details.profile.fullName); assert.equal(saved.customerEmail, details.profile.email); assert.equal(saved.customerPhone, details.profile.phone);
+  await assert.rejects(customer().services.request.createServiceRequest({ ...details, profile: { ...details.profile, uid: "another" } }), /account/);
+  for (const uid of ["availability-customer-unverified", "availability-customer-disabled", "availability-customer-deleted"]) {
+    const account = sessions.get(uid), profile = (await admin.doc(`users/${uid}`).get()).data();
+    await assert.rejects(account.services.request.createServiceRequest({ ...details, profile }));
+  }
+  for (const patch of [{ lifecyclePending: true }, { emailVerified: false }, { accountStatus: "deleted" }, { technicianApprovalStatus: "pending" }]) {
+    const original = await source();
+    try {
+      await admin.doc("users/availability-tech").update(patch);
+      await denied(customer().services.request.createServiceRequest(details));
+    } finally { await admin.doc("users/availability-tech").set(original); }
+  }
+});
+
+test("conflicting acceptance/rejection and acceptance/customer cancellation race on the authoritative request: exactly one wins", async () => {
+  await setAvailability("available");
+  for (const other of ["reject", "cancel"]) {
+    const id = await customer().services.request.createServiceRequest(await input());
+    const results = await Promise.allSettled([
+      tech().services.request.updateTechnicianRequestStatus(id, "accepted"),
+      other === "reject" ? tech().services.request.updateTechnicianRequestStatus(id, "rejected", { reason: "Cannot attend" })
+        : customer().services.request.cancelServiceRequest(id, "availability-customer"),
+    ]);
+    assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+    const job = (await admin.doc(`service_requests/${id}`).get()).data();
+    assert.ok(["accepted", other === "reject" ? "rejected" : "cancelled"].includes(job.status));
+    assert.equal((await admin.collection("notifications").where("requestId", "==", id).get()).size, 2);
+  }
+});
+
+test("acceptance checks the Customer account; idempotent lifecycle retries retain one notification, and valid legacy identities still transition", async () => {
+  await setAvailability("available"); const original = (await admin.doc("users/availability-customer").get()).data();
+  for (const patch of [{ accountStatus: "disabled" }, { accountStatus: "deleted" }, { lifecyclePending: true }, { emailVerified: false }]) {
+    await seedJob("availability-ineligible-customer");
+    try {
+      await admin.doc("users/availability-customer").update(patch);
+      await denied(tech().services.request.updateTechnicianRequestStatus("availability-ineligible-customer", "accepted"));
+      assert.equal((await admin.doc("service_requests/availability-ineligible-customer").get()).data().status, "requested");
+    } finally { await admin.doc("users/availability-customer").set(original); }
+  }
+  await seedJob("availability-legacy-lifecycle", "assigned");
+  await admin.doc("service_requests/availability-legacy-lifecycle").update({ technicianId: FieldValue.delete(), assignedTechnicianId: "availability-tech" });
+  for (const status of ["in_progress", "completed"]) {
+    await tech().services.request.updateTechnicianRequestStatus("availability-legacy-lifecycle", status);
+    await tech().services.request.updateTechnicianRequestStatus("availability-legacy-lifecycle", status);
+  }
+  assert.equal((await admin.collection("notifications").where("requestId", "==", "availability-legacy-lifecycle").get()).size, 2);
+  await assert.rejects(tech().services.request.updateTechnicianRequestStatus("availability-legacy-lifecycle", "accepted"), /already changed/);
+  await seedJob("availability-forged-transition");
+  await denied(firestore.updateDoc(firestore.doc(tech().db, "service_requests", "availability-forged-transition"), {
+    status: "accepted", acceptedAt: firestore.serverTimestamp(), completedAt: firestore.serverTimestamp(), updatedAt: firestore.serverTimestamp(),
+  }));
+  await denied(firestore.updateDoc(firestore.doc(sessions.get("availability-other-tech").db, "service_requests", "availability-forged-transition"), {
+    status: "accepted", acceptedAt: firestore.serverTimestamp(), updatedAt: firestore.serverTimestamp(),
+  }));
 });
 
 test("signed-out technician cannot change availability or accept jobs", async () => {
