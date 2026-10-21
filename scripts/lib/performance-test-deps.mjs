@@ -12,6 +12,8 @@ const documents = pureModule('src/utils/liveDocuments.ts');
 // Run the real pooling/reducer logic in host tests, bound to each fixture's Auth.
 export function performanceTestDependency(id, deps) {
   if (id === '@/src/utils/liveDocuments') return documents;
+  if (id === '@/src/utils/reviewDiagnostics') return pureModule('src/utils/reviewDiagnostics.ts');
+  if (id === '@/src/utils/reviewValidation') return pureModule('src/utils/reviewValidation.ts');
   if (id === './session-subscriptions') {
     const auth = deps['@/src/firebase/config']?.auth;
     return { createSessionStream: (reset) => createSharedSubscription({

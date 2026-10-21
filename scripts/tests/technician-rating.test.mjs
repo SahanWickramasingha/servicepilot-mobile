@@ -25,12 +25,13 @@ function fixture(initialId = "gihan") {
   const states = [], effects = [], listeners = [];
   let cursor = 0, effectCursor = 0, authCallback, authUnsubscribed = 0, unmounted = false;
   const react = {
+    useCallback: (callback) => callback,
     useState: (initial) => {
       const index = cursor++;
       if (!(index in states)) states[index] = initial;
       return [states[index], (next) => {
         assert.equal(unmounted, false, "An obsolete callback updated an unmounted component");
-        states[index] = next;
+        states[index] = typeof next === "function" ? next(states[index]) : next;
       }];
     },
     useEffect: (fn, deps) => {
@@ -42,7 +43,7 @@ function fixture(initialId = "gihan") {
     },
   };
   const hook = load("src/hooks/useTechnicianReviews.ts", {
-    react, "@/src/firebase/config": { auth }, "@/src/utils/technicianRating": rating,
+    react, "expo-router": { useFocusEffect() {} }, "@/src/firebase/config": { auth }, "@/src/utils/technicianRating": rating,
     "firebase/auth": { onAuthStateChanged: (_, next) => {
       authCallback = next;
       return () => { authUnsubscribed++; };
@@ -118,10 +119,11 @@ test("permission and network failures remain distinct from a successfully loaded
     f.latest().next([review(5)], confirmed);
     f.latest().error(Object.assign(new Error("Denied"), { code }));
     const state = f.render(), display = rating.getTechnicianRatingDisplay(state);
-    assert.equal(state.status, "error"); assert.equal(state.summary, null);
-    assert.deepEqual(state.reviews, []); assert.equal(display.value, "Ratings unavailable");
-    assert.equal(display.countValue, "Unavailable");
-    assert.match(display.label, code === "permission-denied" ? /permission denied/ : /Unable to load/);
+    assert.equal(state.status, code === "permission-denied" ? "error" : "stale");
+    assert.equal(state.summary?.count ?? null, code === "permission-denied" ? null : 1);
+    assert.equal(state.reviews.length, code === "permission-denied" ? 0 : 1);
+    assert.match(display.value, code === "permission-denied" ? /Ratings unavailable/ : /out of date/);
+    assert.ok(display.label.includes("Reviews are temporarily unavailable."));
     f.unmount();
   }
 });
@@ -170,12 +172,19 @@ test("a missing target never subscribes or advertises zero ratings", () => {
   f.unmount();
 });
 
-test("the real review service queries every review for one ID and requests metadata-only changes", () => {
+test("the real review service uses a bounded technician page and the full server aggregate with metadata-only changes", async () => {
   let snapshotNext;
   const sdk = {
-    collection: (_, name) => name, where: (...args) => args, query: (...args) => args,
+    collection: (_, name) => name, where: (...args) => args, query: (source, ...args) => Array.isArray(source) ? [...source, ...args] : [source, ...args],
+    orderBy: (...args) => ["orderBy", ...args], documentId: () => "__name__", limit: (n) => ["limit", n],
+    count: () => "count", average: () => "average",
+    getAggregateFromServer: async (query) => {
+      assert.ok(!query.some((item) => item[0] === "limit"));
+      return { data: () => ({ count: 47, average: 4 }) };
+    },
+    getCountFromServer: async () => ({ data: () => ({ count: 47 }) }),
     onSnapshot: (query, options, next) => {
-      assert.deepEqual(query, ["service_reviews", ["technicianId", "==", "gihan"]]);
+      assert.deepEqual(query, ["service_reviews", ["technicianId", "==", "gihan"], ["rating", "in", [1, 2, 3, 4, 5]], ["orderBy", "createdAt", "desc"], ["orderBy", "__name__", "desc"], ["limit", 20]]);
       assert.deepEqual(options, { includeMetadataChanges: true });
       snapshotNext = next; return () => {};
     },
@@ -187,14 +196,16 @@ test("the real review service queries every review for one ID and requests metad
     "@/functions/src/domain/availability": load("functions/src/domain/availability.ts"),
     "@/src/utils/technicianRating": rating,
   });
-  let reviews, metadata;
-  service.subscribeToTechnicianReviews("gihan", (rows, meta) => { reviews = rows; metadata = meta; }, assert.fail);
+  let reviews, metadata, summary;
+  const stop = service.subscribeToTechnicianReviews("gihan", (rows, meta, total) => { reviews = rows; metadata = meta; summary = total; }, assert.fail);
   const documents = [5, 3, "5", 0, 6, 2.5].map((stars, index) => ({
-    id: String(index), data: () => ({ ...review(stars), technicianId: "gihan" }),
+    id: String(index), data: () => ({ ...review(stars), technicianId: "gihan", createdAt: { toMillis: () => 1000 - index } }),
   }));
   snapshotNext({ docs: documents, metadata: confirmed });
+  await new Promise(setImmediate);
   assert.deepEqual(reviews.map(r => r.rating), [5, 3]);
   assert.equal(reviews[0].customerName, "Bandara"); assert.equal(metadata, confirmed);
+  assert.deepEqual(summary, { average: 4, count: 47 }); stop();
 });
 
 test("compact cards use the same verified summary/rounding/counts and never fall back to stale aggregate props", () => {
@@ -217,29 +228,34 @@ test("compact cards use the same verified summary/rounding/counts and never fall
   for (const status of ["loading", "error"]) {
     state = { status, summary: null, errorMessage: "Ratings unavailable: permission denied." };
     const nodes = flatten(component({ technicianId: "gihan", averageRating: 5, reviewCount: 99 }));
-    assert.equal(nodes.filter((node) => node.type === "Text").length, 1);
+    assert.equal(nodes.filter((node) => node.type === "Text").length, status === "error" ? 2 : 1);
     assert.ok(!nodes.some((node) => /No ratings yet|0 reviews|New/.test(node.props?.children)));
     assert.equal(nodes.find((node) => node.type === "Text").props.accessibilityRole, status === "error" ? "alert" : undefined);
   }
   assert.equal(rating.getTechnicianRatingDisplay({ status: "ready", summary: rating.summarizeTechnicianReviews([5, 4, 4].map(review)), errorMessage: "" }).label, "4.3 (3 reviews)");
 });
 
-test("profile/dashboard/cards share one technician query and calculation; failures, account changes and final unsubscribe clear it", () => {
+test("profile/dashboard/cards share one bounded query and server aggregate; failures, account changes and final unsubscribe clear it", async () => {
   const auth = { currentUser: { uid: "customer" } }, listeners = [], values = [], failures = [];
   let calculations = 0, sessionChanged;
   auth.onAuthStateChanged = (next) => { sessionChanged = next; return () => {}; };
   const service = load("src/services/technician.service.ts", {
     "firebase/firestore": { collection: (_, name) => name, where: (...args) => args, query: (...args) => args,
+      orderBy: (...args) => args, documentId: () => "__name__", limit: (n) => n, count: () => "count", average: () => "average",
+      getAggregateFromServer: async () => { calculations++; return { data: () => ({ count: 2, average: 4 }) }; },
+      getCountFromServer: async () => ({ data: () => ({ count: 2 }) }),
       onSnapshot: (query, options, next, error) => { const listener = { query, options, next, error, stopped: false }; listeners.push(listener); return () => { listener.stopped = true; }; } },
     "@/src/firebase/config": { auth, db: {} }, "@/src/constants/serviceRequests": {}, "@/functions/src/domain/map": {},
     "@/functions/src/domain/serviceAreas": {}, "@/functions/src/domain/mapProjection": {}, "@/functions/src/domain/availability": {},
-    "@/src/utils/technicianRating": { ...rating, summarizeTechnicianReviews: (rows) => { calculations++; return rating.summarizeTechnicianReviews(rows); } },
+    "@/src/utils/technicianRating": rating,
   });
   const subscribe = () => service.subscribeToTechnicianReviews("gihan", (rows, meta, summary) => values.push({ rows, meta, summary }), (error) => failures.push(error));
   const stops = Array.from({ length: 5 }, subscribe);
-  assert.equal(listeners.length, 1); assert.deepEqual(listeners[0].query, ["service_reviews", ["technicianId", "==", "gihan"]]);
+  assert.equal(listeners.length, 1);
+  assert.ok(JSON.stringify(listeners[0].query).includes('"technicianId","==","gihan"'));
   const snapshot = { docs: [5, 3].map((stars, i) => ({ id: String(i), data: () => ({ rating: stars, customerName: "Bandara", technicianId: "gihan" }) })), metadata: confirmed };
   listeners[0].next(snapshot);
+  await new Promise(setImmediate);
   assert.equal(calculations, 1); assert.equal(values.length, 5);
   assert.ok(values.every((value) => value.summary === values[0].summary));
   assert.deepEqual(values[0].summary, { average: 4, count: 2 });
@@ -272,4 +288,50 @@ test("administrator lookup uses the same summary, only selected technician revie
   auth.currentUser = { uid: "different-admin" }; listener.next(snapshot); listener.error(new Error("Old session"));
   assert.equal(results.length, 1); assert.equal(failures.length, 1);
   stop(); assert.equal(stopped, true); listener.next(snapshot); assert.equal(results.length, 1);
+});
+
+function retryServiceFixture(aggregate) {
+  const auth = { currentUser: { uid: "gihan" } }, listeners = [], values = [], failures = [];
+  let changed;
+  auth.onAuthStateChanged = (next) => { changed = next; return () => {}; };
+  const service = load("src/services/technician.service.ts", {
+    "firebase/firestore": { collection: (_, name) => name, where: (...args) => args, query: (...args) => args,
+      orderBy: (...args) => args, documentId: () => "__name__", limit: (n) => n, count: () => "count", average: () => "average",
+      getAggregateFromServer: aggregate, getCountFromServer: async () => ({ data: () => ({ count: 1 }) }),
+      onSnapshot: (_, options, next, error) => { const listener = { next, error, stopped: false }; listeners.push(listener); return () => { listener.stopped = true; }; } },
+    "@/src/firebase/config": { auth, db: {} }, "@/src/constants/serviceRequests": {}, "@/functions/src/domain/map": {},
+    "@/functions/src/domain/serviceAreas": {}, "@/functions/src/domain/mapProjection": {}, "@/functions/src/domain/availability": {},
+    "@/src/utils/technicianRating": rating,
+  });
+  const subscribe = () => service.subscribeToTechnicianReviews("gihan", (_, meta, summary) => values.push(summary), (error) => failures.push(error));
+  return { service, auth, listeners, values, failures, subscribe, change: () => changed(),
+    snapshot: { docs: [{ id: "first", data: () => ({ rating: 5, customerName: "Bandara", createdAt: { toMillis: () => 1000 } }) }], metadata: confirmed } };
+}
+
+test("offline confirmation deadline reports an error; Retry reconnects one shared listener despite other mounted consumers and rapid taps", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let aggregates = 0;
+  const f = retryServiceFixture(async () => { aggregates++; return { data: () => ({ count: 1, average: 5 }) }; });
+  const stops = [f.subscribe(), f.subscribe()];
+  try {
+    f.listeners[0].next({ docs: [], metadata: { ...confirmed, fromCache: true } });
+    assert.equal(aggregates, 0); assert.equal(f.values.length, 0);
+    t.mock.timers.tick(15000); assert.equal(f.failures.length, 2); assert.ok(f.failures.every((e) => e.code === "unavailable"));
+    f.service.retryTechnicianReviews("gihan"); f.service.retryTechnicianReviews("gihan");
+    assert.equal(f.listeners.length, 2); assert.equal(f.listeners[0].stopped, true);
+    f.listeners[1].next(f.snapshot); await new Promise(setImmediate);
+    assert.equal(aggregates, 1); assert.equal(f.values.filter(Boolean).length, 2);
+    assert.ok(f.values.filter(Boolean).every((s) => s.count === 1 && s.average === 5));
+  } finally { stops.forEach((stop) => stop()); }
+  assert.equal(f.listeners[1].stopped, true);
+});
+
+test("an aggregate pending during account switching cannot restore the previous account's reviews", async () => {
+  let resolve;
+  const f = retryServiceFixture(() => new Promise((yes) => { resolve = yes; }));
+  const stop = f.subscribe();
+  f.listeners[0].next(f.snapshot);
+  f.auth.currentUser = { uid: "new-account" }; f.change();
+  resolve({ data: () => ({ count: 1, average: 5 }) }); await new Promise(setImmediate);
+  assert.ok(f.values.every((value) => value === null)); assert.equal(f.listeners[0].stopped, true); stop();
 });

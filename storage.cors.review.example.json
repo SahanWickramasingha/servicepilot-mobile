@@ -1,0 +1,13 @@
+[
+  {
+    "origin": [
+      "http://localhost:8081",
+      "http://127.0.0.1:8081",
+      "https://servicepilot-756d9.web.app",
+      "https://servicepilot-756d9.firebaseapp.com"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Content-Length"],
+    "maxAgeSeconds": 3600
+  }
+]

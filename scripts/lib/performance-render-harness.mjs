@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve, join, dirname } from 'node:path';
 const require = createRequire(import.meta.url), ts = require('typescript');
-export function renderHarness(path, { root = '.', initial = [], dependencies = {}, effects = false } = {}) {
+export function renderHarness(path, { root = '.', initial = [], dependencies = {}, effects = false, exportName = 'default' } = {}) {
   const slots = [], queue = [], registrations = [], memoComponents = [], modules = new Map();
   let cursor = 0, tree, currentProps;
   const same = (a, b) => a && b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
@@ -47,7 +47,7 @@ export function renderHarness(path, { root = '.', initial = [], dependencies = {
     }, false);
     return output;
   }
-  const component = load(path).default;
+  const component = load(path)[exportName];
   return {
     slots, memoComponents, render: (props = currentProps) => { cursor = 0; registrations.length = 0; currentProps = props;
       tree = component(props); while (queue.length) queue.shift()(); return tree; },

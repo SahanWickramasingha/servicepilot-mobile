@@ -61,6 +61,8 @@ function loadTs(path, deps = {}) {
 }
 const authorUi = loadTs("src/utils/reviewAuthor.ts");
 const ratingUi = loadTs("src/utils/technicianRating.ts");
+const syncPaging = loadTs("src/utils/reviewPagination.ts", { "./technicianRating": ratingUi,
+  "@/src/services/technician.service": { TECHNICIAN_REVIEWS_PAGE_SIZE: 20 } });
 
 function services(db, uid, authenticatedSession) {
   const config = { db, auth: authenticatedSession ?? { currentUser: uid ? { uid } : null } };
@@ -95,6 +97,7 @@ const reviewData = (requestId, overrides = {}) => ({
   requestId, customerId: "customer", technicianId: "technician", customerName: "Bandara",
   rating: 4, comment: "Verry good service", createdAt, ...overrides,
 });
+const freshReviewData = (requestId, overrides = {}) => reviewData(requestId, { createdAt: firestoreSdk.serverTimestamp(), ...overrides });
 const reviewRef = (db, requestId, uid = "customer") => doc(db, "service_reviews", `${requestId}_${uid}`);
 const denied = (promise) => assert.rejects(promise, (error) => error.code === "permission-denied");
 async function request(id, extra = {}) {
@@ -151,6 +154,64 @@ after(async () => {
   await Promise.all([...clients.values()].map((db) => terminate(db)));
   await Promise.all(clientApps.map(deleteApp));
   await admin.terminate();
+});
+
+test("bounded technician pages retain full-history totals, deterministic newest-first order and missing legacy dates", async () => {
+  const uid = "reviews-paged-tech";
+  await admin.doc(`users/${uid}`).set({ uid, fullName: "Paged Technician", role: "technician", accountStatus: "active", emailVerified: true, technicianApprovalStatus: "approved" });
+  const fixtures = Array.from({ length: 41 }, (_, index) => ({ id: `dated-${String(index).padStart(2, "0")}`, rating: index % 5 + 1,
+    createdAt: new Date(Date.UTC(2026, 9, index + 1)), customerName: "Bandara", comment: "Local review fixture" }));
+  fixtures.push({ id: "legacy-z", rating: 5 }, { id: "legacy-a", rating: 3, customerName: "Customer" }, { id: "legacy-null", rating: 4, createdAt: null });
+  const batch = admin.batch();
+  for (const { id, ...data } of fixtures) batch.set(admin.doc(`service_reviews/${uid}-${id}`), { ...data, technicianId: uid, customerId: "customer" });
+  batch.set(admin.doc(`service_reviews/${uid}-invalid`), { technicianId: uid, customerId: "customer", rating: 4.5 });
+  await batch.commit();
+  const service = services(client(uid), uid).technician;
+  let stop;
+  const head = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => { stop?.(); reject(new Error("No authoritative review page.")); }, 15000);
+    stop = service.subscribeToTechnicianReviews(uid, (reviews, metadata, summary, cursor) => {
+      if (!summary || metadata.fromCache) return;
+      clearTimeout(timeout); resolve({ reviews, summary, cursor });
+    }, (error) => { clearTimeout(timeout); reject(error); });
+  });
+  try {
+    assert.equal(head.reviews.length, 20);
+    assert.equal(head.reviews[0].id, `${uid}-dated-40`);
+    const expected = ratingUi.summarizeTechnicianReviews(fixtures);
+    assert.equal(head.summary.count, 44); assert.ok(Math.abs(head.summary.average - expected.average) < 1e-10);
+    assert.notEqual(head.summary.average, ratingUi.summarizeTechnicianReviews(head.reviews).average);
+    let cursor = head.cursor, all = [...head.reviews], requests = 0;
+    while (cursor) {
+      assert.ok(requests++ < 10, "Pagination failed to terminate.");
+      const page = await service.getTechnicianReviewsPage(uid, cursor);
+      assert.ok(page.reviews.length <= 20); all.push(...page.reviews); cursor = page.cursor;
+    }
+    assert.equal(all.length, 44); assert.equal(new Set(all.map((row) => row.id)).size, 44);
+    all.sort(ratingUi.compareTechnicianReviews);
+    assert.ok(all.slice(0, 41).every((row) => row.createdAt));
+    assert.deepEqual(all.slice(-3).map((row) => row.id), [`${uid}-legacy-z`, `${uid}-legacy-null`, `${uid}-legacy-a`]);
+    assert.equal(authorUi.getReviewDisplayName(all.at(-1)), undefined);
+    assert.equal(ratingUi.formatTechnicianReviewDate(all.at(-1).createdAt), "Date unavailable");
+    // No aggregate fields are required, and the list never reads a private author profile.
+    assert.equal((await admin.doc(`users/${uid}`).get()).data().reviewCount, undefined);
+    await denied(getDoc(doc(client(uid), "users", "customer")));
+  } finally { stop(); }
+});
+
+test("rules protect paginated/aggregate reviews from anonymous, other-technician, dispatcher and inactive callers while customer/admin access remains", async () => {
+  const uid = "reviews-paged-tech";
+  const aggregate = (db) => firestoreSdk.getAggregateFromServer(query(collection(db, "service_reviews"),
+    where("technicianId", "==", uid), where("rating", "in", [1, 2, 3, 4, 5])), { count: firestoreSdk.count() });
+  for (const viewer of [null, "other-tech", "dispatcher", "disabled"]) {
+    const db = client(viewer);
+    await denied(aggregate(db));
+    await denied(services(db, viewer).technician.getTechnicianReviewsPage(uid, { kind: "undated", id: null }));
+  }
+  for (const viewer of [uid, "customer", "super-admin"]) {
+    assert.equal((await aggregate(client(viewer))).data().count, 44);
+    await services(client(viewer), viewer).technician.getTechnicianReviewsPage(uid, { kind: "undated", id: null });
+  }
 });
 
 test("existing review: Customer B sees Customer A's repaired name and initials; dry-run changes nothing", async () => {
@@ -303,13 +364,13 @@ test("names are mandatory, match the authoritative profile, and placeholders can
   const db = client("customer");
   await request("names");
   for (const name of [undefined, "Amila", "Other Viewer", "Customer", " "]) {
-    const data = reviewData("names", { customerName: name });
+    const data = freshReviewData("names", { customerName: name });
     if (name === undefined) delete data.customerName;
     await denied(setDoc(reviewRef(db, "names"), data));
   }
   await request("placeholder", { customerId: "placeholder" });
   await denied(setDoc(reviewRef(client("placeholder"), "placeholder", "placeholder"),
-    reviewData("placeholder", { customerId: "placeholder", customerName: "Customer" })));
+    freshReviewData("placeholder", { customerId: "placeholder", customerName: "Customer" })));
   const service = services(client("placeholder"), "placeholder").review;
   await assert.rejects(service.submitServiceReview({ requestId: "placeholder", customerId: "placeholder", technicianId: "technician", rating: 4, comment: "test" }), /update your customer profile/);
 });
@@ -331,22 +392,22 @@ test("profile snapshot keeps exact whitespace for rules equality and displays no
 test("current and legacy requests submit; missing/conflicting/incomplete requests and forged ratings do not", async () => {
   const db = client("customer");
   await request("current");
-  await setDoc(reviewRef(db, "current"), reviewData("current"));
+  await setDoc(reviewRef(db, "current"), freshReviewData("current"));
   await admin.doc("service_requests/legacy").set({ customerId: "customer", assignedTechnicianId: "technician", status: "completed" });
-  await setDoc(reviewRef(db, "legacy"), reviewData("legacy"));
+  await setDoc(reviewRef(db, "legacy"), freshReviewData("legacy"));
   for (const [id, extra] of [["missing", { technicianId: null }], ["conflicting", { assignedTechnicianId: "other-tech" }], ["incomplete", { status: "in_progress" }]]) {
     await request(id, extra);
-    await denied(setDoc(reviewRef(db, id), reviewData(id)));
+    await denied(setDoc(reviewRef(db, id), freshReviewData(id)));
   }
   await request("forged");
-  await denied(setDoc(reviewRef(db, "forged"), reviewData("forged", { technicianId: "other-tech" })));
-  for (const rating of [0, 6, 4.5, "4"]) await denied(setDoc(reviewRef(db, "forged"), reviewData("forged", { rating })));
+  await denied(setDoc(reviewRef(db, "forged"), freshReviewData("forged", { technicianId: "other-tech" })));
+  for (const rating of [0, 6, 4.5, "4"]) await denied(setDoc(reviewRef(db, "forged"), freshReviewData("forged", { rating })));
 });
 
 test("concurrent duplicate submissions allow one create and preserve its value", async () => {
   const db = client("customer");
   await request("concurrent");
-  const results = await Promise.allSettled([3, 5].map((rating) => setDoc(reviewRef(db, "concurrent"), reviewData("concurrent", { rating }))));
+  const results = await Promise.allSettled([3, 5].map((rating) => setDoc(reviewRef(db, "concurrent"), freshReviewData("concurrent", { rating }))));
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(results.find((result) => result.status === "rejected").reason.code, "permission-denied");
   const snapshot = await admin.collection("service_reviews").where("requestId", "==", "concurrent").get();
@@ -494,4 +555,70 @@ test("real Customer and Technician Auth sessions share current ratings despite m
     await admin.doc(`users/${technicianId}`).update({ averageRating: FieldValue.delete(), reviewCount: FieldValue.delete() });
     assert.equal(states[0].at(-1).count, 3); assert.equal(states[1].at(-1).count, 3);
   } finally { stops.forEach((stop) => stop()); }
+});
+
+test("independent Customer/Technician sessions synchronize canonical reviews, full totals and 20-item paging without Functions", async () => {
+  const sessions = [], stops = [], received = [[], [], []]; let failure;
+  const identities = [["sync-customer-a", "customer", "Nimal Bandara"], ["sync-technician-a", "technician", "Gihan"], ["sync-technician-b", "technician", "Other Technician"]];
+  const waitFor = async (predicate) => {
+    const deadline = Date.now() + 15000;
+    while (!predicate()) {
+      if (failure) throw failure;
+      if (Date.now() > deadline) throw new Error("Review synchronization timed out.");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
+  try {
+    for (const [uid, role, fullName] of identities) {
+      const email = `${uid}@example.test`, password = "Local-sync-only-42!";
+      await adminAuth(trustedApp).createUser({ uid, email, password, emailVerified: true });
+      await admin.doc(`users/${uid}`).set({ uid, role, fullName, email, accountStatus: "active", emailVerified: true,
+        ...(role === "technician" ? { technicianApprovalStatus: "approved", averageRating: 1, reviewCount: 999 } : {}) });
+      const app = clientApp({ projectId: PROJECT_ID, apiKey: "emulator-only" }, uid); clientApps.push(app);
+      const auth = getAuth(app), db = getFirestore(app); connectAuthEmulator(auth, `http://${authHost}`, { disableWarnings: true });
+      const [hostname, port] = host.split(":"); connectFirestoreEmulator(db, hostname, Number(port)); clients.set(uid, db);
+      await signInWithEmailAndPassword(auth, email, password);
+      sessions.push({ uid, auth, db, service: services(db, uid, auth) });
+    }
+    const [customer, technician, other] = sessions;
+    const batch = admin.batch();
+    for (let n = 1; n <= 43; n++) batch.set(admin.doc(`service_reviews/sync-history-${String(n).padStart(2, "0")}`), {
+      requestId: `sync-history-${n}`, customerId: customer.uid, technicianId: technician.uid, rating: 4,
+      ...(n === 1 ? {} : { customerName: "Nimal Bandara" }), comment: n === 1 ? "" : `Existing review ${n}`,
+      createdAt: new Date(Date.UTC(2025, 0, n)),
+    });
+    await batch.commit();
+    for (const [index, session] of sessions.entries()) stops.push(session.service.technician.subscribeToTechnicianReviews(index === 2 ? other.uid : technician.uid,
+      (reviews, metadata, summary, cursor) => { if (summary && !metadata.fromCache) received[index].push({ reviews, summary, cursor }); }, (error) => { failure = error; }));
+    await waitFor(() => received[0].at(-1)?.summary.count === 43 && received[1].at(-1)?.summary.count === 43 && received[2].at(-1)?.summary.count === 0);
+    const head = received[1].at(-1), second = await technician.service.technician.getTechnicianReviewsPage(technician.uid, head.cursor);
+    assert.equal(head.reviews.length, 20); assert.equal(second.reviews.length, 20);
+    const requestId = "sync-new-completed-request";
+    await request(requestId, { customerId: customer.uid, technicianId: technician.uid });
+    await customer.service.review.submitServiceReview({ requestId, customerId: customer.uid, rating: 1, comment: "The repair still needs attention." });
+    await waitFor(() => received[0].at(-1)?.summary.count === 44 && received[1].at(-1)?.summary.count === 44);
+    const stored = (await admin.doc(`service_reviews/${requestId}_${customer.uid}`).get()).data();
+    assert.equal(stored.technicianId, technician.uid); assert.equal(stored.requestId, requestId); assert.equal(stored.customerId, customer.uid);
+    assert.equal(stored.rating, 1); assert.equal(stored.comment, "The repair still needs attention."); assert.equal(stored.customerName, "Nimal Bandara");
+    assert.ok(stored.createdAt.toMillis() > Date.UTC(2025, 0, 1)); assert.equal(stored.photoPaths, undefined);
+    const updated = received[1].at(-1);
+    assert.equal(updated.reviews[0].id, `${requestId}_${customer.uid}`); assert.equal(updated.summary.count, 44);
+    assert.ok(Math.abs(updated.summary.average - (43 * 4 + 1) / 44) < 1e-10);
+    assert.equal(received[2].at(-1).summary.count, 0); assert.equal(received[2].at(-1).reviews.length, 0);
+    let pages = syncPaging.rebaseReviewPages({ head: head.reviews, headCursor: head.cursor, extra: second.reviews, cursor: second.cursor }, updated.reviews, updated.cursor);
+    assert.equal(pages.head.length + pages.extra.length, 41);
+    const final = await technician.service.technician.getTechnicianReviewsPage(technician.uid, pages.cursor);
+    const all = [...pages.head, ...pages.extra, ...final.reviews];
+    assert.equal(all.length, 44); assert.equal(new Set(all.map((review) => review.id)).size, 44);
+    await denied(customer.service.review.submitServiceReview({ requestId, customerId: customer.uid, rating: 5, comment: "duplicate" }));
+    // Add a legacy record outside the dated window. Focus must explicitly refresh
+    // aggregates without any change event from the limited head query.
+    await admin.doc("service_reviews/sync-new-legacy").set({ requestId: "sync-old", customerId: customer.uid, technicianId: technician.uid, rating: 2, comment: "Legacy" });
+    technician.service.technician.refreshTechnicianReviews(technician.uid);
+    await waitFor(() => received[1].at(-1)?.summary.count === 45);
+    assert.equal(received[1].at(-1).cursor.includeUndated, true);
+    await denied(getDoc(doc(technician.db, "users", customer.uid)));
+    await denied(updateDoc(doc(technician.db, "users", technician.uid), { averageRating: 5, reviewCount: 2000 }));
+    assert.equal((await admin.doc(`users/${technician.uid}`).get()).data().reviewCount, 999);
+  } finally { stops.forEach((stop) => stop()); await Promise.all(sessions.map(({ auth }) => signOut(auth))); }
 });

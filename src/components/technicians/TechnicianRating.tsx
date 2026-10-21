@@ -1,5 +1,5 @@
 import { Star } from "lucide-react-native";
-import { Text, type StyleProp, type TextStyle } from "react-native";
+import { Text, TouchableOpacity, type StyleProp, type TextStyle } from "react-native";
 import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
 import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
 
@@ -19,5 +19,8 @@ export function TechnicianRating({ technicianId, valueStyle, countStyle, iconSiz
     <Text style={valueStyle} accessibilityLabel={display.label}
       accessibilityRole={ratings.status === "error" ? "alert" : undefined} accessibilityLiveRegion="polite">{display.value}</Text>
     {ratings.status === "ready" && <Text style={countStyle ?? valueStyle}>{display.countLabel}</Text>}
+    {(ratings.status === "error" || ratings.status === "stale") && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry technician ratings" onPress={ratings.retry} style={{ minHeight: 44, justifyContent: "center" }}>
+      <Text style={countStyle ?? valueStyle}>Retry</Text>
+    </TouchableOpacity>}
   </>;
 }

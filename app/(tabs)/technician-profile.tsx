@@ -23,11 +23,12 @@ import {
 import {
   subscribeToApprovedTechnician,
   PublicTechnicianProfile,
-  TechnicianReviewSummary,
 } from "@/src/services/technician.service";
 import { auth } from "@/src/firebase/config";
 import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
-import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
+import { ReviewPhotos } from "@/src/components/reviews/ReviewPhotos";
+import { formatTechnicianReviewDate, getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
+import { TechnicianRatingStatus } from "@/src/components/technicians/TechnicianRatingStatus";
 import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
 import { availabilityDisplay } from "@/functions/src/domain/availability";
 
@@ -35,20 +36,6 @@ import {
   getReviewDisplayName,
   getReviewerInitials,
 } from "@/src/utils/reviewAuthor";
-
-function formatReviewDate(
-  review: TechnicianReviewSummary
-): string {
-  if (!review.createdAt) {
-    return "Recent";
-  }
-
-  return review.createdAt.toDate().toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
 
 export default function TechnicianProfileScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
@@ -221,15 +208,13 @@ export default function TechnicianProfileScreen() {
         </View>
 
         <Text style={styles.sectionTitle}>Customer Reviews</Text>
-        {ratings.status !== "ready" ? (
+        <TechnicianRatingStatus ratings={ratings} />
+        {ratings.status === "loading" ? (
           <View style={styles.noReviewsCard}>
-            {ratings.status === "loading" && <ActivityIndicator color="#3B82F6" />}
-            <Text style={styles.noReviewsTitle}>{ratingDisplay.value}</Text>
-            {ratings.status === "error" && (
-              <Text accessibilityRole="alert" style={styles.noReviewsText}>{ratings.errorMessage}</Text>
-            )}
+            <ActivityIndicator color="#3B82F6" />
+            <Text style={styles.noReviewsTitle}>Loading reviews...</Text>
           </View>
-        ) : reviews.length > 0 ? (
+        ) : ratings.status === "error" ? null : reviews.length > 0 ? (
           <View style={styles.reviewList}>
             {reviews.slice(0, 5).map((review) => {
               const reviewerName = getReviewDisplayName(review);
@@ -258,7 +243,7 @@ export default function TechnicianProfileScreen() {
                       </Text>
                     </View>
                     <Text style={styles.reviewDate}>
-                      {formatReviewDate(review)}
+                      {formatTechnicianReviewDate(review.createdAt)}
                     </Text>
                   </View>
 
@@ -291,11 +276,12 @@ export default function TechnicianProfileScreen() {
                       {review.comment || "No written comment."}
                     </Text>
                   </View>
+                  <ReviewPhotos paths={review.photoPaths} customerId={review.customerId} />
                 </View>
               );
             })}
           </View>
-        ) : (
+        ) : ratings.status === "ready" ? (
           <View style={styles.noReviewsCard}>
             <Text style={styles.noReviewsTitle}>
               No reviews yet
@@ -304,7 +290,7 @@ export default function TechnicianProfileScreen() {
               This technician has not received customer feedback yet.
             </Text>
           </View>
-        )}
+        ) : null}
       </ScrollView>
     </View>
   );

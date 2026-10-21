@@ -8,17 +8,21 @@ import {
 } from "lucide-react-native";
 import {
   ActivityIndicator,
-  ScrollView,
+  FlatList,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
-// import
+import { auth } from "@/src/firebase/config";
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
 import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
-import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
+import { useTechnicianReviewPages } from "@/src/hooks/useTechnicianReviewPages";
+import { type TechnicianReviewSummary } from "@/src/services/technician.service";
+import { formatTechnicianReviewDate, getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
+import { getReviewDisplayName, getReviewerInitials } from "@/src/utils/reviewAuthor";
+import { ReviewPhotos } from "@/src/components/reviews/ReviewPhotos";
 import {
   getCompletedTechnicianRequests,
   getUpcomingTechnicianRequests,
@@ -27,14 +31,16 @@ import {
 export default function TechnicianPerformanceScreen() {
   const { uid, profile, requests, loading, errorMessage } =
     useTechnicianWorkspace();
-  const ratings = useTechnicianReviews(profile ? uid : null);
+  const ownUid = profile?.uid === uid && uid === auth.currentUser?.uid ? uid : null;
+  const ratings = useTechnicianReviews(ownUid);
+  const pages = useTechnicianReviewPages(ownUid, ratings);
   const ratingDisplay = getTechnicianRatingDisplay(ratings);
 
   if (loading) {
     return <StateScreen message="Loading performance..." />;
   }
 
-  if (errorMessage || !profile) {
+  if (errorMessage || !profile || !ownUid) {
     return (
       <StateScreen
         title="Performance unavailable"
@@ -56,10 +62,13 @@ export default function TechnicianPerformanceScreen() {
         backgroundColor="#06101D"
       />
 
-      <ScrollView
+      <FlatList
+        data={pages.reviews}
+        keyExtractor={(review) => review.id}
+        renderItem={({ item }) => <ReviewCard review={item} />}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
-      >
+        ListHeaderComponent={<>
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
@@ -69,8 +78,8 @@ export default function TechnicianPerformanceScreen() {
             <ArrowLeft size={20} color="#FFFFFF" />
           </TouchableOpacity>
 
-          <View>
-            <Text style={styles.title}>Performance</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.title}>Performance & Reviews</Text>
             <Text style={styles.subtitle}>
               Your real service statistics and ratings
             </Text>
@@ -93,7 +102,7 @@ export default function TechnicianPerformanceScreen() {
           <Text style={styles.ratingLabel}>Overall Rating</Text>
 
           <Text style={styles.reviewCount}>
-            {ratingDisplay.label}
+            {ratings.status === "ready" ? ratingDisplay.label : ratings.status === "stale" ? ratingDisplay.countLabel : ""}
           </Text>
         </View>
 
@@ -123,7 +132,35 @@ export default function TechnicianPerformanceScreen() {
           />
         </View>
 
-        <Text style={styles.sectionTitle}>Analytics</Text>
+        <Text style={styles.sectionTitle}>Customer Reviews</Text>
+        <Text style={styles.reviewHint}>Newest first. Reviews with unavailable dates appear after dated reviews.</Text>
+        {pages.listUpdated && <Text accessibilityLiveRegion="polite" style={styles.reviewHint}>Reviews updated. Load older reviews again to continue.</Text>}
+        {ratings.status === "loading" && <View style={styles.emptyCard}>
+          <ActivityIndicator color="#3B82F6" /><Text style={styles.emptyText}>Loading reviews...</Text>
+        </View>}
+        {ratings.status === "error" && <View style={styles.emptyCard}>
+          <Text accessibilityRole="alert" style={styles.emptyText}>{ratings.errorMessage}</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry reviews" style={styles.retryButton} onPress={ratings.retry}><Text style={styles.buttonText}>Retry</Text></TouchableOpacity>
+        </View>}
+        {ratings.status === "stale" && <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>Reviews may be out of date</Text>
+          <Text accessibilityRole="alert" style={styles.emptyText}>{ratings.errorMessage}</Text>
+          <TouchableOpacity accessibilityRole="button" style={styles.retryButton} onPress={ratings.retry}><Text style={styles.buttonText}>Retry</Text></TouchableOpacity>
+        </View>}
+        {ratings.status === "ready" && ratings.summary?.count === 0 && <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>No reviews yet</Text>
+          <Text style={styles.emptyText}>Customer reviews of your completed services will appear here.</Text>
+        </View>}
+        </>}
+        ListFooterComponent={<>
+        {!!pages.loadMoreError && <Text accessibilityRole="alert" style={styles.pageError}>{pages.loadMoreError}</Text>}
+        {ratings.status === "ready" && pages.hasMore && <>
+          {pages.scanningLegacy && <Text style={styles.reviewHint}>Older records are checked in small batches for reviews with unavailable dates.</Text>}
+          <TouchableOpacity accessibilityRole="button" disabled={pages.loadingMore} style={styles.retryButton} onPress={pages.loadMore}>
+            {pages.loadingMore ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>{pages.loadMoreError ? "Retry loading reviews" : "Load More Reviews"}</Text>}
+          </TouchableOpacity>
+        </>}
+        <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Analytics</Text>
 
         <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>No analytics model yet</Text>
@@ -132,9 +169,28 @@ export default function TechnicianPerformanceScreen() {
             will appear here after those real data points are stored.
           </Text>
         </View>
-      </ScrollView>
+        </>}
+      />
     </View>
   );
+}
+
+function ReviewCard({ review }: { review: TechnicianReviewSummary }) {
+  const name = getReviewDisplayName(review);
+  return <View style={styles.reviewCard}>
+    <View style={styles.reviewHeader}>
+      <View style={styles.reviewerAvatar}><Text style={styles.buttonText}>{getReviewerInitials(name)}</Text></View>
+      <View style={{ flex: 1 }}><Text style={styles.reviewHint}>Reviewed by</Text>
+        <Text style={styles.reviewerName}>{name ?? "Reviewer name unavailable"}</Text></View>
+      <Text style={styles.reviewDate}>{formatTechnicianReviewDate(review.createdAt)}</Text>
+    </View>
+    <View style={styles.stars} accessible accessibilityLabel={`${review.rating} out of 5 stars`}>
+      {[1, 2, 3, 4, 5].map((star) => <Star key={star} size={17} color="#F59E0B" fill={star <= review.rating ? "#F59E0B" : "transparent"} />)}
+      <Text style={styles.reviewDate}>{review.rating}/5</Text>
+    </View>
+    {!!review.comment.trim() && <Text style={styles.reviewComment}>{review.comment}</Text>}
+    <ReviewPhotos paths={review.photoPaths} customerId={review.customerId} />
+  </View>;
 }
 
 function StateScreen({
@@ -174,6 +230,17 @@ function StatCard({
 }
 
 const styles = StyleSheet.create({
+  reviewCard: { borderRadius: 17, backgroundColor: "#0D1B2A", borderWidth: 1, borderColor: "#17263A", padding: 18, marginTop: 12 },
+  reviewHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  reviewerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#17263A", alignItems: "center", justifyContent: "center" },
+  reviewerName: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
+  reviewDate: { color: "#94A3B8", fontSize: 11 },
+  reviewHint: { color: "#94A3B8", fontSize: 12, marginBottom: 6, lineHeight: 18 },
+  stars: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 14 },
+  reviewComment: { color: "#CBD5E1", fontSize: 14, lineHeight: 21, marginTop: 10 },
+  retryButton: { backgroundColor: "#2563EB", borderRadius: 12, minHeight: 44, padding: 12, alignItems: "center", justifyContent: "center", marginTop: 12 },
+  buttonText: { color: "#FFFFFF", fontSize: 13, fontWeight: "700" },
+  pageError: { color: "#FCA5A5", fontSize: 13, marginTop: 12 },
   container: { flex: 1, backgroundColor: "#06101D" },
   stateScreen: {
     flex: 1,

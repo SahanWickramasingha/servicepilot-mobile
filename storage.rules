@@ -1,0 +1,77 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function profile() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+    function active() {
+      return request.auth != null && profile().get('accountStatus', 'active') == 'active' &&
+        profile().get('lifecyclePending', false) == false &&
+        (!profile().keys().hasAny(['sessionRevokedAt']) || request.auth.token.auth_time > profile().sessionRevokedAt);
+    }
+    function customer() {
+      return active() && profile().role == 'customer' && request.auth.token.email_verified == true;
+    }
+    function approved(data) {
+      return data.role == 'technician' && data.get('accountStatus', 'active') == 'active' &&
+        data.technicianApprovalStatus == 'approved';
+    }
+    function technicianFor(job) {
+      return job.get('technicianId', '') != '' ? job.technicianId : job.get('assignedTechnicianId', '');
+    }
+    function validTechnician(job) {
+      return technicianFor(job) != '' &&
+        (job.get('technicianId', '') == '' || job.get('assignedTechnicianId', '') == '' || job.technicianId == job.assignedTechnicianId);
+    }
+    function saved(reviewId) {
+      return firestore.exists(/databases/(default)/documents/service_reviews/$(reviewId));
+    }
+    function review(reviewId) {
+      return firestore.get(/databases/(default)/documents/service_reviews/$(reviewId)).data;
+    }
+    function publishedReader(customerId) {
+      return active() && (
+        request.auth.uid == customerId || profile().role == 'super_admin' ||
+        (request.auth.token.email_verified == true && (
+          (request.auth.uid == resource.metadata.technicianId && approved(profile())) ||
+          (profile().role == 'customer' && approved(firestore.get(/databases/(default)/documents/users/$(resource.metadata.technicianId)).data))
+        ))
+      );
+    }
+    match /review_photos/{customerId}/{reviewId}/{attemptId}/{filename} {
+      function path() { return 'review_photos/' + customerId + '/' + reviewId + '/' + attemptId + '/' + filename; }
+      function owned() { return customer() && request.auth.uid == customerId; }
+      function metadataMatchesJob() {
+        let data = request.resource.metadata;
+        let job = firestore.get(/databases/(default)/documents/service_requests/$(data.requestId)).data;
+        return job.customerId == customerId && job.status == 'completed' && validTechnician(job) &&
+          reviewId == data.requestId + '_' + customerId && data.customerId == customerId &&
+          data.reviewId == reviewId && data.attemptId == attemptId && data.technicianId == technicianFor(job) &&
+          data.published == 'false';
+      }
+      function referenced() {
+        return saved(reviewId) && path() in review(reviewId).get('photoPaths', []);
+      }
+      // Every evaluation uses at most two distinct Firestore documents.
+      allow create: if resource == null && owned() && attemptId.matches('^[A-Za-z0-9]{20}$') && filename.matches('^[0-4][.]jpg$') &&
+        request.resource.size > 0 && request.resource.size <= 5 * 1024 * 1024 &&
+        request.resource.contentType == 'image/jpeg' && metadataMatchesJob();
+      // One-way publication after the immutable review commits. Hash equality
+      // prevents replacing file bytes via an upload masquerading as metadata.
+      allow update: if owned() && referenced() &&
+        review(reviewId).customerId == customerId && review(reviewId).technicianId == resource.metadata.technicianId &&
+        request.resource.size == resource.size && request.resource.md5Hash == resource.md5Hash &&
+        request.resource.contentType == resource.contentType &&
+        request.resource.metadata == {
+          'customerId': resource.metadata.customerId, 'requestId': resource.metadata.requestId,
+          'reviewId': resource.metadata.reviewId, 'technicianId': resource.metadata.technicianId,
+          'attemptId': resource.metadata.attemptId, 'published': 'true'
+        };
+      allow delete: if owned() && !referenced();
+      allow get: if (owned()) || (resource.metadata.published == 'true' && publishedReader(customerId));
+      allow list: if false;
+    }
+    // Request photos and all other object paths remain inaccessible here.
+    match /{allPaths=**} { allow read, write: if false; }
+  }
+}

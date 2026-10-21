@@ -1,6 +1,29 @@
 {
   "indexes": [
     {
+      "collectionGroup": "service_reviews", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "technicianId", "order": "ASCENDING" },
+        { "fieldPath": "rating", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "service_reviews", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "technicianId", "order": "ASCENDING" },
+        { "fieldPath": "rating", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "service_reviews", "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "technicianId", "order": "ASCENDING" },
+        { "fieldPath": "rating", "order": "ASCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "technician_map_profiles",
       "queryScope": "COLLECTION",
       "fields": [

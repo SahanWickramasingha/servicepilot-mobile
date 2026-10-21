@@ -1,7 +1,30 @@
 export type TechnicianRatingSummary = { average: number; count: number };
+export const REVIEWS_UNAVAILABLE_MESSAGE = "Reviews are temporarily unavailable.";
+
+/** Missing/invalid legacy dates stay unknown; never replace them with today. */
+export function reviewTimestampMillis(value: unknown): number | null {
+  try {
+    if (!value || typeof (value as { toMillis?: unknown }).toMillis !== "function") return null;
+    const millis = (value as { toMillis(): number }).toMillis();
+    return Number.isFinite(millis) && !Number.isNaN(new Date(millis).getTime()) ? millis : null;
+  } catch { return null; }
+}
+
+export function compareTechnicianReviews(first: { id: string; createdAt?: unknown }, second: { id: string; createdAt?: unknown }): number {
+  const a = reviewTimestampMillis(first.createdAt), b = reviewTimestampMillis(second.createdAt);
+  if (a !== b) return a === null ? 1 : b === null ? -1 : b - a;
+  return first.id === second.id ? 0 : first.id > second.id ? -1 : 1;
+}
+
+export function formatTechnicianReviewDate(value: unknown): string {
+  const millis = reviewTimestampMillis(value);
+  return millis === null ? "Date unavailable" : new Date(millis).toLocaleDateString(undefined, {
+    year: "numeric", month: "short", day: "numeric",
+  });
+}
 
 export type TechnicianRatingLoadState = {
-  status: "loading" | "ready" | "error";
+  status: "loading" | "ready" | "stale" | "error";
   summary: TechnicianRatingSummary | null;
   errorMessage: string;
 };
@@ -28,6 +51,13 @@ export function summarizeTechnicianReviews(
 }
 
 export function getTechnicianRatingDisplay(state: TechnicianRatingLoadState) {
+  if (state.status === "stale" && state.summary) {
+    const { average, count } = state.summary;
+    const countLabel = `${count} review${count === 1 ? "" : "s"} (out of date)`;
+    const value = count ? `${average.toFixed(1)} (out of date)` : "Ratings out of date";
+    return { value, label: `${value} · ${countLabel}. ${state.errorMessage}`, countLabel,
+      countValue: `${count} (out of date)`, hasRatings: count > 0 };
+  }
   if (state.status !== "ready" || !state.summary) {
     const value = state.status === "error" ? "Ratings unavailable" : "Loading ratings...";
     return {

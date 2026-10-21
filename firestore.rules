@@ -723,6 +723,20 @@ service cloud.firestore {
         serviceRequestData(requestId).status == "completed";
     }
 
+    function validReviewPhotoAt(data, reviewId, index) {
+      return data.photoPaths.size() <= index ||
+        data.photoPaths[index] == "review_photos/" + request.auth.uid + "/" + reviewId + "/" + data.photoAttemptId + "/" + string(index) + ".jpg";
+    }
+
+    function validReviewPhotos(data, reviewId) {
+      return (!data.keys().hasAny(["photoPaths", "photoAttemptId"])) ||
+        (data.keys().hasAll(["photoPaths", "photoAttemptId"]) &&
+          data.photoPaths is list && data.photoPaths.size() > 0 && data.photoPaths.size() <= 5 &&
+          data.photoAttemptId is string && data.photoAttemptId.matches("^[A-Za-z0-9]{20}$") &&
+          validReviewPhotoAt(data, reviewId, 0) && validReviewPhotoAt(data, reviewId, 1) &&
+          validReviewPhotoAt(data, reviewId, 2) && validReviewPhotoAt(data, reviewId, 3) && validReviewPhotoAt(data, reviewId, 4));
+    }
+
     function validReviewCreate(reviewId) {
       return isVerifiedCustomer() &&
         request.resource.data.keys().hasOnly([
@@ -732,6 +746,8 @@ service cloud.firestore {
           "customerName",
           "rating",
           "comment",
+          "photoPaths",
+          "photoAttemptId",
           "createdAt"
         ]) &&
         request.resource.data.keys().hasAll([
@@ -763,6 +779,10 @@ service cloud.firestore {
         request.resource.data.rating is int &&
         request.resource.data.rating >= 1 &&
         request.resource.data.rating <= 5 &&
+        request.resource.data.comment is string &&
+        request.resource.data.comment.size() <= 300 &&
+        request.resource.data.createdAt == request.time &&
+        validReviewPhotos(request.resource.data, reviewId) &&
         request.resource.data.technicianId is string &&
         request.resource.data.technicianId.size() > 0 &&
         isApprovedTechnicianId(request.resource.data.technicianId) &&

@@ -25,6 +25,7 @@ import {
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
 import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
 import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
+import { TechnicianRatingStatus } from "@/src/components/technicians/TechnicianRatingStatus";
 import { logoutUser } from "@/src/services/auth.service";
 import { getCompletedTechnicianRequests } from "@/src/utils/technicianRequests";
 import { TechnicianSharingPanel } from "@/src/components/maps/TechnicianSharingPanel";
@@ -120,9 +121,7 @@ export default function TechnicianProfileScreen() {
           </View>
         </View>
 
-        {ratings.status === "error" && (
-          <Text accessibilityRole="alert" style={styles.subtitle}>{ratings.errorMessage}</Text>
-        )}
+        <TechnicianRatingStatus ratings={ratings} />
 
         <View style={styles.statsRow}>
           <StatCard value={String(completedJobs)} label="Jobs" />

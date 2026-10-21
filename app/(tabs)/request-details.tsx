@@ -1,5 +1,5 @@
-import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -29,6 +29,7 @@ import {
   normalizeRequestStatus,
 } from "@/src/constants/serviceRequests";
 import { auth } from "@/src/firebase/config";
+import { getReviewForRequest } from "@/src/services/review.service";
 import { JobTechnicianLocation } from "@/src/components/maps/JobTechnicianLocation";
 import {
   cancelServiceRequest,
@@ -174,6 +175,19 @@ export default function RequestDetailsScreen() {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [cancelling, setCancelling] = useState(false);
+  const [reviewState, setReviewState] = useState<"loading" | "new" | "existing" | "error">("loading");
+
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    setReviewState("loading");
+    const uid = auth.currentUser?.uid;
+    if (uid && request?.status === "completed" && request.customerId === uid) {
+      void getReviewForRequest(request.id, uid).then((review) => {
+        if (active && auth.currentUser?.uid === uid) setReviewState(review ? "existing" : "new");
+      }).catch(() => { if (active) setReviewState("error"); });
+    }
+    return () => { active = false; };
+  }, [request?.id, request?.status, request?.customerId]));
 
   useEffect(() => {
     if (!requestId) {
@@ -507,6 +521,8 @@ export default function RequestDetailsScreen() {
         {request.status === "completed" && (
           <TouchableOpacity
             style={styles.reviewButton}
+            accessibilityRole="button"
+            disabled={reviewState === "loading"}
             activeOpacity={0.85}
             onPress={() =>
               router.push({
@@ -517,7 +533,7 @@ export default function RequestDetailsScreen() {
           >
             <Star size={19} color="#FFFFFF" />
             <Text style={styles.primaryButtonText}>
-              Rate Service
+              {reviewState === "existing" ? "View Your Review" : reviewState === "loading" ? "Checking review…" : reviewState === "error" ? "Open Review" : "Rate Service"}
             </Text>
           </TouchableOpacity>
         )}

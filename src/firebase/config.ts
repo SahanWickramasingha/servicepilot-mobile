@@ -7,7 +7,7 @@ import {
   type Firestore,
   connectFirestoreEmulator,
 } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
+import { getStorage, connectStorageEmulator } from "firebase/storage";
 import { getFunctions, connectFunctionsEmulator } from "firebase/functions";
 
 const firebaseConfig = {
@@ -40,11 +40,17 @@ function getConfiguredFirestore(): Firestore {
 
 export const auth = createAppAuth(app);
 export const db = getConfiguredFirestore();
+// All Firestore initialization above uses the default database. Safe diagnostic
+// context comes from the initialized app, rather than assuming the CLI target.
+export const firebaseRuntimeTarget = { projectId: app.options.projectId, databaseId: "(default)", emulator: demoMode };
 export const storage = getStorage(app);
+storage.maxUploadRetryTime = 30000;
+storage.maxOperationRetryTime = 15000;
 if (demoMode && firstInitialization) {
   const host = process.env.EXPO_PUBLIC_FIREBASE_EMULATOR_HOST || "127.0.0.1";
   connectAuthEmulator(auth, `http://${host}:9197`, { disableWarnings: true });
   connectFirestoreEmulator(db, host, 8187);
+  connectStorageEmulator(storage, host, 9297);
   connectFunctionsEmulator(getFunctions(app, "asia-south1"), host, 5007);
 }
 

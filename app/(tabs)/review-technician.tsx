@@ -1,619 +1,160 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import {
-  ArrowLeft,
-  CheckCircle2,
-  Star,
-  UserRound,
-} from "lucide-react-native";
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
-
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, CheckCircle2, ImagePlus, Star, UserRound } from "lucide-react-native";
+import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { auth } from "@/src/firebase/config";
-import {
-  getRequestTechnicianReviewTarget,
-  getServiceRequest,
-  RequestTechnicianReviewTarget,
-  ServiceRequest,
-} from "@/src/services/request.service";
-import {
-  getReviewForRequest,
-  submitServiceReview,
-} from "@/src/services/review.service";
+import { getCustomerReviewContext, type ReviewContext, type ServiceReview } from "@/src/services/review.service";
+import { pickReviewPhotos, type SelectedReviewPhoto } from "@/src/services/reviewPhotos.service";
+import { submitReviewWithPhotos } from "@/src/services/reviewSubmission.service";
+import { ReviewPhotos } from "@/src/components/reviews/ReviewPhotos";
+import { REVIEW_COMMENT_MAX, validateReview } from "@/src/utils/reviewValidation";
 
 export default function ReviewTechnicianScreen() {
   const params = useLocalSearchParams<{ id?: string }>();
-  const requestId = String(params.id ?? "");
-  const [request, setRequest] =
-    useState<ServiceRequest | null>(null);
-  const [reviewTarget, setReviewTarget] =
-    useState<RequestTechnicianReviewTarget | null>(null);
-  const [rating, setRating] = useState(0);
-  const [review, setReview] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const requestId = typeof params.id === "string" ? params.id : "";
+  const [context, setContext] = useState<ReviewContext | null>(null);
+  const [rating, setRating] = useState(0), [comment, setComment] = useState("");
+  const [photos, setPhotos] = useState<SelectedReviewPhoto[]>([]);
+  const [loading, setLoading] = useState(true), [submitting, setSubmitting] = useState(false), [picking, setPicking] = useState(false);
+  const [saved, setSaved] = useState<ServiceReview | null>(null), [justSubmitted, setJustSubmitted] = useState(false);
+  const [error, setError] = useState(""), [warning, setWarning] = useState(""), [progress, setProgress] = useState("");
+  const [retry, setRetry] = useState(0);
+  const busy = useRef(false), photoBusy = useRef(false), version = useRef(0), controller = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    const currentUser = auth.currentUser;
+    let active = true;
+    const stop = auth.onAuthStateChanged((user) => {
+      const generation = ++version.current;
+      controller.current?.abort(); busy.current = false; photoBusy.current = false;
+      setContext(null); setSaved(null); setJustSubmitted(false); setRating(0); setComment(""); setPhotos([]);
+      setSubmitting(false); setPicking(false); setWarning(""); setError(""); setLoading(true);
+      const current = () => active && version.current === generation && auth.currentUser?.uid === user?.uid;
+      if (!user || !requestId) { setError("Please sign in and open a completed request."); setLoading(false); return; }
+      void getCustomerReviewContext(requestId).then((next) => {
+        if (!current()) return;
+        setContext(next); setSaved(next.existingReview);
+      }).catch((failure: unknown) => {
+        if (current()) setError(failure instanceof Error ? failure.message : "Unable to load review details. Please retry.");
+      }).finally(() => { if (current()) setLoading(false); });
+    });
+    // This ref is an async-operation generation, rather than a rendered node.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { active = false; version.current++; controller.current?.abort(); stop(); };
+  }, [requestId, retry]);
 
-    if (!currentUser || !requestId) {
-      setErrorMessage("Please sign in again.");
-      setLoading(false);
-      return;
-    }
-
-    const customerId = currentUser.uid;
-
-    async function loadReviewContext() {
-      try {
-        const serviceRequest = await getServiceRequest(
-          requestId
-        );
-
-        if (!serviceRequest) {
-          setErrorMessage("Request not found.");
-          return;
-        }
-
-        if (serviceRequest.customerId !== customerId) {
-          setErrorMessage(
-            "You do not have access to review this request."
-          );
-          return;
-        }
-
-        if (serviceRequest.status !== "completed") {
-          setErrorMessage(
-            "Only completed requests can be reviewed."
-          );
-          return;
-        }
-
-        const target =
-          getRequestTechnicianReviewTarget(serviceRequest);
-
-        if (!target.ok) {
-          setErrorMessage(target.message);
-          return;
-        }
-
-        const existingReview =
-          await getReviewForRequest(
-            requestId,
-            customerId
-          );
-
-        if (existingReview) {
-          setSubmitted(true);
-        }
-
-        setRequest(serviceRequest);
-        setReviewTarget(target);
-      } catch (error) {
-        console.error("Review load error:", error);
-        setErrorMessage("Unable to load review details.");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadReviewContext();
-  }, [requestId]);
-
-  const ratingLabel = useMemo(() => {
-    switch (rating) {
-      case 1:
-        return "Poor";
-      case 2:
-        return "Fair";
-      case 3:
-        return "Good";
-      case 4:
-        return "Very Good";
-      case 5:
-        return "Excellent";
-      default:
-        return "Tap a star to rate";
-    }
-  }, [rating]);
-
-  const canSubmit =
-    rating > 0 &&
-    reviewTarget?.ok === true &&
-    !submitted &&
-    !submitting;
-
-  const handleSubmit = async () => {
-    const currentUser = auth.currentUser;
-
-    if (
-      !currentUser ||
-      !request ||
-      reviewTarget?.ok !== true ||
-      !canSubmit
-    ) {
-      return;
-    }
-
+  const validContext = context?.requestId === requestId && context.customerId === auth.currentUser?.uid;
+  const canSubmit = validContext && !saved && !submitting && !picking && !validateReview(rating, comment);
+  const addPhotos = async () => {
+    if (photoBusy.current || busy.current || photos.length >= 5) return;
+    photoBusy.current = true; setPicking(true); setError("");
+    const generation = version.current;
     try {
-      setSubmitting(true);
-      setErrorMessage("");
-
-      await submitServiceReview({
-        requestId: request.id,
-        customerId: currentUser.uid,
-        technicianId: reviewTarget.technicianId,
-        rating,
-        comment: review,
-      });
-
-      setSubmitted(true);
-    } catch (error: any) {
-      console.error("Review submit error:", error);
-      setErrorMessage(
-        error?.message || "Unable to submit review."
-      );
-    } finally {
-      setSubmitting(false);
-    }
+      const selected = await pickReviewPhotos(5 - photos.length);
+      if (generation === version.current) setPhotos((previous) => [...previous, ...selected].slice(0, 5));
+    } catch (failure) {
+      if (generation === version.current) setError(`${failure instanceof Error ? failure.message : "Photo access was unavailable or denied."} You can retry or submit without photos after removing them.`);
+    } finally { if (generation === version.current) { photoBusy.current = false; setPicking(false); } }
   };
+  const submit = async () => {
+    if (!canSubmit || busy.current || photoBusy.current || !context) return;
+    busy.current = true; setSubmitting(true); setError(""); setWarning(""); setProgress("Checking your completed request…");
+    const generation = version.current;
+    const nextController = new AbortController(); controller.current = nextController;
+    try {
+      const result = await submitReviewWithPhotos({ requestId, rating, comment, photos, signal: nextController.signal,
+        onProgress: (message) => { if (generation === version.current) setProgress(message); } });
+      if (generation !== version.current || auth.currentUser?.uid !== context.customerId) return;
+      setSaved(result.review); setJustSubmitted(result.created); setWarning(result.warning ?? ""); setPhotos([]);
+    } catch (failure) {
+      if (generation === version.current) setError(failure instanceof Error ? failure.message : "Unable to submit your review. Please retry.");
+    } finally { if (generation === version.current) { busy.current = false; setSubmitting(false); setProgress(""); } }
+  };
+  if (loading) return <View style={styles.centerScreen}><ActivityIndicator color="#3B82F6" /><Text style={styles.hint}>Loading review details…</Text></View>;
 
-  if (loading) {
-    return (
-      <View style={styles.centerScreen}>
-        <ActivityIndicator color="#3B82F6" />
+  return <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <StatusBar barStyle="light-content" backgroundColor="#06101D" />
+    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <View style={styles.header}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to request" style={styles.backButton} onPress={() => router.back()}><ArrowLeft color="white" size={20} /></TouchableOpacity>
+        <Text style={styles.title}>{saved && validContext ? justSubmitted ? "Thank You" : "Your Review" : "Review Technician"}</Text>
       </View>
-    );
-  }
-
-  if (submitted) {
-    return (
-      <View style={styles.container}>
-        <StatusBar
-          barStyle="light-content"
-          backgroundColor="#06101D"
-        />
-        <View style={styles.successContainer}>
-          <View style={styles.successIcon}>
-            <CheckCircle2
-              size={58}
-              color="#22C55E"
-              strokeWidth={1.8}
-            />
-          </View>
-          <Text style={styles.successTitle}>
-            Thank You
-          </Text>
-          <Text style={styles.successText}>
-            Your feedback has been submitted for this
-            completed request.
-          </Text>
-          <Text style={styles.successRequest}>
-            {requestId}
-          </Text>
-          <TouchableOpacity
-            style={styles.doneButton}
-            activeOpacity={0.85}
-            onPress={() => router.replace("/bookings")}
-          >
-            <Text style={styles.doneButtonText}>
-              Back to Requests
-            </Text>
-          </TouchableOpacity>
+      {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
+      {!validContext && <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => setRetry((value) => value + 1)}><Text style={styles.buttonText}>Retry loading review</Text></TouchableOpacity>}
+      {validContext && context && <>
+        <View style={styles.card}>
+          <UserRound color="#60A5FA" size={42} /><Text style={styles.name}>{context.technicianName}</Text>
+          <Text style={styles.serviceTitle}>{context.title}</Text>
+          <View style={styles.completed}><CheckCircle2 color="#22C55E" size={16} /><Text style={styles.completedText}>Service Completed</Text></View>
         </View>
-      </View>
-    );
-  }
-
-  return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor="#06101D"
-      />
-
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={styles.content}
-      >
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backButton}
-            activeOpacity={0.8}
-            onPress={() => router.back()}
-          >
-            <ArrowLeft size={20} color="#FFFFFF" />
+        {saved ? <>
+          <Text style={styles.hint}>{justSubmitted ? "Your feedback has been saved for this completed request." : "This completed request already has your review."}</Text>
+          <View style={styles.card}>
+            <View style={styles.stars} accessible accessibilityLabel={`${saved.rating} out of 5 stars`}>
+              {[1, 2, 3, 4, 5].map((star) => <Star key={star} size={30} color="#F59E0B" fill={star <= saved.rating ? "#F59E0B" : "transparent"} />)}
+            </View>
+            <Text style={styles.serviceTitle}>{saved.rating}/5</Text>
+            {!!saved.comment && <Text style={styles.feedback}>{saved.comment}</Text>}
+            <ReviewPhotos paths={saved.photoPaths} customerId={saved.customerId} />
+          </View>
+          {!!warning && <Text accessibilityRole="alert" style={styles.hint}>{warning}</Text>}
+          <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => router.replace("/bookings")}><Text style={styles.buttonText}>Back to Requests</Text></TouchableOpacity>
+        </> : <>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>How was your service experience?</Text>
+            <Text style={styles.hint}>Choose 1–5 stars. Positive and negative feedback are equally welcome.</Text>
+            <View style={styles.stars} accessibilityRole="radiogroup" accessibilityLabel="Service rating">
+              {[1, 2, 3, 4, 5].map((star) => <TouchableOpacity key={star} style={styles.starButton} accessibilityRole="radio"
+                accessibilityLabel={`${star} out of 5 stars`} accessibilityState={{ checked: rating === star, disabled: submitting }} disabled={submitting} onPress={() => setRating(star)}>
+                <Star size={38} color={star <= rating ? "#F59E0B" : "#475569"} fill={star <= rating ? "#F59E0B" : "transparent"} />
+              </TouchableOpacity>)}
+            </View>
+            <Text style={styles.hint}>{rating ? `${rating} out of 5 stars selected` : "Tap a star to rate"}</Text>
+          </View>
+          <Text style={styles.sectionTitle}>Your honest feedback</Text>
+          <View style={styles.card}>
+            <TextInput accessibilityLabel="Your honest feedback" value={comment} onChangeText={setComment} editable={!submitting}
+              placeholder="Share your experience in your own words (optional)" placeholderTextColor="#64748B" multiline textAlignVertical="top" style={styles.input} />
+            <Text style={comment.length > REVIEW_COMMENT_MAX ? styles.error : styles.hint}>{comment.length}/{REVIEW_COMMENT_MAX} characters · optional</Text>
+          </View>
+          <Text style={styles.sectionTitle}>Review photos (optional, up to 5)</Text>
+          <Text style={styles.hint}>JPEG, PNG or WebP, up to 15 MB each. Photos are resized to 1600 px and saved as JPEG (max 5 MB). Photos are visible to eligible review viewers. Avoid private addresses and personal information.</Text>
+          <View style={styles.photoRow}>{photos.map((photo, index) => <View key={`${photo.uri}/${index}`}>
+            <Image source={{ uri: photo.uri }} style={styles.preview} accessibilityLabel={`Selected review photo ${index + 1}`} />
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Remove photo ${index + 1}`} disabled={submitting || picking} style={styles.remove}
+              onPress={() => setPhotos((previous) => previous.filter((_, at) => at !== index))}><Text style={styles.buttonText}>Remove</Text></TouchableOpacity>
+          </View>)}</View>
+          {photos.length < 5 && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add review photos" disabled={submitting || picking} style={styles.secondaryButton} onPress={addPhotos}>
+            {picking ? <ActivityIndicator color="#60A5FA" /> : <ImagePlus color="#60A5FA" size={22} />}<Text style={styles.buttonText}>{picking ? "Preparing photos…" : "Add Photos"}</Text>
+          </TouchableOpacity>}
+          {!!progress && <Text accessibilityLiveRegion="polite" style={styles.hint}>{progress}</Text>}
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Submit review" accessibilityState={{ disabled: !canSubmit, busy: submitting }} disabled={!canSubmit}
+            style={[styles.button, !canSubmit && styles.disabled]} onPress={submit}>
+            {submitting ? <ActivityIndicator color="white" /> : <Text style={styles.buttonText}>Submit Review</Text>}
           </TouchableOpacity>
-          <View style={styles.headerText}>
-            <Text style={styles.title}>
-              Review Technician
-            </Text>
-            <Text style={styles.subtitle}>{requestId}</Text>
-          </View>
-        </View>
-
-        {!!errorMessage && (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorText}>
-              {errorMessage}
-            </Text>
-          </View>
-        )}
-
-        {request && !errorMessage && (
-          <>
-            <View style={styles.technicianCard}>
-              <View style={styles.avatar}>
-                <UserRound
-                  size={42}
-                  color="#FFFFFF"
-                  strokeWidth={1.8}
-                />
-              </View>
-              <Text style={styles.technicianName}>
-                {reviewTarget?.ok
-                  ? reviewTarget.technicianName
-                  : "Service Technician"}
-              </Text>
-              <Text style={styles.technicianRole}>
-                Service Technician
-              </Text>
-              <View style={styles.completedBadge}>
-                <CheckCircle2
-                  size={14}
-                  color="#22C55E"
-                />
-                <Text style={styles.completedText}>
-                  Service Completed
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.ratingCard}>
-              <Text style={styles.sectionTitle}>
-                How was your service experience?
-              </Text>
-              <Text style={styles.ratingDescription}>
-                Your feedback helps maintain service quality.
-              </Text>
-              <View style={styles.starsRow}>
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <TouchableOpacity
-                    key={star}
-                    style={styles.starButton}
-                    activeOpacity={0.75}
-                    onPress={() => setRating(star)}
-                  >
-                    <Star
-                      size={40}
-                      color={
-                        star <= rating
-                          ? "#F59E0B"
-                          : "#475569"
-                      }
-                      fill={
-                        star <= rating
-                          ? "#F59E0B"
-                          : "transparent"
-                      }
-                      strokeWidth={1.8}
-                    />
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <Text
-                style={[
-                  styles.ratingLabel,
-                  rating > 0 && styles.ratingLabelActive,
-                ]}
-              >
-                {ratingLabel}
-              </Text>
-            </View>
-
-            <Text style={styles.formTitle}>
-              Write a Review
-            </Text>
-            <View style={styles.reviewCard}>
-              <View style={styles.textArea}>
-                <TextInput
-                  value={review}
-                  onChangeText={setReview}
-                  placeholder="Share your experience..."
-                  placeholderTextColor="#64748B"
-                  multiline
-                  textAlignVertical="top"
-                  maxLength={300}
-                  style={styles.reviewInput}
-                />
-                <Text style={styles.characterCount}>
-                  {review.length}/300
-                </Text>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={[
-                styles.submitButton,
-                !canSubmit && styles.submitButtonDisabled,
-              ]}
-              activeOpacity={0.85}
-              disabled={!canSubmit}
-              onPress={handleSubmit}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <>
-                  <Star size={19} color="#FFFFFF" />
-                  <Text style={styles.submitButtonText}>
-                    Submit Review
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </>
-        )}
-      </ScrollView>
-    </KeyboardAvoidingView>
-  );
+        </>}
+      </>}
+    </ScrollView>
+  </KeyboardAvoidingView>;
 }
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#06101D" },
-  centerScreen: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#06101D",
-  },
-  content: {
-    width: "100%",
-    maxWidth: 520,
-    alignSelf: "center",
-    paddingHorizontal: 18,
-    paddingTop: 54,
-    paddingBottom: 120,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 28,
-  },
-  backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 13,
-    backgroundColor: "#0D1B2A",
-    borderWidth: 1,
-    borderColor: "#17263A",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 14,
-  },
-  headerText: { flex: 1 },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  subtitle: {
-    color: "#64748B",
-    fontSize: 11,
-    marginTop: 4,
-  },
-  errorCard: {
-    backgroundColor: "rgba(239,68,68,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(239,68,68,0.22)",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 14,
-  },
-  errorText: {
-    color: "#FCA5A5",
-    fontSize: 12,
-    textAlign: "center",
-  },
-  technicianCard: {
-    backgroundColor: "#0D1B2A",
-    borderWidth: 1,
-    borderColor: "#17263A",
-    borderRadius: 20,
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 28,
-    marginBottom: 22,
-  },
-  avatar: {
-    width: 94,
-    height: 94,
-    borderRadius: 47,
-    backgroundColor: "#2563EB",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  technicianName: {
-    color: "#FFFFFF",
-    fontSize: 20,
-    fontWeight: "800",
-    marginTop: 15,
-  },
-  technicianRole: {
-    color: "#64748B",
-    fontSize: 11,
-    marginTop: 4,
-  },
-  completedBadge: {
-    height: 29,
-    borderRadius: 10,
-    backgroundColor: "rgba(34,197,94,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(34,197,94,0.20)",
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 9,
-    gap: 6,
-    marginTop: 12,
-  },
-  completedText: {
-    color: "#22C55E",
-    fontSize: 9,
-    fontWeight: "700",
-  },
-  ratingCard: {
-    backgroundColor: "#0D1B2A",
-    borderWidth: 1,
-    borderColor: "#17263A",
-    borderRadius: 18,
-    alignItems: "center",
-    paddingHorizontal: 18,
-    paddingVertical: 25,
-    marginBottom: 23,
-  },
-  sectionTitle: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "800",
-    textAlign: "center",
-  },
-  ratingDescription: {
-    color: "#64748B",
-    fontSize: 10,
-    lineHeight: 16,
-    textAlign: "center",
-    marginTop: 7,
-  },
-  starsRow: {
-    flexDirection: "row",
-    justifyContent: "center",
-    marginTop: 22,
-  },
-  starButton: { paddingHorizontal: 5, paddingVertical: 5 },
-  ratingLabel: {
-    color: "#64748B",
-    fontSize: 11,
-    fontWeight: "600",
-    marginTop: 12,
-  },
-  ratingLabelActive: { color: "#F59E0B" },
-  formTitle: {
-    color: "#F8FAFC",
-    fontSize: 14,
-    fontWeight: "800",
-    marginBottom: 10,
-    marginLeft: 2,
-  },
-  reviewCard: {
-    backgroundColor: "#0D1B2A",
-    borderWidth: 1,
-    borderColor: "#17263A",
-    borderRadius: 17,
-    padding: 15,
-    marginBottom: 18,
-  },
-  textArea: {
-    minHeight: 155,
-    borderRadius: 12,
-    backgroundColor: "#091522",
-    borderWidth: 1,
-    borderColor: "#1E2D42",
-    paddingHorizontal: 13,
-    paddingTop: 12,
-    paddingBottom: 28,
-  },
-  reviewInput: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    lineHeight: 18,
-    minHeight: 105,
-  },
-  characterCount: {
-    position: "absolute",
-    right: 11,
-    bottom: 9,
-    color: "#475569",
-    fontSize: 9,
-  },
-  submitButton: {
-    height: 56,
-    borderRadius: 12,
-    backgroundColor: "#2563EB",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-  },
-  submitButtonDisabled: { opacity: 0.4 },
-  submitButtonText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  successContainer: {
-    flex: 1,
-    width: "100%",
-    maxWidth: 520,
-    alignSelf: "center",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 28,
-  },
-  successIcon: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    backgroundColor: "rgba(34,197,94,0.08)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 22,
-  },
-  successTitle: {
-    color: "#FFFFFF",
-    fontSize: 27,
-    fontWeight: "800",
-  },
-  successText: {
-    color: "#94A3B8",
-    fontSize: 12,
-    lineHeight: 19,
-    textAlign: "center",
-    marginTop: 9,
-  },
-  successRequest: {
-    color: "#3B82F6",
-    fontSize: 11,
-    fontWeight: "700",
-    marginTop: 9,
-  },
-  doneButton: {
-    width: "100%",
-    height: 54,
-    borderRadius: 12,
-    backgroundColor: "#2563EB",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 28,
-  },
-  doneButtonText: {
-    color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "700",
-  },
+  container: { flex: 1, backgroundColor: "#06101D" }, centerScreen: { flex: 1, backgroundColor: "#06101D", alignItems: "center", justifyContent: "center" },
+  content: { width: "100%", maxWidth: 520, alignSelf: "center", paddingHorizontal: 18, paddingTop: 54, paddingBottom: 120 },
+  header: { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 28 },
+  title: { fontSize: 24, fontWeight: "800", color: "white", flex: 1 },
+  backButton: { width: 44, height: 44, borderRadius: 13, backgroundColor: "#0D1B2A", alignItems: "center", justifyContent: "center" },
+  card: { borderRadius: 18, backgroundColor: "#0D1B2A", borderColor: "#17263A", borderWidth: 1, padding: 18, marginBottom: 20 },
+  name: { color: "white", fontSize: 20, fontWeight: "800", marginTop: 12 },
+  serviceTitle: { color: "#CBD5E1", fontSize: 14, marginTop: 8 },
+  completed: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 }, completedText: { color: "#22C55E", fontSize: 12 },
+  sectionTitle: { color: "white", fontSize: 16, fontWeight: "700", marginBottom: 10 },
+  hint: { color: "#94A3B8", fontSize: 12, lineHeight: 18, marginVertical: 8 },
+  error: { color: "#FCA5A5", fontSize: 13, lineHeight: 20, marginBottom: 14 },
+  stars: { flexDirection: "row", justifyContent: "center", flexWrap: "wrap" }, starButton: { minWidth: 44, minHeight: 48, padding: 4, justifyContent: "center", alignItems: "center" },
+  input: { color: "white", fontSize: 14, lineHeight: 21, minHeight: 130, backgroundColor: "#091522", borderRadius: 12, padding: 12 },
+  feedback: { color: "#CBD5E1", fontSize: 14, lineHeight: 21, marginTop: 14 },
+  photoRow: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginBottom: 12 }, preview: { width: 90, height: 90, borderRadius: 10 },
+  remove: { minHeight: 44, alignItems: "center", justifyContent: "center", backgroundColor: "#17263A", borderRadius: 10 },
+  button: { minHeight: 56, backgroundColor: "#2563EB", borderRadius: 12, padding: 12, justifyContent: "center", alignItems: "center", marginTop: 18 },
+  secondaryButton: { minHeight: 48, borderWidth: 1, borderColor: "#17263A", borderRadius: 12, flexDirection: "row", gap: 8, alignItems: "center", justifyContent: "center" },
+  buttonText: { color: "white", fontSize: 14, fontWeight: "700" }, disabled: { opacity: 0.4 },
 });

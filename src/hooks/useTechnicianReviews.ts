@@ -1,28 +1,36 @@
 import { onAuthStateChanged } from "firebase/auth";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useFocusEffect } from "expo-router";
 
 import { auth } from "@/src/firebase/config";
 import {
   subscribeToTechnicianReviews,
+  retryTechnicianReviews,
+  refreshTechnicianReviews,
+  type TechnicianReviewCursor,
   type TechnicianReviewSummary,
 } from "@/src/services/technician.service";
-import { type TechnicianRatingLoadState } from "@/src/utils/technicianRating";
+import { REVIEWS_UNAVAILABLE_MESSAGE, type TechnicianRatingLoadState } from "@/src/utils/technicianRating";
 
 type ReviewsState = TechnicianRatingLoadState & {
   reviews: TechnicianReviewSummary[];
+  cursor: TechnicianReviewCursor | null;
 };
 type SessionState = ReviewsState & {
   viewerUid: string | null;
   technicianId: string | null;
 };
 const loadingState: ReviewsState = {
-  status: "loading", summary: null, reviews: [], errorMessage: "",
+  status: "loading", summary: null, reviews: [], cursor: null, errorMessage: "",
 };
 
-export function useTechnicianReviews(technicianId: string | null): ReviewsState {
+export function useTechnicianReviews(technicianId: string | null): ReviewsState & { retry: () => void } {
   const [state, setState] = useState<SessionState>({
     ...loadingState, viewerUid: null, technicianId: null,
   });
+  useFocusEffect(useCallback(() => {
+    if (technicianId) refreshTechnicianReviews(technicianId);
+  }, [technicianId]));
 
   useEffect(() => {
     let active = true;
@@ -40,18 +48,24 @@ export function useTechnicianReviews(technicianId: string | null): ReviewsState 
       const isCurrent = () => active && version === generation && auth.currentUser?.uid === user.uid;
       unsubscribeReviews = subscribeToTechnicianReviews(
         technicianId,
-        (reviews, metadata, summary) => {
+        (reviews, metadata, summary, cursor) => {
           // A cache-only empty result cannot prove that a technician has no reviews.
-          // Wait for the complete server query, including metadata-only confirmation.
-          if (!isCurrent() || metadata.fromCache || metadata.hasPendingWrites || !summary) return;
-          setState({ ...identity, status: "ready", reviews,
-            summary, errorMessage: "" });
+          // Wait for server aggregation over ALL eligible reviews, never this page.
+          if (!isCurrent() || !summary) return;
+          const stale = metadata.fromCache || metadata.hasPendingWrites;
+          setState({ ...identity, status: stale ? "stale" : "ready", reviews,
+            summary, cursor: cursor ?? null, errorMessage: stale ? "Ratings may be out of date. Waiting for server confirmation." : "" });
         },
         (error) => {
           if (!isCurrent()) return;
           const denied = (error as Error & { code?: string }).code === "permission-denied";
-          setState({ ...loadingState, ...identity, status: "error",
-            errorMessage: denied ? "Ratings unavailable: permission denied." : "Unable to load ratings. Please try again." });
+          const invalidPrecondition = (error as Error & { code?: string }).code === "failed-precondition";
+          setState((previous) => {
+            const retain = !denied && !invalidPrecondition && !!previous.summary &&
+              previous.viewerUid === identity.viewerUid && previous.technicianId === technicianId;
+            return { ...(retain ? previous : loadingState), ...identity, status: retain ? "stale" : "error",
+              errorMessage: REVIEWS_UNAVAILABLE_MESSAGE };
+          });
         }
       );
     });
@@ -63,9 +77,14 @@ export function useTechnicianReviews(technicianId: string | null): ReviewsState 
     };
   }, [technicianId]);
 
+  const retry = () => {
+    if (!technicianId || state.viewerUid !== auth.currentUser?.uid || state.technicianId !== technicianId) return;
+    setState({ ...loadingState, viewerUid: state.viewerUid, technicianId });
+    retryTechnicianReviews(technicianId);
+  };
   // Never render a previous account/technician's result while effects catch up.
   if (!technicianId || state.technicianId !== technicianId || state.viewerUid !== (auth.currentUser?.uid ?? null)) {
-    return loadingState;
+    return { ...loadingState, retry };
   }
-  return state;
+  return { ...state, retry };
 }

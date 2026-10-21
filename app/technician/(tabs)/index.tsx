@@ -26,6 +26,7 @@ import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
 import { TechnicianAvailabilityPanel } from "@/src/components/technicians/TechnicianAvailabilityPanel";
 import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
 import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
+import { TechnicianRatingStatus } from "@/src/components/technicians/TechnicianRatingStatus";
 import { auth } from "@/src/firebase/config";
 import {
   NotificationCenterItem,
@@ -278,6 +279,11 @@ export default function TechnicianDashboard() {
             <Text style={styles.ratingSectionHint}>
               Based on customer reviews
             </Text>
+            <TechnicianRatingStatus ratings={ratings} />
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="View reviews received by you"
+              style={{ paddingVertical: 10 }} onPress={() => router.push("/technician/performance")}>
+              <Text style={styles.viewAll}>View Reviews</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.ratingBox}>

@@ -25,6 +25,11 @@
     },
     "plugins": [
       "expo-router",
+      ["expo-image-picker", {
+        "photosPermission": "Choose optional photos to include with your ServicePilot review.",
+        "cameraPermission": false,
+        "microphonePermission": false
+      }],
       [
         "expo-splash-screen",
         {

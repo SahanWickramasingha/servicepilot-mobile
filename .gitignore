@@ -47,3 +47,7 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Local-only review emulator configuration and generated logs
+/.firebase/review-config/
+/firestore-debug.log

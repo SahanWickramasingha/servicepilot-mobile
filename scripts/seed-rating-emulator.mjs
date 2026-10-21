@@ -34,7 +34,8 @@ try {
       ...buildMapProfile(uid, profile), updatedAt: FieldValue.serverTimestamp(),
     });
   }
-  for (let index = 1; index <= 7; index++) {
+  const reviewPages = process.argv.includes("--review-list-pages");
+  for (let index = 1; index <= (reviewPages ? 30 : 7); index++) {
     const id = `rating-device-request-${index}`;
     await db.doc(`service_requests/${id}`).set({ id, customerId: "rating-bandara", customerName: "Bandara",
       technicianId: "rating-gihan", technicianName: "Gihan", status: "completed", serviceCategory: "Electrical",
@@ -42,6 +43,14 @@ try {
       division: "Kandy", preferredDate: "2026-10-04", imageUrls: [], priority: "normal",
       createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
     });
+    if (reviewPages && index >= 8) {
+      const review = db.doc(`service_reviews/${id}_rating-bandara`);
+      if (!(await review.get()).exists) await review.set({ requestId: id, customerId: "rating-bandara", technicianId: "rating-gihan",
+        ...(index === 29 ? {} : { customerName: "Bandara" }), rating: index % 5 + 1,
+        comment: index === 28 ? "" : "Local review-list fixture",
+        ...(index === 30 ? {} : { createdAt: new Date(Date.UTC(2026, 9, 1, 0, index)) }),
+      });
+    }
   }
   const first = db.doc("service_reviews/rating-device-request-1_rating-bandara");
   if (!(await first.get()).exists) await first.set({ requestId: "rating-device-request-1", customerId: "rating-bandara",

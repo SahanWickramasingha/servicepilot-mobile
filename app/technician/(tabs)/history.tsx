@@ -19,6 +19,7 @@ import {
 import { useTechnicianWorkspace } from "@/src/hooks/useTechnicianWorkspace";
 import { useTechnicianReviews } from "@/src/hooks/useTechnicianReviews";
 import { getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
+import { TechnicianRatingStatus } from "@/src/components/technicians/TechnicianRatingStatus";
 import { ServiceRequest } from "@/src/services/request.service";
 import {
   getCompletedTechnicianRequests,
@@ -105,6 +106,7 @@ export default function TechnicianHistoryScreen() {
           />
         </View>
 
+        <TechnicianRatingStatus ratings={ratings} />
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Closed Jobs</Text>
 

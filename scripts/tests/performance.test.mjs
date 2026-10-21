@@ -95,9 +95,12 @@ test('lightweight metadata and lazily loaded geometry match every original distr
 });
 
 // Actual service integration uses the same pools/reducer rather than a passthrough mock.
-test('service consumers share jobs/reviews and preserve real reviewer names and live status transitions', () => {
+test('service consumers share jobs/reviews and preserve real reviewer names and live status transitions', async () => {
   const auth = { currentUser: { uid: 'gihan' } }, listeners = [], results = [];
   const sdk = { collection: (_, path) => path, where: () => ({}), query: (path) => path,
+    orderBy: () => ({}), documentId: () => '__name__', limit: () => ({}), count: () => ({}), average: () => ({}),
+    getAggregateFromServer: async () => ({ data: () => ({ count: 1, average: 5 }) }),
+    getCountFromServer: async () => ({ data: () => ({ count: 1 }) }),
     onSnapshot: (...args) => { const options = typeof args[1] === 'object';
       const listener = { next: args[options ? 2 : 1], stopped: false }; listeners.push(listener); return () => { listener.stopped = true; }; } };
   function service(path) {
@@ -122,6 +125,7 @@ test('service consumers share jobs/reviews and preserve real reviewer names and 
   assert.equal(listeners.length, 2);
   const review = { id: 'bandara', data: () => ({ rating: 5, customerName: 'Bandara', comment: 'Excellent service' }) };
   listeners[1].next({ docs: [review], docChanges: () => [{ type: 'added', doc: review }], metadata: { fromCache: false, hasPendingWrites: false } });
+  await new Promise(setImmediate);
   assert.equal(ratings.length, 3); assert.ok(ratings.every((item) => item.value[0].customerName === 'Bandara'));
   stops.forEach((stop) => stop()); assert.ok(listeners.every((entry) => entry.stopped));
 });
