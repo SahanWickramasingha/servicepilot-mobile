@@ -73,7 +73,7 @@ export default function BeforeServicePhotosScreen() {
 
     router.back();
   };
-
+  
   return (
     <View style={styles.container}>
       <StatusBar
