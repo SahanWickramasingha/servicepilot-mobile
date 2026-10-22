@@ -43,6 +43,7 @@ function fixture(initialId = "gihan") {
     },
   };
   const hook = load("src/hooks/useTechnicianReviews.ts", {
+    "react-native": { AppState: { currentState: "active", addEventListener: () => ({ remove() {} }) } },
     react, "expo-router": { useFocusEffect() {} }, "@/src/firebase/config": { auth }, "@/src/utils/technicianRating": rating,
     "firebase/auth": { onAuthStateChanged: (_, next) => {
       authCallback = next;
@@ -122,8 +123,9 @@ test("permission and network failures remain distinct from a successfully loaded
     assert.equal(state.status, code === "permission-denied" ? "error" : "stale");
     assert.equal(state.summary?.count ?? null, code === "permission-denied" ? null : 1);
     assert.equal(state.reviews.length, code === "permission-denied" ? 0 : 1);
-    assert.match(display.value, code === "permission-denied" ? /Ratings unavailable/ : /out of date/);
-    assert.ok(display.label.includes("Reviews are temporarily unavailable."));
+    assert.equal(display.value, code === "permission-denied" ? "Ratings unavailable" : "5.0");
+    assert.equal(state.errorMessage, code === "permission-denied" ? "Reviews are temporarily unavailable." : "Showing saved ratings");
+    assert.ok(!display.label.includes(state.errorMessage));
     f.unmount();
   }
 });
@@ -231,6 +233,14 @@ test("compact cards use the same verified summary/rounding/counts and never fall
     assert.equal(nodes.filter((node) => node.type === "Text").length, status === "error" ? 2 : 1);
     assert.ok(!nodes.some((node) => /No ratings yet|0 reviews|New/.test(node.props?.children)));
     assert.equal(nodes.find((node) => node.type === "Text").props.accessibilityRole, status === "error" ? "alert" : undefined);
+  }
+  for (const updating of [false, true]) {
+    state = { status: "stale", updating, summary: { count: 1, average: 4 }, errorMessage: "Private server diagnostic", retry() {} };
+    const nodes = flatten(component({ technicianId: "gihan" }));
+    const texts = nodes.filter((node) => node.type === "Text").map((node) => node.props.children);
+    assert.ok(texts.includes("4.0")); assert.ok(texts.includes("1 review"));
+    assert.equal(texts.filter((text) => text === (updating ? "Updating…" : "Showing saved ratings")).length, 1);
+    assert.ok(!texts.includes(state.errorMessage)); assert.equal(texts.includes("Retry"), !updating);
   }
   assert.equal(rating.getTechnicianRatingDisplay({ status: "ready", summary: rating.summarizeTechnicianReviews([5, 4, 4].map(review)), errorMessage: "" }).label, "4.3 (3 reviews)");
 });
