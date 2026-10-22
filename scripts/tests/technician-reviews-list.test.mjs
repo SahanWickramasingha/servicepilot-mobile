@@ -127,7 +127,7 @@ test("an already-open paginated screen keeps every loaded card across a new real
   try {
     f.setRatings({ cursor: makeCursor(24) }); f.render(); await f.button("Load More Reviews").props.onPress();
     assert.equal(f.render().data.length, 40);
-    f.setRatings({ status: "stale" }); assert.equal(f.render().data.length, 40); assert.ok(f.text().includes("out of date"));
+    f.setRatings({ status: "stale" }); assert.equal(f.render().data.length, 40); assert.ok(f.text().includes("Showing saved ratings"));
     f.setRatings({ status: "ready", reviews: makeRows(44, 25), cursor: makeCursor(25), summary: { average: 4.3, count: 44 } });
     let list = f.render(); assert.deepEqual(list.data.map((row) => row.id), makeRows(44, 4).map((row) => row.id));
     await f.button("Load More Reviews").props.onPress(); list = f.render();
