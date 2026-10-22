@@ -111,6 +111,7 @@ function matchesDivision(
   return technician.serviceDivision === division || !!id && technician.serviceDistrictIds.includes(id);
 }
 
+const directoryStream = createSessionStream<[PublicTechnicianProfile[], boolean]>(() => [[], false]);
 export function subscribeToApprovedTechnicians(
   onNext: (technicians: PublicTechnicianProfile[]) => void,
   onError: (error: Error) => void,
@@ -128,37 +129,40 @@ export function subscribeToApprovedTechnicians(
     ...(districtId ? [where("serviceDistrictIds", "array-contains", districtId)] : []),
     ...(category ? [where("serviceCategory", "==", category)] : []),
     orderBy(documentId()), limit(count));
-  let alive = true, generation = 0;
-  const unsubscribe = onSnapshot(
-    techniciansQuery,
-    (snapshot) => {
-      const version = ++generation;
-      // Follow-up server gets recheck CURRENT approval; no private profile read.
-      void Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref))).then((verified) => {
-        if (!alive || version !== generation) return;
-        const technicians = verified
-        .map((item) => mapTechnician(item.data() as PublicProjection))
-        .filter((technician) =>
-          matchesCategory(technician, filters?.category)
-        )
-        .filter((technician) =>
-          matchesDivision(technician, filters?.division)
-        )
-        .sort((first, second) => {
-          if (second.averageRating !== first.averageRating) {
-            return second.averageRating - first.averageRating;
-          }
+  // Include client-side filters as well as the bounded query in the stream identity.
+  const key = JSON.stringify([filters?.category || "All", filters?.division || "All", count]);
+  return directoryStream(key, (emit, fail) => {
+    let alive = true, generation = 0;
+    const unsubscribe = onSnapshot(
+      techniciansQuery,
+      (snapshot) => {
+        const version = ++generation;
+        // Follow-up server gets recheck CURRENT approval; no private profile read.
+        void Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref))).then((verified) => {
+          if (!alive || version !== generation) return;
+          const technicians = verified
+          .map((item) => mapTechnician(item.data() as PublicProjection))
+          .filter((technician) =>
+            matchesCategory(technician, filters?.category)
+          )
+          .filter((technician) =>
+            matchesDivision(technician, filters?.division)
+          )
+          .sort((first, second) => {
+            if (second.averageRating !== first.averageRating) {
+              return second.averageRating - first.averageRating;
+            }
 
-          return first.fullName.localeCompare(second.fullName);
-        });
+            return first.fullName.localeCompare(second.fullName);
+          });
 
-        onNext(technicians);
-        filters?.onHasMore?.(snapshot.size === count && count < MAP_MAX_ITEMS);
-      }, (error) => { if (alive && version === generation) onError(error); });
-    },
-    onError
-  );
-  return () => { alive = false; unsubscribe(); };
+          emit(technicians, snapshot.size === count && count < MAP_MAX_ITEMS);
+        }).catch((error) => { if (alive && version === generation) fail(error); });
+      },
+      (error) => { generation++; if (alive) fail(error); }
+    );
+    return () => { alive = false; unsubscribe(); };
+  }, (items, hasMore) => { onNext(items); filters?.onHasMore?.(hasMore); }, onError);
 }
 
 export async function getApprovedTechnician(
@@ -181,22 +185,25 @@ export async function getApprovedTechnician(
 }
 
 /** Single public document; recheck approval on the server for each live change. */
+const approvedTechnicianStream = createSessionStream<[PublicTechnicianProfile | null]>(() => [null]);
 export function subscribeToApprovedTechnician(technicianId: string,
   onNext: (technician: PublicTechnicianProfile | null) => void, onError: (error: Error) => void) {
-  let alive = true, generation = 0;
-  const stop = onSnapshot(doc(db, "technician_map_profiles", technicianId), { includeMetadataChanges: true }, (snapshot) => {
-    if (!alive) return;
-    const version = ++generation;
-    // Cached status cannot confirm that a technician is still accepting bookings.
-    if (snapshot.metadata.fromCache) {
-      if (snapshot.exists() && snapshot.data().approved === true) onNext(mapTechnician({ ...snapshot.data(), availability: undefined } as PublicProjection));
-      return;
-    }
-    void getApprovedTechnician(technicianId).then((item) => {
-      if (alive && version === generation) onNext(item);
-    }, (error) => { if (alive && version === generation) onError(error); });
-  }, (error) => { if (alive) { generation++; onError(error); } });
-  return () => { alive = false; generation++; stop(); };
+  return approvedTechnicianStream(technicianId, (emit, fail) => {
+    let alive = true, generation = 0;
+    const stop = onSnapshot(doc(db, "technician_map_profiles", technicianId), { includeMetadataChanges: true }, (snapshot) => {
+      if (!alive) return;
+      const version = ++generation;
+      // Cached status cannot confirm that a technician is still accepting bookings.
+      if (snapshot.metadata.fromCache) {
+        if (snapshot.exists() && snapshot.data().approved === true) emit(mapTechnician({ ...snapshot.data(), availability: undefined } as PublicProjection));
+        return;
+      }
+      void getApprovedTechnician(technicianId).then((item) => {
+        if (alive && version === generation) emit(item);
+      }, (error) => { if (alive && version === generation) fail(error); });
+    }, (error) => { if (alive) { generation++; fail(error); } });
+    return () => { alive = false; generation++; stop(); };
+  }, onNext, onError);
 }
 
 export const TECHNICIAN_REVIEWS_PAGE_SIZE = 20;
@@ -205,7 +212,8 @@ export type TechnicianReviewCursor =
   | { kind: "undated"; id: string | null };
 export type TechnicianReviewPage = { reviews: TechnicianReviewSummary[]; cursor: TechnicianReviewCursor | null };
 const cacheMetadata = { fromCache: true, hasPendingWrites: false } as SnapshotMetadata;
-const reviewsStream = createSessionStream<[TechnicianReviewSummary[], SnapshotMetadata, TechnicianRatingSummary | null, TechnicianReviewCursor | null]>(
+export type ReviewConnectionState = "updating" | "saved" | "confirmed";
+const reviewsStream = createSessionStream<[TechnicianReviewSummary[], SnapshotMetadata, TechnicianRatingSummary | null, TechnicianReviewCursor | null, ReviewConnectionState?]>(
   () => [[], cacheMetadata, null, null]);
 const reviewControls = new Map<string, { viewer: string | null; retry: () => void; refresh: () => void }>();
 
@@ -265,19 +273,32 @@ export function refreshTechnicianReviews(technicianId: string): void {
 
 export function subscribeToTechnicianReviews(
   technicianId: string,
-  onNext: (reviews: TechnicianReviewSummary[], metadata: SnapshotMetadata, summary: TechnicianRatingSummary | null, cursor?: TechnicianReviewCursor | null) => void,
+  onNext: (reviews: TechnicianReviewSummary[], metadata: SnapshotMetadata, summary: TechnicianRatingSummary | null, cursor?: TechnicianReviewCursor | null, connection?: ReviewConnectionState) => void,
   onError: (error: Error) => void
 ) {
   return reviewsStream(technicianId, (emit, fail) => {
     const viewer = auth?.currentUser?.uid ?? null;
     let stopCurrent = () => {}, refreshCurrent = () => {}, waiting = false;
+    // Saved results belong to this pooled account/query, not to a connection attempt.
+    // The final unsubscribe/account change disposes them with the stream.
+    let verified: { page: TechnicianReviewPage; summary: TechnicianRatingSummary } | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let retries = 0, disposed = false, started = false;
+    const publishSaved = (connection: ReviewConnectionState) => {
+      if (verified) emit(verified.page.reviews, cacheMetadata, verified.summary, verified.page.cursor, connection);
+      else if (connection === "updating") emit([], cacheMetadata, null, null, connection);
+    };
     const connect = () => {
-      if (waiting) return;
+      if (disposed || waiting) return;
+      clearTimeout(retryTimer); retryTimer = undefined;
       stopCurrent(); waiting = true;
+      // Do not emit an empty reset on initial subscribe; reconnect feedback is
+      // shared too, so late subscribers cannot replay an obsolete error.
+      if (started) publishSaved("updating");
+      started = true;
       let active = true, revision = 0, refreshing = false;
       let latest: { docs: { id: string; data(): Record<string, unknown> }[]; metadata: SnapshotMetadata } | undefined;
-      let verified: { page: TechnicianReviewPage; summary: TechnicianRatingSummary } | undefined;
-      let focusRead = false, listenerFailed = false;
+      let focusRead = false, listenerFailed = false, failed = false;
       const current = () => active && viewer === (auth?.currentUser?.uid ?? null);
       let deadline: ReturnType<typeof setTimeout> | undefined;
       const armDeadline = () => {
@@ -286,24 +307,31 @@ export function subscribeToTechnicianReviews(
           if (current()) {
             const error = Object.assign(new Error("Unable to verify reviews online."), { code: "unavailable" });
             reportReviewQueryFailure(error, "confirmation-timeout", firebaseRuntimeTarget);
-            waiting = false; fail(error);
+            reject(error);
           }
         }, 15000);
       };
       armDeadline();
       const reject = (error: Error) => {
         if (!current()) return;
-        clearTimeout(deadline); waiting = false;
-        const code = (error as Error & { code?: string }).code;
-        if (code === "permission-denied" || code === "failed-precondition") verified = undefined;
-        fail(error);
+        clearTimeout(deadline); waiting = false; failed = true; revision++;
+        const code = (error as Error & { code?: string }).code?.replace(/^firestore\//, "");
+        const recoverable = ["unavailable", "deadline-exceeded", "aborted", "resource-exhausted"].includes(code ?? "");
+        if (!recoverable) verified = undefined;
+        // Generic streams clear replay data on failure. Publish a saved state
+        // instead when we have safe, previously confirmed totals to retain.
+        if (verified) publishSaved("saved"); else fail(error);
+        if (recoverable && !retryTimer && retries < 3) {
+          const delay = [1000, 3000, 10000][retries++];
+          retryTimer = setTimeout(() => { retryTimer = undefined; if (current()) connect(); }, delay);
+        }
       };
       const markStale = () => {
-        if (verified) emit(verified.page.reviews, cacheMetadata, verified.summary, verified.page.cursor);
+        if (verified) publishSaved("updating");
       };
       const refresh = async () => {
         if (!current() || listenerFailed || refreshing || !latest) return;
-        refreshing = true;
+        refreshing = true; failed = false; waiting = true;
         armDeadline();
         const version = revision, snapshot = latest;
         try {
@@ -320,24 +348,28 @@ export function subscribeToTechnicianReviews(
           let page = pageFromDocuments(snapshot.docs, "dated", includeUndated);
           if (!snapshot.docs.length && includeUndated) page = await getTechnicianReviewsPage(technicianId, { kind: "undated", id: null });
           if (!current() || version !== revision) return;
-          clearTimeout(deadline); waiting = false;
+          clearTimeout(deadline); clearTimeout(retryTimer); retryTimer = undefined;
+          waiting = false; failed = false; retries = 0;
           verified = { page, summary };
-          emit(page.reviews, snapshot.metadata, summary, page.cursor);
+          emit(page.reviews, snapshot.metadata, summary, page.cursor, "confirmed");
         } catch (error) { if (version === revision) reject(error as Error); }
         finally {
           refreshing = false;
-          if (current() && version !== revision) void refresh();
+          if (current() && !failed && version !== revision) void refresh();
         }
       };
       refreshCurrent = () => {
-        if (current() && listenerFailed) { connect(); return; }
-        if (!current() || focusRead || refreshing || waiting || !latest) return;
+        if (current() && (listenerFailed || failed)) { retries = 0; connect(); return; }
+        if (!current() || focusRead || refreshing || waiting) return;
         focusRead = true;
         markStale(); armDeadline();
         const version = revision;
         // One bounded server read, coalesced across consumers of this technician.
         void reviewRead("head-refresh", () => getDocsFromServer(query(datedReviews(technicianId), limit(TECHNICIAN_REVIEWS_PAGE_SIZE)))).then((snapshot) => {
           if (!current() || version !== revision) return;
+          if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) {
+            latest = undefined; revision++; markStale(); armDeadline(); return;
+          }
           latest = snapshot; revision++; void refresh();
         }, (error: Error) => { if (current() && version === revision) reject(error); })
           .finally(() => { focusRead = false; });
@@ -346,10 +378,15 @@ export function subscribeToTechnicianReviews(
       stopCurrent = () => { active = false; clearTimeout(deadline); stop(); };
       try { stop = onSnapshot(query(datedReviews(technicianId), limit(TECHNICIAN_REVIEWS_PAGE_SIZE)), { includeMetadataChanges: true }, (snapshot) => {
         if (!current() || listenerFailed) return;
-        if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) { markStale(); return; }
+        if (snapshot.metadata.fromCache || snapshot.metadata.hasPendingWrites) {
+          // Invalidate in-flight aggregates; a server aggregate cannot confirm
+          // a head that has since become cached or contains local writes.
+          latest = undefined; revision++; markStale(); armDeadline(); return;
+        }
         markStale();
         latest = snapshot; revision++; void refresh();
       }, (error) => {
+        if (!current()) return;
         revision++; listenerFailed = true;
         reportReviewQueryFailure(error, "head-listener", firebaseRuntimeTarget); reject(error);
       }); } catch (error) {
@@ -357,9 +394,9 @@ export function subscribeToTechnicianReviews(
         reportReviewQueryFailure(error, "head-listener", firebaseRuntimeTarget); reject(error as Error);
       }
     };
-    const control = { viewer, retry: connect, refresh: () => refreshCurrent() };
+    const control = { viewer, retry: () => { if (!waiting) { retries = 0; connect(); } }, refresh: () => refreshCurrent() };
     reviewControls.set(technicianId, control);
     connect();
-    return () => { stopCurrent(); if (reviewControls.get(technicianId) === control) reviewControls.delete(technicianId); };
+    return () => { disposed = true; clearTimeout(retryTimer); verified = undefined; stopCurrent(); if (reviewControls.get(technicianId) === control) reviewControls.delete(technicianId); };
   }, onNext, onError);
 }
