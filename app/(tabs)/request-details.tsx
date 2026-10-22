@@ -1,4 +1,5 @@
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { onAuthStateChanged } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
@@ -30,6 +31,7 @@ import {
 } from "@/src/constants/serviceRequests";
 import { auth } from "@/src/firebase/config";
 import { getReviewForRequest } from "@/src/services/review.service";
+import { JobEvidenceView } from "@/src/components/jobs/JobEvidenceView";
 import { JobTechnicianLocation } from "@/src/components/maps/JobTechnicianLocation";
 import {
   cancelServiceRequest,
@@ -184,53 +186,49 @@ export default function RequestDetailsScreen() {
     if (uid && request?.status === "completed" && request.customerId === uid) {
       void getReviewForRequest(request.id, uid).then((review) => {
         if (active && auth.currentUser?.uid === uid) setReviewState(review ? "existing" : "new");
-      }).catch(() => { if (active) setReviewState("error"); });
+      }).catch(() => { if (active && auth.currentUser?.uid === uid) setReviewState("error"); });
     }
     return () => { active = false; };
   }, [request?.id, request?.status, request?.customerId]));
 
   useEffect(() => {
-    if (!requestId) {
-      setErrorMessage("Request not found.");
-      setLoading(false);
-      return;
-    }
-
-    const unsubscribe = subscribeToServiceRequest(
-      requestId,
-      (item) => {
-        const currentUser = auth.currentUser;
-
-        if (
-          item &&
-          currentUser &&
-          item.customerId !== currentUser.uid
-        ) {
-          setRequest(null);
-          setErrorMessage(
-            "You do not have access to this request."
-          );
-          setLoading(false);
-          return;
-        }
-
-        setRequest(item);
-        setErrorMessage(
-          item ? "" : "Request could not be found."
-        );
-        setLoading(false);
-      },
-      (error) => {
-        console.error(
-          "Request details subscription error:",
-          error
-        );
-        setErrorMessage("Unable to load request details.");
-        setLoading(false);
+    let active = true;
+    let generation = 0;
+    let stopRequest: (() => void) | undefined;
+    const stopAuth = onAuthStateChanged(auth, (user) => {
+      if (!active) return;
+      const version = ++generation;
+      stopRequest?.(); stopRequest = undefined;
+      const current = () => active && version === generation && auth.currentUser === user;
+      setRequest(null); setCancelling(false); setReviewState("loading"); setErrorMessage(""); setLoading(true);
+      if (!user || !requestId) {
+        setErrorMessage(user ? "Request not found." : "Please sign in to view this request.");
+        setLoading(false); return;
       }
-    );
-
-    return unsubscribe;
+      stopRequest = subscribeToServiceRequest(
+        requestId,
+        (item) => {
+          if (!current()) return;
+          if (item && item.customerId !== user.uid) {
+            setRequest(null);
+            setErrorMessage("You do not have access to this request.");
+            setLoading(false);
+            return;
+          }
+          setRequest(item);
+          setErrorMessage(item ? "" : "Request could not be found.");
+          setLoading(false);
+        },
+        (error) => {
+          if (!current()) return;
+          setRequest(null);
+          console.error("Request details subscription error:", error);
+          setErrorMessage("Unable to load request details.");
+          setLoading(false);
+        }
+      );
+    });
+    return () => { active = false; generation++; stopRequest?.(); stopAuth(); };
   }, [requestId]);
 
   const statusColor = request
@@ -518,6 +516,7 @@ export default function RequestDetailsScreen() {
           )}
         </View>
 
+        <JobEvidenceView requestId={request.id} />
         {request.status === "completed" && (
           <TouchableOpacity
             style={styles.reviewButton}
