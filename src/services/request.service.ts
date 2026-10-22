@@ -22,6 +22,7 @@ import { createSessionStream } from "./session-subscriptions";
 import { liveDocuments } from "@/src/utils/liveDocuments";
 import { requireAvailableTechnician } from "@/functions/src/domain/availability";
 import { actionableBookingError, bookingAccount, bookingTechnician, BookingError, requireBookingTransition } from "@/functions/src/domain/booking";
+import { requireCompletionEvidence, type JobEvidence } from "@/functions/src/domain/jobEvidence";
 import { UserProfile } from "@/src/services/user.service";
 import { type PublicTechnicianProfile } from "@/src/services/technician.service";
 
@@ -295,25 +296,26 @@ export function subscribeToCustomerRequests(
   }, onNext, onError);
 }
 
+const requestStream = createSessionStream<[ServiceRequest | null]>(() => [null]);
 export function subscribeToServiceRequest(
   requestId: string,
   onNext: (request: ServiceRequest | null) => void,
   onError: (error: Error) => void
 ) {
-  return onSnapshot(
+  return requestStream(requestId, (emit, fail) => onSnapshot(
     doc(db, "service_requests", requestId),
     (snapshot) => {
       if (!snapshot.exists()) {
-        onNext(null);
+        emit(null);
         return;
       }
 
-      onNext(
+      emit(
         mapServiceRequest(snapshot.id, snapshot.data())
       );
     },
-    onError
-  );
+    fail
+  ), onNext, onError);
 }
 
 export function getRequestTechnicianReviewTarget(
@@ -478,6 +480,10 @@ export async function updateTechnicianRequestStatus(
     bookingSession(currentUser.uid); bookingAccount(profile, "technician");
     if (job.status === status && (status !== "cancelled" || data.cancelledBy === "technician")) return;
     requireBookingTransition(job.status, status, "technician");
+    if (status === "completed") {
+      const evidence = (await transaction.get(doc(db, "job_evidence", requestId))).data() as JobEvidence | undefined;
+      requireCompletionEvidence(evidence, requestId, currentUser.uid, job.customerId);
+    }
     if (status === "accepted") {
       const projection = (await transaction.get(doc(db, "technician_map_profiles", currentUser.uid))).data();
       if (profile?.role !== "technician" || profile.technicianApprovalStatus !== "approved" ||
