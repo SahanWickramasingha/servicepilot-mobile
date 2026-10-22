@@ -1,6 +1,7 @@
 import { collection, doc, documentId, getDocFromServer, getDocsFromServer, limit, onSnapshot, orderBy,
   query, runTransaction, serverTimestamp, setDoc, startAfter, Timestamp, where, writeBatch } from "firebase/firestore";
 import { auth, db } from "@/src/firebase/config";
+import { createSessionCache } from "./session-subscriptions";
 import { readTechnicianAvailability, TechnicianAvailability } from "@/functions/src/domain/availability";
 import { approximateCoordinate, DISTRICTS, locationIsFresh, resolveServiceDistrictIds, validCoordinate } from "@/functions/src/domain/map";
 import { buildMapProfile, mapServiceCategory, MAP_MAX_ITEMS, MAP_PAGE_SIZE } from "@/functions/src/domain/mapProjection";
@@ -73,12 +74,17 @@ export async function getMapTechnicians(districtId: string, category?: string): 
   return (await getMapTechnicianPage(districtId, category)).items;
 }
 
-const savedJobReferences = new Map<string, string>();
+const savedJobReferences = createSessionCache<string>(32);
 export async function getJobTechnicianLocation(requestId: string): Promise<JobLocation> {
-  const customerId = auth.currentUser?.uid;
+  const viewer = auth.currentUser;
+  const customerId = viewer?.uid;
   if (!customerId) throw new MapServiceError("access", "unauthenticated");
+  const requireSession = () => {
+    if (auth.currentUser !== viewer) throw new MapServiceError("access", "unauthenticated");
+  };
   try {
     const job = (await getDocFromServer(doc(db, "service_requests", requestId))).data();
+    requireSession();
     if (!job || job.customerId !== customerId || !["accepted", "assigned", "in_progress"].includes(job.status)) {
       throw new MapServiceError("access", "permission-denied");
     }
@@ -87,6 +93,7 @@ export async function getJobTechnicianLocation(requestId: string): Promise<JobLo
     const technicianId = current ?? legacy;
     if (!technicianId || technicianId.includes("/") || current && legacy && current !== legacy) throw new MapServiceError("service", "failed-precondition");
     const publicLocation = (await getDocFromServer(doc(db, "technician_map_locations", technicianId))).data();
+    requireSession();
     if (publicLocation?.sharingEnabled !== true) return { status: "not-sharing" };
     if (!locationIsFresh(publicLocation.updatedAt?.toMillis())) return { status: "stale" };
     const referenceKey = `${customerId}:${technicianId}`;
@@ -94,10 +101,12 @@ export async function getJobTechnicianLocation(requestId: string): Promise<JobLo
       await setDoc(doc(db, "technician_location_access", technicianId, "customers", customerId), {
         requestId, technicianId, customerId, updatedAt: serverTimestamp(),
       });
+      requireSession();
       savedJobReferences.set(referenceKey, requestId);
     }
     // Rules recheck the authoritative job, approval, sharing and freshness on every get.
     const location = (await getDocFromServer(doc(db, "technician_locations", technicianId))).data();
+    requireSession();
     const updatedAtMs = location?.updatedAt?.toMillis();
     if (!location || !locationIsFresh(updatedAtMs) || !validCoordinate(location as SharedMapLocation)) return { status: "stale" };
     return { status: "available", technicianId, latitude: location.latitude, longitude: location.longitude, updatedAtMs };
