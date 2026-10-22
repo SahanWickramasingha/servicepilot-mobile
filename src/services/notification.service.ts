@@ -15,7 +15,7 @@ import {
 } from "firebase/firestore";
 import { FirebaseError } from "firebase/app";
 
-import { db } from "@/src/firebase/config";
+import { auth, db } from "@/src/firebase/config";
 import { createSessionStream } from "./session-subscriptions";
 import type { UserRole } from "@/src/services/user.service";
 
@@ -203,11 +203,16 @@ function logNotificationSubscriptionError({
     queryType,
     role,
     code: error instanceof FirebaseError ? error.code : "unknown-error",
-    message: error.message,
   });
 }
 
-const notificationStream = createSessionStream<[NotificationCenterItem[]], [Error, NotificationSubscriptionError]>(() => [[]]);
+export type NotificationCenterStatus = { errors: NotificationQueryType[]; loading: boolean };
+const notificationStream = createSessionStream<[NotificationCenterItem[], NotificationCenterStatus?], [Error, NotificationSubscriptionError]>(() => [[], { errors: [], loading: true }]);
+const notificationControls = new Map<string, { viewer: string | null; retry: (onlyFailed?: boolean) => void }>();
+export function retryNotificationCenter(userId: string, role: UserRole, onlyFailed = false) {
+  const control = notificationControls.get(`${userId}:${role}`);
+  if (control?.viewer === (auth?.currentUser?.uid ?? null)) control?.retry(onlyFailed);
+}
 export function subscribeToNotificationCenter(
   {
     userId,
@@ -216,24 +221,53 @@ export function subscribeToNotificationCenter(
     userId: string;
     role: UserRole;
   },
-  onNext: (items: NotificationCenterItem[]) => void,
+  onNext: (items: NotificationCenterItem[], status?: NotificationCenterStatus) => void,
   onError: (
     error: Error,
     context: NotificationSubscriptionError
   ) => void
 ) {
-  return notificationStream(`${userId}:${role}`, (emitNext, emitError) => connectNotificationCenter({ userId, role }, emitNext, emitError), onNext, onError);
+  const key = `${userId}:${role}`;
+  return notificationStream(key, (emitNext, emitError) => {
+    const viewer = auth?.currentUser?.uid ?? null;
+    let stop = () => {}, alive = true, generation = 0, attempts = 0, failed = false, starting = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const connect = () => {
+      if (!alive || starting) return;
+      clearTimeout(timer); timer = undefined; stop(); starting = true;
+      const version = ++generation;
+      const current = () => alive && version === generation && viewer === (auth?.currentUser?.uid ?? null);
+      stop = connectNotificationCenter({ userId, role }, (items, status) => {
+        if (!current()) return;
+        if (!status?.loading) starting = false;
+        if (status && !status.loading && !status.errors.length) { failed = false; attempts = 0; clearTimeout(timer); timer = undefined; }
+        emitNext(items, status);
+      }, (error, context) => {
+        if (!current()) return;
+        starting = false; failed = true; emitError(error, context);
+        if (["unavailable", "deadline-exceeded", "aborted", "resource-exhausted"].includes((error as { code?: string }).code ?? "") && !timer && attempts < 3) {
+          timer = setTimeout(() => { timer = undefined; if (current()) connect(); }, [1000, 3000, 10000][attempts++]);
+        }
+      });
+    };
+    const control = { viewer, retry: (onlyFailed = false) => { if (!onlyFailed || failed) { attempts = 0; connect(); } } };
+    notificationControls.set(key, control); connect();
+    return () => { alive = false; generation++; clearTimeout(timer); stop(); if (notificationControls.get(key) === control) notificationControls.delete(key); };
+  }, onNext, onError);
 }
 
 function connectNotificationCenter(
   { userId, role }: { userId: string; role: UserRole },
-  onNext: (items: NotificationCenterItem[]) => void,
+  onNext: (items: NotificationCenterItem[], status?: NotificationCenterStatus) => void,
   onError: (error: Error, context: NotificationSubscriptionError) => void
 ) {
   let personal: PersonalNotification[] = [];
   let systemMessages: SystemMessage[] = [];
   const systemMessagesByStatus = new Map<string, Map<string, SystemMessage>>();
   let readReceipts = new Map<string, Timestamp | undefined>();
+  const pending = new Set(['personal-notifications', 'system-active', 'system-sent', 'message-reads']);
+  const failures = new Map<string, NotificationQueryType>();
+  const succeeded = (source: string) => { pending.delete(source); failures.delete(source); };
 
   const emit = () => {
     const systemItems: NotificationCenterItem[] = systemMessages.map(
@@ -249,16 +283,26 @@ function connectNotificationCenter(
       }
     );
 
-    onNext(sortCenterItems([...personal, ...systemItems]));
+    onNext(sortCenterItems([...personal, ...systemItems]), { errors: [...new Set(failures.values())], loading: pending.size > 0 });
   };
 
   const handleSourceError = (
     queryType: NotificationQueryType,
-    error: Error
+    error: Error,
+    source = queryType as string
   ) => {
     const context = { error, queryType, role };
 
     logNotificationSubscriptionError(context);
+    pending.delete(source); failures.set(source, queryType);
+    if ((error as { code?: string }).code === 'permission-denied') {
+      if (queryType === 'personal-notifications') personal = [];
+      if (queryType === 'message-reads') readReceipts.clear();
+      if (queryType === 'system-messages') {
+        systemMessagesByStatus.delete(source.replace('system-', ''));
+        systemMessages = [...systemMessagesByStatus.values()].flatMap((rows) => [...rows.values()]);
+      }
+    }
     onError(error, context);
     emit();
   };
@@ -267,6 +311,7 @@ function connectNotificationCenter(
     status: (typeof PUBLISHED_SYSTEM_MESSAGE_STATUSES)[number],
     snapshot: QuerySnapshot<DocumentData>
   ) => {
+    succeeded(`system-${status}`);
     systemMessagesByStatus.set(
       status,
       new Map(
@@ -291,6 +336,7 @@ function connectNotificationCenter(
     onSnapshot(
       query(collection(db, "notifications"), where("userId", "==", userId)),
       (snapshot) => {
+        succeeded('personal-notifications');
         personal = snapshot.docs.map((item) =>
           mapPersonalNotification(item.id, item.data())
         );
@@ -306,12 +352,13 @@ function connectNotificationCenter(
           where("status", "==", status)
         ),
         (snapshot) => applySystemMessagesSnapshot(status, snapshot),
-        (error) => handleSourceError("system-messages", error)
+        (error) => handleSourceError("system-messages", error, `system-${status}`)
       )
     ),
     onSnapshot(
       query(collection(db, "message_reads"), where("userId", "==", userId)),
       (snapshot) => {
+        succeeded('message-reads');
         readReceipts = new Map(
           snapshot.docs.map((item) => [
             String(item.data().messageId ?? ""),
