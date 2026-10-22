@@ -35,7 +35,7 @@ function loadService(session) {
   deps["@/functions/src/domain/mapProjection"] = projection;
   deps["@/functions/src/domain/availability"] = requireFunctions("./lib/domain/availability.js");
   deps["@/functions/src/domain/serviceAreas"] = requireFunctions("./lib/domain/serviceAreas.js");
-  new Function("exports", "require", "__DEV__", output)(exports, (id) => deps[id] ?? requireRoot(id), false);
+  new Function("exports", "require", "__DEV__", output)(exports, (id) => deps[id] ?? performanceTestDependency(id, deps) ?? requireRoot(id), false);
   return exports;
 }
 const denied = (promise) => assert.rejects(promise, (error) => error.code?.endsWith("permission-denied") || error.code?.endsWith("unauthenticated"));
