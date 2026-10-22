@@ -49,6 +49,7 @@ export function useTechnicianRequest() {
             setErrorMessage("This service request is not assigned to you.");
           } else {
             setRequest(nextRequest);
+            setErrorMessage("");
           }
 
           setLoading(false);
@@ -67,8 +68,8 @@ export function useTechnicianRequest() {
 
   return {
     requestId,
-    request,
-    profile,
+    request: request && request.technicianId === auth.currentUser?.uid && request.id === requestId ? request : null,
+    profile: profile?.uid === auth.currentUser?.uid ? profile : null,
     loading,
     errorMessage,
   };
