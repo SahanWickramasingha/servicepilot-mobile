@@ -129,7 +129,7 @@ test("customer profile uses one concise failure with one working Retry and retai
       const feedback = h.elements().find((element) => typeof element.type === "function" && element.type.name === "TechnicianRatingStatus");
       feedback.type(feedback.props);
       const texts = h.elements().filter((element) => element.type === "Text").map((element) => [element.props.children].flat(Infinity).join(""));
-      assert.equal(texts.filter((text) => text === ratings.errorMessage).length, 1);
+      assert.equal(texts.filter((text) => text === (status === "stale" ? "Showing saved ratings" : ratings.errorMessage)).length, 1);
       assert.ok(texts.includes("Professional Details")); assert.ok(texts.some((text) => text.includes("Request Service")));
       assert.ok(!texts.includes("No reviews yet")); assert.ok(!texts.includes("No ratings yet"));
       const buttons = h.elements().filter((element) => element.type === "TouchableOpacity" && element.props.accessibilityLabel === "Retry reviews");
