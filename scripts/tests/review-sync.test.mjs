@@ -45,7 +45,7 @@ function serviceFixture() {
     "@/src/constants/serviceRequests": {}, "@/functions/src/domain/map": {}, "@/functions/src/domain/serviceAreas": {},
     "@/functions/src/domain/mapProjection": {}, "@/functions/src/domain/availability": {}, "@/src/utils/technicianRating": rating });
   return { auth, service, values, errors, listeners, snapshot, stats: () => ({ aggregates, reads }),
-    subscribe: (id = "tech-a") => service.subscribeToTechnicianReviews(id, (reviews, metadata, summary, cursor) => values.push({ reviews, metadata, summary, cursor }), (error) => errors.push(error)),
+    subscribe: (id = "tech-a") => service.subscribeToTechnicianReviews(id, (reviews, metadata, summary, cursor, connection) => values.push({ reviews, metadata, summary, cursor, connection }), (error) => errors.push(error)),
     set: (nextTotal, nextDated = nextTotal, nextHead = head) => { total = nextTotal; dated = nextDated; head = nextHead; },
     fail: (code) => { failRead = code ? Object.assign(new Error("Local simulated failure"), { code }) : undefined; },
     failSummary: (code) => { failAggregate = code ? Object.assign(new Error("The query requires an index."), { code }) : undefined; },
@@ -73,13 +73,14 @@ test("cache-only transitions are stale, network recovery revalidates, and termin
     f.listeners[0].next({ ...f.snapshot(), metadata: { ...meta, fromCache: true } });
     assert.equal(f.values.at(-1).metadata.fromCache, true); assert.equal(f.values.at(-1).summary.count, 43);
     f.fail("unavailable"); f.service.refreshTechnicianReviews("tech-a"); await tick(); await tick();
-    assert.equal(f.errors.at(-1).code, "unavailable");
+    assert.equal(f.values.at(-1).connection, "saved"); assert.equal(f.values.at(-1).summary.count, 43);
     f.fail(null); f.service.refreshTechnicianReviews("tech-a"); await tick(); await tick();
+    f.listeners[1].next(f.snapshot()); await tick();
     assert.equal(f.values.at(-1).metadata.fromCache, false);
-    f.listeners[0].error(Object.assign(new Error("Missing index"), { code: "failed-precondition" }));
-    const length = f.values.length; f.listeners[0].next(f.snapshot()); assert.equal(f.values.length, length);
-    f.service.refreshTechnicianReviews("tech-a"); assert.equal(f.listeners.length, 2); assert.equal(f.listeners[0].stopped, true);
-    f.listeners[1].next(f.snapshot()); await tick(); assert.equal(f.values.at(-1).summary.count, 43);
+    f.listeners[1].error(Object.assign(new Error("Missing index"), { code: "failed-precondition" }));
+    const length = f.values.length; f.listeners[1].next(f.snapshot()); assert.equal(f.values.length, length);
+    f.service.refreshTechnicianReviews("tech-a"); assert.equal(f.listeners.length, 3); assert.equal(f.listeners[1].stopped, true);
+    f.listeners[2].next(f.snapshot()); await tick(); assert.equal(f.values.at(-1).summary.count, 43);
   } finally { stop(); }
 });
 test("Retry replaces a failed listener or aggregate request after index readiness, coalesces taps and ignores obsolete callbacks", async () => {
@@ -107,7 +108,7 @@ test("subsequent aggregate deadlines are bounded and account changes reject in-f
   try {
     f.listeners[0].next(f.snapshot()); await tick();
     f.hold(new Promise((yes) => { resolve = yes; })); f.set(44, 44, rows(44, 25)); f.listeners[0].next(f.snapshot());
-    t.mock.timers.tick(15000); assert.equal(f.errors.at(-1).code, "unavailable");
+    t.mock.timers.tick(15000); assert.equal(f.values.at(-1).connection, "saved"); assert.equal(f.values.at(-1).summary.count, 43);
     f.account("another-customer"); const length = f.values.length;
     resolve(); await tick(); assert.equal(f.values.length, length); assert.equal(f.listeners[0].stopped, true);
   } finally { stop(); }
