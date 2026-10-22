@@ -18,8 +18,9 @@ export function TechnicianRating({ technicianId, valueStyle, countStyle, iconSiz
     <Star size={iconSize} color="#F59E0B" fill={display.hasRatings ? "#F59E0B" : "transparent"} />
     <Text style={valueStyle} accessibilityLabel={display.label}
       accessibilityRole={ratings.status === "error" ? "alert" : undefined} accessibilityLiveRegion="polite">{display.value}</Text>
-    {ratings.status === "ready" && <Text style={countStyle ?? valueStyle}>{display.countLabel}</Text>}
-    {(ratings.status === "error" || ratings.status === "stale") && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry technician ratings" onPress={ratings.retry} style={{ minHeight: 44, justifyContent: "center" }}>
+    {(ratings.status === "ready" || ratings.status === "stale") && <Text style={countStyle ?? valueStyle}>{display.countLabel}</Text>}
+    {ratings.status === "stale" && <Text accessibilityLiveRegion="polite" style={[countStyle ?? valueStyle, { flexShrink: 1, textAlign: "center" }]}>{ratings.updating ? "Updating…" : "Showing saved ratings"}</Text>}
+    {!ratings.updating && (ratings.status === "error" || ratings.status === "stale") && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry technician ratings" onPress={ratings.retry} style={{ minHeight: 44, justifyContent: "center" }}>
       <Text style={countStyle ?? valueStyle}>Retry</Text>
     </TouchableOpacity>}
   </>;
