@@ -32,9 +32,14 @@ export async function pickReviewPhotos(remaining: number): Promise<SelectedRevie
   const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsMultipleSelection: true,
     selectionLimit: Math.min(remaining, REVIEW_PHOTO_MAX), allowsEditing: false, quality: 1, exif: false });
   if (result.canceled) return [];
-  if (result.assets.length > remaining) throw new Error(`Choose at most ${remaining} more photos.`);
+  return prepareSelectedPhotos(result.assets, remaining);
+}
+
+/** Shared byte validation/re-encoding for review library picks and job evidence. */
+export async function prepareSelectedPhotos(assets: ImagePicker.ImagePickerAsset[], remaining: number): Promise<SelectedReviewPhoto[]> {
+  if (assets.length > remaining) throw new Error(`Choose at most ${remaining} more photos.`);
   const photos: SelectedReviewPhoto[] = [];
-  for (const asset of result.assets) {
+  for (const asset of assets) {
     if (asset.fileSize && asset.fileSize > REVIEW_SOURCE_BYTES_MAX) throw new Error("Choose an image smaller than 15 MB.");
     validateImageBytes(await readPhotoBytes(asset.uri));
     if (!Number.isFinite(asset.width) || !Number.isFinite(asset.height) || asset.width <= 0 || asset.height <= 0 || asset.width * asset.height > 50000000) {
@@ -53,16 +58,16 @@ export async function pickReviewPhotos(remaining: number): Promise<SelectedRevie
   return photos;
 }
 
-function checkSession(customerId: string, signal?: AbortSignal) {
+export function checkPhotoSession(customerId: string, signal?: AbortSignal) {
   if (signal?.aborted || auth.currentUser?.uid !== customerId) throw new Error("Submission stopped. Reopen the request with the original Customer account.");
 }
 export async function uploadReviewPhoto(path: string, photo: SelectedReviewPhoto, context: ReviewContext, attemptId: string,
   onProgress: (fraction: number) => void, signal?: AbortSignal): Promise<void> {
-  checkSession(context.customerId, signal);
+  checkPhotoSession(context.customerId, signal);
   const { blob, bytes } = await readPhotoFile(photo.uri);
   try {
     validateImageBytes(bytes, true);
-    checkSession(context.customerId, signal);
+    checkPhotoSession(context.customerId, signal);
     // Pass the native Blob through. Firebase's small-file multipart path creates
     // a Blob from its input; React Native cannot construct Blobs from typed arrays.
     const task = uploadBytesResumable(ref(storage, path), blob, { contentType: "image/jpeg", cacheControl: "private, max-age=0, no-store",
@@ -73,7 +78,7 @@ export async function uploadReviewPhoto(path: string, photo: SelectedReviewPhoto
     const unsubscribe = auth.onAuthStateChanged((user) => { if (user?.uid !== context.customerId) task.cancel(); });
     try {
       await new Promise<void>((resolve, reject) => task.on("state_changed", (snapshot) => onProgress(snapshot.bytesTransferred / snapshot.totalBytes), reject, () => resolve()));
-      checkSession(context.customerId, signal);
+      checkPhotoSession(context.customerId, signal);
     } finally { signal?.removeEventListener("abort", cancel); unsubscribe(); }
   } finally { releaseBlob(blob); }
 }
