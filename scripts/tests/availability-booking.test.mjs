@@ -59,6 +59,13 @@ async function input() {
 async function seedJob(id, status = "requested") {
   await admin.doc(`service_requests/${id}`).set({ ...requestData(), status, scheduledAt: new Date("2099-10-10T04:30:00Z"), createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
 }
+async function seedCompletionEvidence(id) {
+  const job = (await admin.doc(`service_requests/${id}`).get()).data(), technicianId = job.technicianId || job.assignedTechnicianId;
+  await admin.doc(`job_evidence/${id}`).set({ requestId: id, technicianId, customerId: job.customerId, revision: 4,
+    beforePhotos: [`job_photos/${technicianId}/${id}/before/abcdefghijklmnopqrst/0.jpg`], afterPhotos: [`job_photos/${technicianId}/${id}/after/abcdefghijklmnopqrst/0.jpg`],
+    notes: { diagnosis: "Local diagnostic", workCompleted: "Local repair", recommendation: "", parts: [] },
+    signature: { customerName: "Local customer", confirmed: true, path: "M10.0,10.0 L40.0,50.0 L80.0,20.0 ", signedAt: FieldValue.serverTimestamp() }, updatedAt: FieldValue.serverTimestamp() });
+}
 
 before(async () => {
   firestore.setLogLevel("silent");
@@ -176,6 +183,7 @@ test("Available preserves multiple simultaneous jobs; completion keeps manually 
   for (const id of ids) {
     assert.equal((await customer().services.request.getServiceRequest(id)).status, "accepted");
     await tech().services.request.updateTechnicianRequestStatus(id, "in_progress");
+    await seedCompletionEvidence(id);
     await tech().services.request.updateTechnicianRequestStatus(id, "completed");
     assert.equal((await source()).availability, "offline");
     const notifications = await admin.collection("notifications").where("requestId", "==", id).get();
@@ -196,6 +204,7 @@ test("Busy/Offline block stale requests and acceptance at service and rules boun
     await tech().services.request.updateTechnicianRequestStatus(`availability-cancel-${value}`, "cancelled", { reason: "Cannot attend" });
     await seedJob(`availability-work-${value}`, "assigned");
     await tech().services.request.updateTechnicianRequestStatus(`availability-work-${value}`, "in_progress");
+    await seedCompletionEvidence(`availability-work-${value}`);
     await tech().services.request.updateTechnicianRequestStatus(`availability-work-${value}`, "completed");
     assert.equal((await source()).availability, value);
   }
@@ -344,6 +353,7 @@ test("acceptance checks the Customer account; idempotent lifecycle retries retai
   await seedJob("availability-legacy-lifecycle", "assigned");
   await admin.doc("service_requests/availability-legacy-lifecycle").update({ technicianId: FieldValue.delete(), assignedTechnicianId: "availability-tech" });
   for (const status of ["in_progress", "completed"]) {
+    if (status === "completed") await seedCompletionEvidence("availability-legacy-lifecycle");
     await tech().services.request.updateTechnicianRequestStatus("availability-legacy-lifecycle", status);
     await tech().services.request.updateTechnicianRequestStatus("availability-legacy-lifecycle", status);
   }
