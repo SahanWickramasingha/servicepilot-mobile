@@ -143,9 +143,9 @@ export default function TechnicianPerformanceScreen() {
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry reviews" style={styles.retryButton} onPress={ratings.retry}><Text style={styles.buttonText}>Retry</Text></TouchableOpacity>
         </View>}
         {ratings.status === "stale" && <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>Reviews may be out of date</Text>
-          <Text accessibilityRole="alert" style={styles.emptyText}>{ratings.errorMessage}</Text>
-          <TouchableOpacity accessibilityRole="button" style={styles.retryButton} onPress={ratings.retry}><Text style={styles.buttonText}>Retry</Text></TouchableOpacity>
+          {ratings.updating && <ActivityIndicator size="small" color="#94A3B8" />}
+          <Text accessibilityLiveRegion="polite" style={styles.emptyText}>{ratings.updating ? "Updating ratings…" : "Showing saved ratings"}</Text>
+          {!ratings.updating && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry reviews" style={styles.retryButton} onPress={ratings.retry}><Text style={styles.buttonText}>Retry</Text></TouchableOpacity>}
         </View>}
         {ratings.status === "ready" && ratings.summary?.count === 0 && <View style={styles.emptyCard}>
           <Text style={styles.emptyTitle}>No reviews yet</Text>
