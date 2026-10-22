@@ -27,6 +27,7 @@ import { normalizeRequestStatus } from "@/src/constants/serviceRequests";
 import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
 import { updateTechnicianRequestStatus } from "@/src/services/request.service";
 import { auth } from "@/src/firebase/config";
+import { useJobEvidence } from "@/src/hooks/useJobEvidence";
 import {
   getRequestDisplayTitle,
   getStatusUi,
@@ -40,12 +41,19 @@ export default function TechnicianJobActionScreen() {
   const [running, setRunning] = useState(true);
   const [completing, setCompleting] = useState(false);
   const completionInFlight = useRef(false);
+  const completionSession = useRef(0);
+  const viewerUid = auth.currentUser?.uid;
+  useEffect(() => {
+    completionSession.current++; completionInFlight.current = false; setCompleting(false);
+    return () => { completionSession.current++; };
+  }, [requestId, viewerUid]);
 
-  // UI mock completion states
-  const [beforeDone] = useState(false);
-  const [notesDone] = useState(false);
-  const [afterDone] = useState(false);
-  const [signatureDone] = useState(false);
+  const evidence = useJobEvidence(requestId);
+  const beforeDone = !!evidence.evidence?.beforePhotos.length;
+  const notesDone = !!evidence.evidence?.notes;
+  const afterDone = !!evidence.evidence?.afterPhotos.length;
+  const signatureDone = !!evidence.evidence?.signature;
+  const completedSteps = [beforeDone, notesDone, afterDone, signatureDone].filter(Boolean).length;
 
   useEffect(() => {
     if (!running) {
@@ -79,6 +87,10 @@ export default function TechnicianJobActionScreen() {
     if (!request) {
       return;
     }
+    if (!evidence.confirmed || completedSteps !== 4) {
+      Alert.alert("Service Evidence Required", "Save and confirm all four service evidence steps before completing this job.");
+      return;
+    }
 
     if (normalizeRequestStatus(request.status) !== "in_progress") {
       Alert.alert(
@@ -98,19 +110,20 @@ export default function TechnicianJobActionScreen() {
           onPress: async () => {
             if (completionInFlight.current) return;
             const actor = auth.currentUser?.uid;
+            const version = completionSession.current;
             try {
               completionInFlight.current = true;
               setCompleting(true);
               await updateTechnicianRequestStatus(request.id, "completed");
-              if (actor && auth.currentUser?.uid === actor) router.replace("/technician/history");
+              if (version === completionSession.current && actor && auth.currentUser?.uid === actor) router.replace("/technician/history");
             } catch (error: any) {
+              if (version !== completionSession.current || auth.currentUser?.uid !== actor) return;
               Alert.alert(
                 "Complete Job Failed",
                 error?.message ?? "Unable to complete this job."
               );
             } finally {
-              completionInFlight.current = false;
-              setCompleting(false);
+              if (version === completionSession.current) { completionInFlight.current = false; setCompleting(false); }
             }
           },
         },
@@ -283,16 +296,18 @@ export default function TechnicianJobActionScreen() {
           </Text>
 
           <Text style={styles.progressText}>
-            0 / 4 Complete
+            {completedSteps} / 4 Complete
           </Text>
         </View>
 
         <View style={styles.progressBar}>
-          <View style={styles.progressFill} />
+          <View style={[styles.progressFill, { width: `${completedSteps * 25}%` }]} />
         </View>
 
         {/* Actions */}
         <View style={styles.actionsList}>
+          {!!evidence.error && <TouchableOpacity accessibilityRole="button" onPress={evidence.retry}><Text style={styles.noticeText}>{evidence.error} Retry</Text></TouchableOpacity>}
+          {!evidence.confirmed && !evidence.error && <Text style={styles.noticeText}>Waiting for service evidence confirmation…</Text>}
           <ActionCard
             icon={
               <Camera
@@ -433,7 +448,7 @@ export default function TechnicianJobActionScreen() {
           <TouchableOpacity
             style={styles.completeButton}
             activeOpacity={0.85}
-            disabled={completing}
+            disabled={completing || !evidence.confirmed || completedSteps !== 4}
             onPress={handleCompleteJob}
           >
             {completing ? (

@@ -26,8 +26,8 @@
     "plugins": [
       "expo-router",
       ["expo-image-picker", {
-        "photosPermission": "Choose optional photos to include with your ServicePilot review.",
-        "cameraPermission": false,
+        "photosPermission": "Choose photos for your ServicePilot review or assigned service job.",
+        "cameraPermission": "Take service evidence photos for your assigned ServicePilot job.",
         "microphonePermission": false
       }],
       [

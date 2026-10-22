@@ -1,0 +1,120 @@
+import assert from 'node:assert/strict';
+import { before, after, test } from 'node:test';
+import { createRequire } from 'node:module';
+import { randomBytes } from 'node:crypto';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { getAuth, connectAuthEmulator, signInWithEmailAndPassword } from 'firebase/auth';
+import * as fsdk from 'firebase/firestore';
+import * as ssdk from 'firebase/storage';
+import { loadService } from '../lib/subscription-reliability-workloads.mjs';
+const hosts = [process.env.FIRESTORE_EMULATOR_HOST, process.env.FIREBASE_AUTH_EMULATOR_HOST, process.env.FIREBASE_STORAGE_EMULATOR_HOST];
+if (!hosts.every((h) => /^(127\.0\.0\.1|localhost):\d+$/.test(h || ''))) throw new Error('Loopback Auth, Firestore and Storage emulators required.');
+const projectId = 'demo-servicepilot-review-author', bucket = `${projectId}.appspot.com`;
+const require = createRequire(new URL('../../functions/package.json', import.meta.url));
+const { initializeApp: adminApp, deleteApp: deleteAdminApp } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
+const { getAuth: adminAuth } = require('firebase-admin/auth');
+const trusted = adminApp({ projectId }, 'job-evidence-tests'), admin = getFirestore(trusted), clients = new Map();
+const domain = loadService('functions/src/domain/jobEvidence.ts', {});
+const attempt = 'abcdefghijklmnopqrst';
+const objectPath = (job, stage = 'before', slot = 0) => `job_photos/jw-tech/${job}/${stage}/${attempt}/${slot}.jpg`;
+const notes = { diagnosis: 'Local diagnostic', workCompleted: 'Local repair', recommendation: '', parts: [{ name: 'Part', quantity: 1 }] };
+const signature = { customerName: 'Local customer', path: 'M10.0,10.0 L40.0,50.0 L80.0,20.0 ', confirmed: true };
+const denied = (promise) => assert.rejects(promise, (error) => ['permission-denied', 'storage/unauthorized'].includes(error.code));
+const config = (client) => ({ auth: client.auth, db: client.db, storage: client.storage });
+function evidenceService(client) {
+  return loadService('src/services/jobEvidence.service.ts', { '@/src/firebase/config': config(client),
+    'firebase/firestore': fsdk, 'firebase/storage': ssdk, 'expo-image-picker': {}, './reviewPhotos.service': {},
+    '@/src/utils/reviewValidation': loadService('src/utils/reviewValidation.ts', {}), '@/functions/src/domain/jobEvidence': domain,
+    '@/functions/src/domain/booking': loadService('functions/src/domain/booking.ts', {}) });
+}
+function requestService(client) {
+  return loadService('src/services/request.service.ts', { '@/src/firebase/config': config(client), 'firebase/firestore': fsdk,
+    '@/functions/src/domain/availability': loadService('functions/src/domain/availability.ts', {}),
+    '@/src/constants/serviceRequests': loadService('src/constants/serviceRequests.ts', {}) });
+}
+async function job(id, status = 'in_progress') { await admin.doc(`service_requests/${id}`).set({ technicianId: 'jw-tech', customerId: 'jw-owner', status, title: 'Local service evidence test' }); }
+function metadata(id, stage = 'before') { return { contentType: 'image/jpeg', customMetadata: { requestId: id, technicianId: 'jw-tech', stage, attemptId: attempt } }; }
+async function upload(id, stage = 'before', client = clients.get('jw-tech'), bytes = new Uint8Array([255, 216, 255, 0]), meta = metadata(id, stage), path = objectPath(id, stage)) {
+  return ssdk.uploadBytes(ssdk.ref(client.storage, path), bytes, meta);
+}
+async function download(id, client, stage = 'before') {
+  const response = await fetch(`http://${hosts[2]}/v0/b/${bucket}/o/${encodeURIComponent(objectPath(id, stage))}?alt=media`,
+    { headers: client ? { Authorization: `Bearer ${await client.auth.currentUser.getIdToken()}` } : {} });
+  return response.status;
+}
+before(async () => {
+  fsdk.setLogLevel('silent');
+  for (const [uid, role, active = true] of [['jw-tech', 'technician'], ['jw-other-tech', 'technician'], ['jw-owner', 'customer'],
+    ['jw-other', 'customer'], ['jw-dispatcher', 'dispatcher'], ['jw-admin', 'super_admin'], ['jw-disabled', 'technician', false]]) {
+    const email = `${uid}@example.test`, credential = randomBytes(24).toString('base64url');
+    await adminAuth(trusted).createUser({ uid, email, password: credential, emailVerified: true });
+    await admin.doc(`users/${uid}`).set({ uid, role, fullName: 'Local fixture', accountStatus: active ? 'active' : 'disabled', emailVerified: true,
+      ...(role === 'technician' ? { technicianApprovalStatus: 'approved', availability: 'offline' } : {}) });
+    const app = initializeApp({ projectId, apiKey: 'emulator-only', storageBucket: bucket }, uid), auth = getAuth(app);
+    connectAuthEmulator(auth, `http://${hosts[1]}`, { disableWarnings: true });
+    const db = fsdk.getFirestore(app), storage = ssdk.getStorage(app);
+    fsdk.connectFirestoreEmulator(db, hosts[0].split(':')[0], Number(hosts[0].split(':')[1]));
+    ssdk.connectStorageEmulator(storage, hosts[2].split(':')[0], Number(hosts[2].split(':')[1]));
+    storage.maxUploadRetryTime = 1000; storage.maxOperationRetryTime = 1000;
+    await signInWithEmailAndPassword(auth, email, credential); clients.set(uid, { app, auth, db, storage });
+  }
+});
+after(async () => { for (const client of clients.values()) { await fsdk.terminate(client.db); await deleteApp(client.app); } await admin.terminate(); await deleteAdminApp(trusted); });
+
+test('job photos save/reopen for the assigned technician and owning customer; completion is atomic, idempotent and leaves availability unchanged', async () => {
+  const id = 'jw-complete'; await job(id); const tech = clients.get('jw-tech'), service = evidenceService(tech), requests = requestService(tech);
+  await assert.rejects(requests.updateTechnicianRequestStatus(id, 'completed'), /evidence/);
+  for (const stage of ['before', 'after']) {
+    await upload(id, stage); await service.saveJobEvidence(id, stage === 'before' ? 0 : 1, stage === 'before' ? { beforePhotos: [objectPath(id)] } : { afterPhotos: [objectPath(id, 'after')] });
+  }
+  await service.saveJobEvidence(id, 2, { notes }); await service.saveJobEvidence(id, 3, { signature });
+  const saved = (await fsdk.getDocFromServer(fsdk.doc(clients.get('jw-owner').db, 'job_evidence', id))).data();
+  assert.equal(saved.notes.workCompleted, notes.workCompleted); assert.equal(saved.signature.path, signature.path); assert.equal(saved.beforePhotos[0], objectPath(id));
+  assert.equal(await download(id, clients.get('jw-owner')), 200); assert.equal(await download(id, clients.get('jw-other')), 403); assert.equal(await download(id, undefined), 403);
+  await requests.updateTechnicianRequestStatus(id, 'completed'); await requests.updateTechnicianRequestStatus(id, 'completed');
+  assert.equal((await admin.doc(`service_requests/${id}`).get()).data().status, 'completed');
+  assert.equal((await admin.doc('users/jw-tech').get()).data().availability, 'offline');
+  assert.equal((await admin.collection('notifications').where('requestId', '==', id).get()).size, 1);
+  await assert.rejects(service.saveJobEvidence(id, 4, { notes: { ...notes, diagnosis: 'Changed' } }), /eligible job/);
+  await denied(ssdk.deleteObject(ssdk.ref(tech.storage, objectPath(id))));
+});
+test('cross-account reads/writes, direct completion without evidence, spoofed ownership/stage and invalid signature/notes are denied', async () => {
+  const id = 'jw-denied'; await job(id); const tech = clients.get('jw-tech');
+  for (const uid of ['jw-other-tech', 'jw-other', 'jw-dispatcher', 'jw-disabled']) {
+    await denied(fsdk.getDocFromServer(fsdk.doc(clients.get(uid).db, 'job_evidence', id)));
+    await denied(upload(id, 'before', clients.get(uid)));
+  }
+  await denied(fsdk.updateDoc(fsdk.doc(tech.db, 'service_requests', id), { status: 'completed', completedAt: fsdk.serverTimestamp(), updatedAt: fsdk.serverTimestamp() }));
+  const base = { requestId: id, technicianId: 'jw-tech', customerId: 'jw-owner', revision: 1, beforePhotos: [], afterPhotos: [], updatedAt: fsdk.serverTimestamp() };
+  for (const change of [{ customerId: 'jw-other' }, { notes: { ...notes, workCompleted: '' } }, { signature: { ...signature, path: '<svg/>', signedAt: fsdk.serverTimestamp() } },
+    { beforePhotos: [objectPath(id, 'after')] }, { beforePhotos: [objectPath(id).replace('jw-tech/', 'jw-other-tech/')] }]) {
+    await denied(fsdk.setDoc(fsdk.doc(tech.db, 'job_evidence', id), { ...base, ...change }));
+  }
+  await denied(upload(id, 'before', tech, new Uint8Array([1]), { ...metadata(id), contentType: 'text/plain' }));
+  await denied(upload(id, 'before', tech, new Uint8Array(5 * 1024 * 1024 + 1)));
+  await denied(upload(id, 'before', tech, undefined, metadata(id), objectPath(id).replace('/0.jpg', '/3.jpg')));
+});
+test('a partial failure can delete only its unreferenced upload; stale revisions and disabled owners cannot replace evidence', async () => {
+  const id = 'jw-partial'; await job(id); const tech = clients.get('jw-tech'), service = evidenceService(tech);
+  await upload(id); await service.cleanupJobUploads(id, 'jw-tech', [objectPath(id)]);
+  await assert.rejects(ssdk.getMetadata(ssdk.ref(tech.storage, objectPath(id))), (e) => e.code === 'storage/object-not-found');
+  await upload(id); await service.saveJobEvidence(id, 0, { beforePhotos: [objectPath(id)] });
+  await assert.rejects(service.saveJobEvidence(id, 0, { notes }), /changed on another screen/);
+  await admin.doc('users/jw-tech').update({ accountStatus: 'disabled' });
+  try { await denied(ssdk.getMetadata(ssdk.ref(tech.storage, objectPath(id)))); await denied(fsdk.getDocFromServer(fsdk.doc(tech.db, 'job_evidence', id))); }
+  finally { await admin.doc('users/jw-tech').update({ accountStatus: 'active' }); }
+});
+test('the supported maximum of three photos per stage and ten parts remains writable within Rules evaluation limits', async () => {
+  const id = 'jw-maximum'; await job(id); const tech = clients.get('jw-tech'), service = evidenceService(tech);
+  for (const stage of ['before', 'after']) {
+    const paths = [];
+    for (let index = 0; index < 3; index++) { paths.push(objectPath(id, stage, index)); await upload(id, stage, tech, undefined, metadata(id, stage), paths[index]); }
+    await service.saveJobEvidence(id, stage === 'before' ? 0 : 1, stage === 'before' ? { beforePhotos: paths } : { afterPhotos: paths });
+  }
+  const full = { ...notes, parts: Array.from({ length: 10 }, (_, i) => ({ name: `Local part ${i}`, quantity: 999 })) };
+  await service.saveJobEvidence(id, 2, { notes: full });
+  await service.saveJobEvidence(id, 2, { notes: { parts: full.parts, recommendation: '', workCompleted: full.workCompleted, diagnosis: full.diagnosis } });
+  await service.saveJobEvidence(id, 3, { signature }); await requestService(tech).updateTechnicianRequestStatus(id, 'completed');
+  assert.equal((await admin.doc(`job_evidence/${id}`).get()).data().revision, 4);
+});

@@ -71,7 +71,32 @@ service firebase.storage {
       allow get: if (owned()) || (resource.metadata.published == 'true' && publishedReader(customerId));
       allow list: if false;
     }
-    // Request photos and all other object paths remain inaccessible here.
+    match /job_photos/{technicianId}/{requestId}/{stage}/{attemptId}/{filename} {
+      function objectPath() { return 'job_photos/' + technicianId + '/' + requestId + '/' + stage + '/' + attemptId + '/' + filename; }
+      function evidenceExists() { return firestore.exists(/databases/(default)/documents/job_evidence/$(requestId)); }
+      function evidence() { return firestore.get(/databases/(default)/documents/job_evidence/$(requestId)).data; }
+      function referenced() {
+        return evidenceExists() && evidence().technicianId == technicianId &&
+          objectPath() in (stage == 'before' ? evidence().beforePhotos : evidence().afterPhotos);
+      }
+      function owner() { return active() && request.auth.token.email_verified == true && approved(profile()) && request.auth.uid == technicianId; }
+      function assigned() {
+        let job = firestore.get(/databases/(default)/documents/service_requests/$(requestId)).data;
+        return validTechnician(job) && technicianFor(job) == technicianId &&
+          (stage == 'before' ? job.status in ['accepted', 'assigned', 'in_progress'] : job.status == 'in_progress');
+      }
+      // Create: profile + request. Read/delete: profile + evidence. Never more
+      // than two distinct cross-service document lookups per evaluation.
+      allow create: if resource == null && owner() && stage in ['before', 'after'] && assigned() &&
+        attemptId.matches('^[A-Za-z0-9]{20}$') && filename.matches('^[0-2][.]jpg$') &&
+        request.resource.size > 0 && request.resource.size <= 5 * 1024 * 1024 && request.resource.contentType == 'image/jpeg' &&
+        request.resource.metadata == { 'technicianId': technicianId, 'requestId': requestId, 'stage': stage, 'attemptId': attemptId };
+      allow get: if owner() || (active() && referenced() &&
+        (profile().role == 'super_admin' || (customer() && evidence().customerId == request.auth.uid)));
+      allow delete: if owner() && !referenced();
+      allow list, update: if false;
+    }
+    // Unimplemented request attachments and other object paths remain denied.
     match /{allPaths=**} { allow read, write: if false; }
   }
 }
