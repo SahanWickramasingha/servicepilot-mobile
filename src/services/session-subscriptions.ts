@@ -1,6 +1,7 @@
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/src/firebase/config";
 import { createSharedSubscription } from "@/src/utils/sharedSubscription";
+import { createBoundedSessionCache } from "@/src/utils/boundedSessionCache";
 
 const observers = new Set<() => void>();
 let stopAuth: (() => void) | undefined;
@@ -26,4 +27,8 @@ export function createSessionStream<Next extends unknown[], Failure extends unkn
     current: () => auth.currentUser?.uid ?? null,
     watch: watchSession,
   }, reset);
+}
+
+export function createSessionCache<T>(capacity: number) {
+  return createBoundedSessionCache<T>({ current: () => auth.currentUser?.uid ?? null, watch: watchSession }, capacity);
 }
