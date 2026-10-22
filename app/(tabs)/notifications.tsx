@@ -1,5 +1,6 @@
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNotificationCenter } from "@/src/hooks/useNotificationCenter";
 import {
   Bell,
   BriefcaseBusiness,
@@ -25,74 +26,17 @@ import {
   NotificationCenterItem,
   markNotificationRead,
   NotificationType,
-  subscribeToCustomerNotifications,
 } from "@/src/services/notification.service";
-import { getUserProfile } from "@/src/services/user.service";
 
 type FilterKey = "all" | "unread" | "important" | "system";
 
 export default function NotificationsScreen() {
-  const [notifications, setNotifications] = useState<
-    NotificationCenterItem[]
-  >([]);
+  const { items: notifications, loading, errorMessage: subscriptionError, retry } = useNotificationCenter("customer");
+  const [actionError, setActionError] = useState("");
+  const errorMessage = subscriptionError || actionError;
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [filter, setFilter] = useState<FilterKey>("all");
-  const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState("");
-
-  useEffect(() => {
-    const currentUser = auth.currentUser;
-
-    if (!currentUser) {
-      setErrorMessage("Please sign in again.");
-      setLoading(false);
-      return;
-    }
-
-    const currentUserId = currentUser.uid;
-    let unsubscribe: (() => void) | undefined;
-
-    async function loadNotifications() {
-      try {
-        const profile = await getUserProfile(currentUserId);
-
-        if (!profile) {
-          setErrorMessage("Profile not found.");
-          setLoading(false);
-          return;
-        }
-
-        unsubscribe = subscribeToCustomerNotifications(
-          {
-            userId: currentUserId,
-            role: profile.role,
-          },
-          (items) => {
-            setNotifications(items);
-            setLoading(false);
-          },
-          (error, context) => {
-            console.error("Notifications subscription error:", error);
-            setErrorMessage(
-              context.queryType === "system-messages"
-                ? "Unable to load system messages."
-                : context.queryType === "personal-notifications"
-                  ? "Unable to load personal notifications."
-                  : "Unable to load message read status."
-            );
-            setLoading(false);
-          }
-        );
-      } catch (error) {
-        console.error("Notifications profile load error:", error);
-        setErrorMessage("Unable to load notifications.");
-        setLoading(false);
-      }
-    }
-
-    loadNotifications();
-
-    return () => unsubscribe?.();
-  }, []);
 
   const unreadCount = notifications.filter(
     (item) => !item.read
@@ -121,11 +65,11 @@ export default function NotificationsScreen() {
       return;
     }
 
-    await Promise.all(
+    try { await Promise.all(
       notifications
         .filter((item) => !item.read)
         .map((item) => markNotificationRead(item, currentUser.uid))
-    );
+    ); } catch { if (mounted.current && auth.currentUser?.uid === currentUser.uid) setActionError("Some read updates could not be saved. Check your connection and retry."); }
   };
 
   const openNotification = async (
@@ -133,9 +77,10 @@ export default function NotificationsScreen() {
   ) => {
     const currentUser = auth.currentUser;
 
-    if (!item.read) {
-      await markNotificationRead(item, currentUser?.uid);
-    }
+    if (!currentUser) return;
+    try { if (!item.read) await markNotificationRead(item, currentUser.uid); }
+    catch { if (mounted.current && auth.currentUser?.uid === currentUser.uid) setActionError("Read status could not be saved. You can still open this request."); }
+    if (!mounted.current || auth.currentUser?.uid !== currentUser.uid) return;
 
     if (item.source === "personal" && item.relatedRequestId) {
       router.push({
@@ -199,6 +144,7 @@ export default function NotificationsScreen() {
             </Text>
           </View>
         )}
+        {!!errorMessage && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry notifications" onPress={() => { setActionError(""); retry(); }} style={{ minHeight: 44, justifyContent: "center" }}><Text style={{ color: "#60A5FA" }}>Retry</Text></TouchableOpacity>}
 
         <View style={styles.filterRow}>
           {(["all", "unread", "important", "system"] as FilterKey[]).map(
