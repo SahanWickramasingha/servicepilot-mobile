@@ -1,6 +1,7 @@
 import { onAuthStateChanged } from "firebase/auth";
 import { useCallback, useEffect, useState } from "react";
 import { useFocusEffect } from "expo-router";
+import { AppState } from "react-native";
 
 import { auth } from "@/src/firebase/config";
 import {
@@ -29,7 +30,16 @@ export function useTechnicianReviews(technicianId: string | null): ReviewsState 
     ...loadingState, viewerUid: null, technicianId: null,
   });
   useFocusEffect(useCallback(() => {
-    if (technicianId) refreshTechnicianReviews(technicianId);
+    if (!technicianId) return;
+    refreshTechnicianReviews(technicianId);
+    // App foregrounding does not necessarily refocus a still-visible route.
+    // Refresh full-history aggregates even if the bounded head never changed.
+    let previous = AppState.currentState;
+    const listener = AppState.addEventListener("change", (state) => {
+      if (state === "active" && previous !== "active") refreshTechnicianReviews(technicianId);
+      previous = state;
+    });
+    return () => listener.remove();
   }, [technicianId]));
 
   useEffect(() => {
@@ -48,23 +58,29 @@ export function useTechnicianReviews(technicianId: string | null): ReviewsState 
       const isCurrent = () => active && version === generation && auth.currentUser?.uid === user.uid;
       unsubscribeReviews = subscribeToTechnicianReviews(
         technicianId,
-        (reviews, metadata, summary, cursor) => {
+        (reviews, metadata, summary, cursor, connection) => {
           // A cache-only empty result cannot prove that a technician has no reviews.
           // Wait for server aggregation over ALL eligible reviews, never this page.
-          if (!isCurrent() || !summary) return;
+          if (!isCurrent()) return;
+          if (!summary) {
+            if (connection === "updating") setState({ ...loadingState, ...identity, updating: true });
+            return;
+          }
           const stale = metadata.fromCache || metadata.hasPendingWrites;
           setState({ ...identity, status: stale ? "stale" : "ready", reviews,
-            summary, cursor: cursor ?? null, errorMessage: stale ? "Ratings may be out of date. Waiting for server confirmation." : "" });
+            summary, cursor: cursor ?? null, updating: connection === "updating",
+            errorMessage: stale && connection !== "updating" ? "Showing saved ratings" : "" });
         },
         (error) => {
           if (!isCurrent()) return;
-          const denied = (error as Error & { code?: string }).code === "permission-denied";
-          const invalidPrecondition = (error as Error & { code?: string }).code === "failed-precondition";
+          const code = (error as Error & { code?: string }).code?.replace(/^firestore\//, "");
+          const denied = code === "permission-denied";
+          const invalidPrecondition = code === "failed-precondition";
           setState((previous) => {
             const retain = !denied && !invalidPrecondition && !!previous.summary &&
               previous.viewerUid === identity.viewerUid && previous.technicianId === technicianId;
-            return { ...(retain ? previous : loadingState), ...identity, status: retain ? "stale" : "error",
-              errorMessage: REVIEWS_UNAVAILABLE_MESSAGE };
+            return { ...(retain ? previous : loadingState), ...identity, status: retain ? "stale" : "error", updating: false,
+              errorMessage: retain ? "Showing saved ratings" : REVIEWS_UNAVAILABLE_MESSAGE };
           });
         }
       );
@@ -79,7 +95,8 @@ export function useTechnicianReviews(technicianId: string | null): ReviewsState 
 
   const retry = () => {
     if (!technicianId || state.viewerUid !== auth.currentUser?.uid || state.technicianId !== technicianId) return;
-    setState({ ...loadingState, viewerUid: state.viewerUid, technicianId });
+    // Keep the saved values visible; the shared attempt publishes progress to
+    // every subscriber, including this screen. Never erase them on a Retry tap.
     retryTechnicianReviews(technicianId);
   };
   // Never render a previous account/technician's result while effects catch up.
