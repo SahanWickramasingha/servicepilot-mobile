@@ -502,10 +502,10 @@ service cloud.firestore {
         request.resource.data.scheduledAt is timestamp &&
         request.resource.data.scheduledAt > request.time &&
         request.resource.data.priority in ["normal", "urgent"] &&
-        request.resource.data.imageUrls is list;
+        request.resource.data.imageUrls is list && bookingNotice(requestId, 'new_customer_request', request.resource.data.technicianId);
     }
 
-    function validCustomerRequestCancel() {
+    function validCustomerRequestCancel(requestId) {
       return isVerifiedCustomer() &&
         resource.data.customerId == request.auth.uid &&
         resource.data.status in ["requested", "pending"] &&
@@ -521,10 +521,70 @@ service cloud.firestore {
             "updatedAt",
             "cancelledAt",
             "cancelledBy"
-          ]);
+          ]) && bookingNotice(requestId, 'customer_cancelled_request', resource.data.get('technicianId', resource.data.get('assignedTechnicianId', '')));
     }
 
-    function validTechnicianRequestStatusUpdate() {
+    function validJobPhoto(path, jobId, technicianId, stage) {
+      let parts = path is string ? path.split('/') : [];
+      return parts.size() == 6 && parts[0] == 'job_photos' && parts[1] == technicianId && parts[2] == jobId && parts[3] == stage &&
+        parts[4].matches('^[A-Za-z0-9]{20}$') && parts[5].matches('^[0-2][.]jpg$');
+    }
+    function validJobPhotos(paths, jobId, technicianId, stage) {
+      return paths is list && paths.size() <= 3 && paths.toSet().size() == paths.size() &&
+        (paths.size() < 1 || validJobPhoto(paths[0], jobId, technicianId, stage)) &&
+        (paths.size() < 2 || validJobPhoto(paths[1], jobId, technicianId, stage)) &&
+        (paths.size() < 3 || validJobPhoto(paths[2], jobId, technicianId, stage));
+    }
+    function validEvidencePart(parts, index) {
+      return parts.size() <= index || (parts[index] is map && parts[index].keys().hasOnly(['name', 'quantity']) &&
+        parts[index].name is string && parts[index].name.trim().size() > 0 && parts[index].name.size() <= 100 &&
+        parts[index].quantity is int && parts[index].quantity > 0 && parts[index].quantity <= 999);
+    }
+    function validEvidenceNotes(notes) {
+      return notes is map && notes.keys().hasOnly(['diagnosis', 'workCompleted', 'recommendation', 'parts']) &&
+        notes.diagnosis is string && notes.diagnosis.trim().size() > 0 && notes.diagnosis.size() <= 3000 &&
+        notes.workCompleted is string && notes.workCompleted.trim().size() > 0 && notes.workCompleted.size() <= 3000 &&
+        notes.recommendation is string && notes.recommendation.size() <= 3000 && notes.parts is list && notes.parts.size() <= 10 &&
+        validEvidencePart(notes.parts, 0) && validEvidencePart(notes.parts, 1) && validEvidencePart(notes.parts, 2) &&
+        validEvidencePart(notes.parts, 3) && validEvidencePart(notes.parts, 4) && validEvidencePart(notes.parts, 5) &&
+        validEvidencePart(notes.parts, 6) && validEvidencePart(notes.parts, 7) && validEvidencePart(notes.parts, 8) && validEvidencePart(notes.parts, 9);
+    }
+    function validEvidenceSignature(signature) {
+      return signature is map && signature.keys().hasOnly(['customerName', 'path', 'confirmed', 'signedAt']) &&
+        signature.customerName is string && signature.customerName.trim().size() > 0 && signature.customerName.size() <= 100 &&
+        signature.confirmed == true && signature.signedAt is timestamp && signature.path is string &&
+        signature.path.size() >= 20 && signature.path.size() <= 15000 && signature.path.matches('^M[0-9., ML]+$') && signature.path.matches('.*L.*');
+    }
+    function completeEvidence(jobId, job) {
+      let evidence = get(/databases/$(database)/documents/job_evidence/$(jobId)).data;
+      // Evidence is fully validated at its own write boundary. Rechecking every
+      // part/photo here would exceed the Rules expression budget for completion.
+      return evidence.requestId == jobId && evidence.customerId == job.customerId && requestTechnicianMatches(job, evidence.technicianId) &&
+        evidence.beforePhotos.size() > 0 && evidence.afterPhotos.size() > 0 &&
+        evidence.notes.diagnosis.trim().size() > 0 && evidence.notes.workCompleted.trim().size() > 0 &&
+        evidence.signature.confirmed == true && evidence.signature.path.size() >= 20;
+    }
+    function validJobEvidence(jobId) {
+      let data = request.resource.data;
+      let job = get(/databases/$(database)/documents/service_requests/$(jobId)).data;
+      return isVerifiedApprovedTechnician() && requestTechnicianMatches(job, request.auth.uid) &&
+        data.keys().hasOnly(['requestId', 'technicianId', 'customerId', 'revision', 'beforePhotos', 'afterPhotos', 'notes', 'signature', 'updatedAt']) &&
+        data.requestId == jobId && data.technicianId == request.auth.uid && data.customerId == job.customerId &&
+        data.updatedAt == request.time && data.revision is int && data.revision == (request.method == 'create' ? 1 : resource.data.revision + 1) &&
+        ((request.method == 'update' && data.beforePhotos == resource.data.beforePhotos) || validJobPhotos(data.beforePhotos, jobId, request.auth.uid, 'before')) &&
+        ((request.method == 'update' && data.afterPhotos == resource.data.afterPhotos) || validJobPhotos(data.afterPhotos, jobId, request.auth.uid, 'after')) &&
+        (!data.keys().hasAny(['notes']) || (request.method == 'update' && data.notes == resource.data.get('notes', null)) || validEvidenceNotes(data.notes)) &&
+        (!data.keys().hasAny(['signature']) || (validEvidenceSignature(data.signature) &&
+          ((request.method != 'create' && data.signature == resource.data.get('signature', null)) || data.signature.signedAt == request.time))) &&
+        (job.status == 'in_progress' || (job.status in ['accepted', 'assigned'] &&
+          data.afterPhotos.size() == 0 && !data.keys().hasAny(['notes', 'signature']))) &&
+        (request.method == 'create' || data.diff(resource.data).affectedKeys().hasOnly(['beforePhotos', 'afterPhotos', 'notes', 'signature', 'revision', 'updatedAt']));
+    }
+    function validTechnicianRequestStatusUpdate(requestId) {
+      let notificationType = request.resource.data.status == 'accepted' ? 'technician_accepted_request' :
+        request.resource.data.status == 'rejected' ? 'technician_rejected_request' :
+        request.resource.data.status == 'in_progress' ? 'job_started' :
+        request.resource.data.status == 'completed' ? 'job_completed' : 'technician_cancelled_job';
       return isVerifiedApprovedTechnician() &&
         requestTechnicianMatches(resource.data, request.auth.uid) &&
         request.resource.data.customerId == resource.data.customerId &&
@@ -578,9 +638,10 @@ service cloud.firestore {
           (
             resource.data.status == "in_progress" &&
             request.resource.data.status == "completed" && request.resource.data.completedAt == request.time &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "completedAt", "updatedAt"])
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "completedAt", "updatedAt"]) &&
+            completeEvidence(requestId, resource.data)
           )
-        );
+        ) && bookingNotice(requestId, notificationType, resource.data.customerId);
     }
 
     function validNotificationReadUpdate() {
@@ -679,8 +740,14 @@ service cloud.firestore {
         );
     }
 
-    function validRequestNotificationCreate() {
+    function bookingNotice(requestId, type, userId) {
+      let notification = getAfter(/databases/$(database)/documents/notifications/$(requestId + '_' + type)).data;
+      return notification.requestId == requestId && notification.type == type && notification.userId == userId && notification.createdAt == request.time;
+    }
+    function validRequestNotificationCreate(notificationId) {
       return validNotificationBaseCreate() &&
+        (request.resource.data.type == 'new_review' || (notificationId == request.resource.data.requestId + '_' + request.resource.data.type &&
+          request.resource.data.createdAt == request.time && notificationRequest().updatedAt == request.time)) &&
         (
           (
             request.resource.data.type == "new_customer_request" &&
@@ -1193,6 +1260,13 @@ service cloud.firestore {
         getAfter(/databases/$(database)/documents/service_requests/$(requestId)).data.createdAt == request.time;
     }
 
+    match /job_evidence/{requestId} {
+      allow get: if hasActiveSession() && (isSuperAdmin() ||
+        (isVerifiedCustomer() && serviceRequestData(requestId).customerId == request.auth.uid) ||
+        (isVerifiedApprovedTechnician() && requestTechnicianMatches(serviceRequestData(requestId), request.auth.uid)));
+      allow list, delete: if false;
+      allow create, update: if hasActiveSession() && validJobEvidence(requestId);
+    }
     match /service_requests/{requestId} {
       allow create: if hasActiveSession() && validCustomerRequestCreate(requestId);
       allow read: if hasActiveSession() &&
@@ -1204,13 +1278,13 @@ service cloud.firestore {
             isApprovedTechnicianId(request.auth.uid)
           )
         );
-      allow update: if hasActiveSession() && (validCustomerRequestCancel() ||
-        validTechnicianRequestStatusUpdate());
+      allow update: if hasActiveSession() && (validCustomerRequestCancel(requestId) ||
+        validTechnicianRequestStatusUpdate(requestId));
       allow delete: if false;
     }
 
     match /notifications/{notificationId} {
-      allow create: if hasActiveSession() && validRequestNotificationCreate();
+      allow create: if hasActiveSession() && validRequestNotificationCreate(notificationId);
       allow read: if hasActiveSession() &&
         resource.data.userId == request.auth.uid;
       allow update: if hasActiveSession() && validNotificationReadUpdate();
