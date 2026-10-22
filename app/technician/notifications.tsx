@@ -1,5 +1,6 @@
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNotificationCenter } from "@/src/hooks/useNotificationCenter";
 import {
   Bell,
   CheckCheck,
@@ -22,68 +23,14 @@ import { auth } from "@/src/firebase/config";
 import {
   NotificationCenterItem,
   markNotificationRead,
-  subscribeToNotificationCenter,
 } from "@/src/services/notification.service";
-import { getUserProfile } from "@/src/services/user.service";
 
 export default function TechnicianNotificationsScreen() {
-  const [items, setItems] = useState<NotificationCenterItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState("");
-
-  useEffect(() => {
-    const currentUser = auth.currentUser;
-
-    if (!currentUser) {
-      setErrorMessage("Please sign in again.");
-      setLoading(false);
-      return;
-    }
-
-    const currentUserId = currentUser.uid;
-    let unsubscribe: (() => void) | undefined;
-    async function loadNotifications() {
-      try {
-        const profile = await getUserProfile(currentUserId);
-
-        if (!profile || profile.role !== "technician") {
-          setErrorMessage("Technician profile not found.");
-          setLoading(false);
-          return;
-        }
-// Subscribe to notification center updates for the technician
-        unsubscribe = subscribeToNotificationCenter(
-          {
-            userId: currentUserId,
-            role: "technician",
-          },
-          (nextItems) => {
-            setItems(nextItems);
-            setLoading(false);
-          },
-          (error, context) => {
-            console.error("Technician notifications error:", error);
-            setErrorMessage(
-              context.queryType === "system-messages"
-                ? "Unable to load system messages."
-                : context.queryType === "personal-notifications"
-                  ? "Unable to load personal notifications."
-                  : "Unable to load message read status."
-            );
-            setLoading(false);
-          }
-        );
-      } catch (error) {
-        console.error("Technician notification load error:", error);
-        setErrorMessage("Unable to load notifications.");
-        setLoading(false);
-      }
-    }
-
-    loadNotifications();
-
-    return () => unsubscribe?.();
-  }, []);
+  const { items, loading, errorMessage: subscriptionError, retry } = useNotificationCenter("technician");
+  const [actionError, setActionError] = useState("");
+  const errorMessage = subscriptionError || actionError;
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const unreadCount = items.filter((item) => !item.read).length;
   const hasLoadError = errorMessage.length > 0;
@@ -95,19 +42,20 @@ export default function TechnicianNotificationsScreen() {
       return;
     }
 
-    await Promise.all(
+    try { await Promise.all(
       items
         .filter((item) => !item.read)
         .map((item) => markNotificationRead(item, currentUser.uid))
-    );
+    ); } catch { if (mounted.current && auth.currentUser?.uid === currentUser.uid) setActionError("Some read updates could not be saved. Check your connection and retry."); }
   };
 
   const openItem = async (item: NotificationCenterItem) => {
     const currentUser = auth.currentUser;
 
-    if (!item.read) {
-      await markNotificationRead(item, currentUser?.uid);
-    }
+    if (!currentUser) return;
+    try { if (!item.read) await markNotificationRead(item, currentUser.uid); }
+    catch { if (mounted.current && auth.currentUser?.uid === currentUser.uid) setActionError("Read status could not be saved. You can still open this job."); }
+    if (!mounted.current || auth.currentUser?.uid !== currentUser.uid) return;
 
     if (item.source === "personal" && item.requestId) {
       router.push({
@@ -157,6 +105,7 @@ export default function TechnicianNotificationsScreen() {
             <Text style={styles.errorText}>{errorMessage}</Text>
           </View>
         )}
+        {!!errorMessage && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry notifications" onPress={() => { setActionError(""); retry(); }} style={{ minHeight: 44, justifyContent: "center" }}><Text style={{ color: "#60A5FA" }}>Retry</Text></TouchableOpacity>}
 
         {items.length > 0 ? (
           <View style={styles.list}>
