@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { initializeApp, deleteApp } from "firebase/app";
 import * as firestore from "firebase/firestore";
+import { performanceTestDependency } from "../lib/performance-test-deps.mjs";
 const require = createRequire(import.meta.url), ts = require("typescript");
 function loadTs(path, deps = {}) {
   const code = ts.transpileModule(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"),
@@ -11,7 +12,7 @@ function loadTs(path, deps = {}) {
   const exports = {};
   new Function("exports", "require", "__DEV__", code)(exports, (id) => {
     if (id === "firebase/functions") throw new Error("Map must not import callable Functions");
-    return deps[id] ?? require(id);
+    return deps[id] ?? performanceTestDependency(id, deps) ?? require(id);
   }, false);
   return exports;
 }
