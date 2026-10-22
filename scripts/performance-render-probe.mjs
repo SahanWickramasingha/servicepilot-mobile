@@ -45,7 +45,8 @@ const form = renderHarness('app/(tabs)/create-request.tsx', { root, initial: [pr
   '@/src/firebase/config': { auth: { currentUser: { uid: 'customer' } } },
   '@react-native-community/datetimepicker': { __esModule: true, default: 'DateTimePicker' },
   '@/src/services/user.service': {}, '@/src/services/technician.service': {},
-  '@/src/services/request.service': { createServiceRequest: () => { bookingCalls++; return new Promise((resolve) => finish.push(resolve)); } },
+  '@/src/services/request.service': { createServiceRequestAttemptId: () => 'localPerformanceAttempt01',
+    createServiceRequest: () => { bookingCalls++; return new Promise((resolve) => finish.push(resolve)); } },
   '@/src/components/technicians/AvailabilityBadge': { AvailabilityBadge: 'AvailabilityBadge' },
 } });
 form.render(); const submit = form.elements().find((e) => e.type === 'TouchableOpacity' && e.props.onPress?.name === 'handleSubmit').props.onPress;
