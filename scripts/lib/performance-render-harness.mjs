@@ -29,6 +29,9 @@ export function renderHarness(path, { root = '.', initial = [], dependencies = {
     'react-native-maps': { __esModule: true, default: 'MapView', Polygon: 'Polygon', Marker: 'Marker', Circle: 'Circle', PROVIDER_GOOGLE: 'google' },
     'lucide-react-native': new Proxy({}, { get: (_, key) => key }),
     'expo-image': { Image: 'Image' },
+    // Evidence rendering has its own focused tests; unrelated screen workloads
+    // do not load native image-picker/Storage implementations in Node.
+    '@/src/components/jobs/JobEvidenceView': { JobEvidenceView: 'JobEvidenceView' },
     ...dependencies };
   function load(logical) {
     if (modules.has(logical)) return modules.get(logical);
