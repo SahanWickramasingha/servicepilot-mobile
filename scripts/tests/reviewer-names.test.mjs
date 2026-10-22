@@ -199,6 +199,52 @@ test("bounded technician pages retain full-history totals, deterministic newest-
   } finally { stop(); }
 });
 
+test("real SDK offline-to-online metadata confirmation clears saved rating status and refreshes unchanged-head aggregates", async () => {
+  const uid = "rating-recovery-tech";
+  await admin.doc(`users/${uid}`).set({ uid, fullName: "Recovery Technician", role: "technician",
+    accountStatus: "active", emailVerified: true, technicianApprovalStatus: "approved" });
+  for (let n = 0; n < 3; n++) await admin.doc(`service_reviews/recovery-${n}`).set({
+    technicianId: uid, customerId: "customer", customerName: "Bandara", rating: 4,
+    createdAt: new Date(Date.UTC(2026, 9, 1, n)),
+  });
+  const db = client(uid), service = services(db, uid).technician, values = [];
+  let failure;
+  const stop = service.subscribeToTechnicianReviews(uid, (reviews, metadata, summary, cursor, connection) => {
+    values.push({ reviews, metadata, summary, cursor, connection });
+  }, (error) => { failure = error; });
+  const last = () => values.at(-1);
+  const waitFor = async (predicate) => {
+    const deadline = Date.now() + 15000;
+    while (!predicate()) {
+      if (failure) throw failure;
+      if (Date.now() > deadline) throw new Error("Local SDK rating recovery timed out.");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
+  try {
+    await waitFor(() => last()?.connection === "confirmed");
+    assert.deepEqual(last().summary, { average: 4, count: 3 });
+    await firestoreSdk.disableNetwork(db);
+    await waitFor(() => last()?.metadata.fromCache === true);
+    service.refreshTechnicianReviews(uid);
+    await waitFor(() => last()?.connection === "saved");
+    assert.deepEqual(last().summary, { average: 4, count: 3 });
+    // Outside the ordered head: recovery requires metadata-only server
+    // confirmation AND full aggregation, rather than a new head document.
+    await admin.doc("service_reviews/recovery-legacy").set({ technicianId: uid, customerId: "customer", rating: 2 });
+    await firestoreSdk.enableNetwork(db);
+    await waitFor(() => last()?.connection === "confirmed" && last()?.summary.count === 4);
+    assert.deepEqual(last().summary, { average: 3.5, count: 4 });
+    assert.equal(last().metadata.fromCache, false); assert.equal(last().metadata.hasPendingWrites, false);
+    assert.equal(last().reviews.length, 3); assert.equal(last().cursor.kind, "undated");
+    for (let i = 0; i < 10; i++) {
+      const count = values.length; service.refreshTechnicianReviews(uid);
+      await waitFor(() => values.length > count && last()?.connection === "confirmed");
+      assert.deepEqual(last().summary, { average: 3.5, count: 4 });
+    }
+  } finally { stop(); await firestoreSdk.enableNetwork(db); }
+});
+
 test("rules protect paginated/aggregate reviews from anonymous, other-technician, dispatcher and inactive callers while customer/admin access remains", async () => {
   const uid = "reviews-paged-tech";
   const aggregate = (db) => firestoreSdk.getAggregateFromServer(query(collection(db, "service_reviews"),
