@@ -272,7 +272,7 @@ export default function TechnicianDashboard() {
               Technician Rating
             </Text>
 
-            <Text style={styles.ratingSummaryValue}>
+            <Text style={styles.ratingSummaryValue} numberOfLines={2}>
               {ratingDisplay.label}
             </Text>
 
@@ -281,7 +281,7 @@ export default function TechnicianDashboard() {
             </Text>
             <TechnicianRatingStatus ratings={ratings} />
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="View reviews received by you"
-              style={{ paddingVertical: 10 }} onPress={() => router.push("/technician/performance")}>
+              style={{ minHeight: 44, justifyContent: "center" }} onPress={() => router.push("/technician/performance")}>
               <Text style={styles.viewAll}>View Reviews</Text>
             </TouchableOpacity>
           </View>
@@ -297,7 +297,7 @@ export default function TechnicianDashboard() {
               }
             />
 
-            <Text style={styles.ratingValue}>
+            <Text style={styles.ratingValue} numberOfLines={1} adjustsFontSizeToFit>
               {ratingDisplay.hasRatings ? ratingDisplay.value : "—"}
             </Text>
 
@@ -802,10 +802,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 16,
+    paddingVertical: 12,
     marginBottom: 25,
     gap: 12,
   },
-  ratingSummary: { flex: 1 },
+  ratingSummary: { flex: 1, minWidth: 0 },
   ratingSectionLabel: { color: "#64748B", fontSize: 9 },
   ratingSummaryValue: {
     color: "#FFFFFF",
@@ -819,6 +820,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   ratingBox: {
+    flexShrink: 0,
     width: 76,
     height: 76,
     borderRadius: 16,
