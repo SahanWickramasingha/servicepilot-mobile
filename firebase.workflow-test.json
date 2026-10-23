@@ -1,0 +1,16 @@
+{
+  "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
+  "storage": { "rules": "storage.rules" },
+  "hosting": { "public": ".expo/password-reset-emulator", "cleanUrls": true,
+    "headers": [{ "regex": "^[/\\\\]auth[/\\\\].*", "headers": [
+      { "key": "Referrer-Policy", "value": "no-referrer" }, { "key": "Cache-Control", "value": "no-store" }
+    ] }] },
+  "emulators": {
+    "firestore": { "host": "127.0.0.1", "port": 8387 },
+    "auth": { "host": "127.0.0.1", "port": 9397 },
+    "storage": { "host": "127.0.0.1", "port": 9497 },
+    "hosting": { "host": "127.0.0.1", "port": 5008 },
+    "ui": { "enabled": false },
+    "singleProjectMode": true
+  }
+}
