@@ -413,7 +413,7 @@ test("existing customer profile/list actions read only public projections and ca
   const customerProfile = (await admin.doc("users/map-customer-a").get()).data();
   const requestId = await requests.createServiceRequest({ profile: customerProfile, technician: profile,
     serviceCategory: "Electrical", title: "Local demo request", description: "Test public profile preflight", address: "Customer supplied address",
-    division: "Kandy", preferredDate: "2099-10-04", preferredTime: "10:00 AM", scheduledAt: new Date("2099-10-04T04:30:00Z"), priority: "normal" });
+    division: "Kandy", preferredDate: "2099-10-04", preferredTime: "10:00 AM", durationMinutes: 60, scheduledAt: new Date("2099-10-04T04:30:00Z"), priority: "normal" });
   const request = (await admin.doc(`service_requests/${requestId}`).get()).data();
   assert.equal(request.technicianId, "map-tech"); assert.equal(request.customerId, "map-customer-a");
   assert.equal(request.status, "requested");
