@@ -1,3 +1,4 @@
+import { colomboStart } from "@/functions/src/domain/scheduling";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
@@ -62,8 +63,8 @@ const TIME_SLOTS = [
 ];
 
 function getTodayStart() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const colombo = new Date(Date.now() + 330 * 60000);
+  return new Date(colombo.getUTCFullYear(), colombo.getUTCMonth(), colombo.getUTCDate());
 }
 
 function formatDateForStorage(date: Date) {
@@ -82,45 +83,12 @@ function formatDateForDisplay(date: Date) {
   });
 }
 
-function isSameCalendarDay(first: Date, second: Date) {
-  return (
-    first.getFullYear() === second.getFullYear() &&
-    first.getMonth() === second.getMonth() &&
-    first.getDate() === second.getDate()
-  );
-}
-
 function buildScheduledDate(date: Date, timeSlot: string) {
-  const match = timeSlot.match(/^(\d{2}):(\d{2}) (AM|PM)$/);
-
-  if (!match) {
-    return null;
-  }
-
-  const [, hourValue, minuteValue, meridiem] = match;
-  let hours = Number(hourValue);
-
-  if (meridiem === "PM" && hours !== 12) {
-    hours += 12;
-  }
-
-  if (meridiem === "AM" && hours === 12) {
-    hours = 0;
-  }
-
-  return new Date(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate(),
-    hours,
-    Number(minuteValue),
-    0,
-    0
-  );
+  try { return new Date(colomboStart(formatDateForStorage(date), timeSlot)); } catch { return null; }
 }
 
 function isPastTimeSlot(date: Date | null, timeSlot: string) {
-  if (!date || !isSameCalendarDay(date, new Date())) {
+  if (!date) {
     return false;
   }
 
@@ -155,6 +123,7 @@ export default function CreateRequestScreen() {
   const [showDatePicker, setShowDatePicker] =
     useState(false);
   const [preferredTime, setPreferredTime] = useState("");
+  const [durationMinutes, setDurationMinutes] = useState("");
   const [priority, setPriority] =
     useState<RequestPriority>("normal");
   const [photoCount, setPhotoCount] = useState(0);
@@ -247,8 +216,10 @@ export default function CreateRequestScreen() {
       return "Please select a future date and time.";
     }
 
+    if (!Number.isSafeInteger(Number(durationMinutes)) || Number(durationMinutes) <= 0) return "Enter the service duration in whole minutes.";
     return "";
   }, [
+    durationMinutes,
     serviceCategory,
     technician,
     title,
@@ -295,6 +266,7 @@ export default function CreateRequestScreen() {
         preferredDate,
         preferredTime,
         scheduledAt,
+        durationMinutes: Number(durationMinutes),
         priority,
         imageUrls: [],
       });
@@ -541,8 +513,9 @@ export default function CreateRequestScreen() {
           </View>
         </View>
 
+        <View style={styles.card}><FieldLabel label="Service duration (minutes, required)" /><TextInput accessibilityLabel="Service duration in minutes" value={durationMinutes} onChangeText={setDurationMinutes} keyboardType="number-pad" placeholder="Enter an explicit duration" placeholderTextColor="#64748B" style={styles.iconTextInput} /></View>
         <Text style={styles.sectionTitle}>
-          Preferred Schedule
+          Preferred Schedule • Asia/Colombo
         </Text>
         <View style={styles.card}>
           <View style={styles.scheduleField}>
