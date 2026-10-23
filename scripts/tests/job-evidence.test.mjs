@@ -91,6 +91,7 @@ test('photo screen preserves selections after failure, retries a real save and r
     '@/src/hooks/useTechnicianRequest': { useTechnicianRequest: () => ({ requestId: 'job-a', request: { id: 'job-a', customerName: 'Fixture', status: 'in_progress' }, loading: false }) },
     '@/src/hooks/useJobEvidence': { useJobEvidence: () => ({ evidence: data, confirmed: true, loading: false, error: '' }) },
     '@/src/components/jobs/JobEvidenceView': {}, './JobEvidenceView': { JobPhoto: 'JobPhoto', SignaturePreview: 'SignaturePreview' },
+    'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
     '@/src/services/jobEvidence.service': { pickJobPhotos: async () => [{ uri: 'selected-local', size: 4 }], newJobPhotoAttempt: () => attempt,
       cleanupJobUploads: async () => {}, uploadJobPhoto: async (_, __, id) => { attempts.push(id); return path(); },
       saveJobEvidence: async (id, rev, change) => { saves++; assert.equal(id, 'job-a'); if (fail) throw new Error('Save failed'); data = { ...complete(), ...change }; } },
@@ -103,4 +104,75 @@ test('photo screen preserves selections after failure, retries a real save and r
   fail = false; await button('Retry save').onPress(); await tick(); assert.equal(saves, 2); assert.deepEqual(attempts, [attempt, attempt]); assert.deepEqual(routes, ['back']); h.cleanup();
   const reopened = renderHarness('src/components/jobs/JobEvidenceScreen.tsx', { effects: true, exportName: 'JobEvidenceScreen', dependencies: deps }); reopened.render({ mode: 'before' }); reopened.render({ mode: 'before' });
   assert.ok(reopened.elements().some((e) => e.type === 'JobPhoto' && e.props.path === path())); reopened.cleanup();
+});
+
+function formFixture(mode) {
+  let data = null, fail = false; const saved = [], routes = [];
+  const deps = {
+    'expo-router': { router: { back: () => routes.push('back') } },
+    'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
+    '@/src/firebase/config': { auth: { currentUser: { uid: 'tech-a' } } },
+    '@/src/hooks/useTechnicianRequest': { useTechnicianRequest: () => ({ requestId: 'job-a', request: { customerName: 'Customer fixture', status: 'in_progress' } }) },
+    '@/src/hooks/useJobEvidence': { useJobEvidence: () => ({ evidence: data, confirmed: true, loading: false, error: '' }) },
+    './JobEvidenceView': { JobPhoto: 'JobPhoto', SignaturePreview: 'SignaturePreview' },
+    '@/src/services/jobEvidence.service': { saveJobEvidence: async (id, revision, change) => {
+      if (change.notes) domain.validateServiceNotes(change.notes);
+      if (change.signature) domain.validateJobSignature(change.signature);
+      if (fail) throw new Error('Recoverable save failure');
+      data = { ...complete(), ...change }; saved.push(change);
+    } },
+  };
+  const create = () => renderHarness('src/components/jobs/JobEvidenceScreen.tsx', { effects: true, exportName: 'JobEvidenceScreen', dependencies: deps });
+  let h = create();
+  const render = () => { h.render({ mode }); h.render({ mode }); };
+  const button = (label) => h.elements().find((e) => e.type?.name === 'Button' && e.props.label === label).props;
+  const field = (label) => h.elements().find((e) => e.type === 'TextInput' && e.props.accessibilityLabel === label).props;
+  render();
+  return { render, button, field, saved, routes, elements: () => h.elements(), fail: (value) => { fail = value; },
+    reopen: () => { h.cleanup(); h = create(); render(); }, cleanup: () => h.cleanup() };
+}
+
+test('notes form rejects incomplete input, preserves values after failure and restores optional empty parts/recommendations on reopen', async () => {
+  const f = formFixture('notes');
+  await f.button('Save').onPress(); await tick(); f.render(); assert.equal(f.saved.length, 0);
+  f.field('Diagnosis (required)').onChangeText('Motor fault'); f.render();
+  f.field('Work completed (required)').onChangeText('Replaced bearing'); f.render();
+  f.fail(true); await f.button('Save').onPress(); await tick(); f.render();
+  assert.equal(f.field('Diagnosis (required)').value, 'Motor fault'); assert.equal(f.routes.length, 0);
+  f.fail(false); await f.button('Retry save').onPress(); await tick(); assert.equal(f.saved.length, 1);
+  f.reopen(); assert.equal(f.field('Work completed (required)').value, 'Replaced bearing');
+  assert.deepEqual(f.saved[0].notes.parts, []); assert.equal(f.saved[0].notes.recommendation, ''); f.cleanup();
+});
+
+test('signature form captures actual strokes, locks scrolling while drawing, rejects empty capture and restores saved drawing', async () => {
+  const f = formFixture('signature');
+  await f.button('Save').onPress(); await tick(); f.render(); assert.equal(f.saved.length, 0);
+  const pad = () => f.elements().find((e) => e.props.accessibilityLabel === 'Customer signature drawing area').props;
+  const point = (x, y) => ({ nativeEvent: { locationX: x, locationY: y } });
+  pad().onResponderGrant(point(10, 10)); f.render();
+  assert.equal(f.elements().find((e) => e.type === 'ScrollView').props.scrollEnabled, false);
+  pad().onResponderMove(point(40, 50)); f.render(); pad().onResponderMove(point(80, 20)); f.render();
+  pad().onResponderRelease(); f.render();
+  assert.equal(f.elements().find((e) => e.type === 'ScrollView').props.scrollEnabled, true);
+  f.elements().find((e) => e.props.accessibilityRole === 'checkbox').props.onPress(); f.render();
+  f.fail(true); await f.button('Save').onPress(); await tick(); f.render(); assert.equal(f.saved.length, 0);
+  assert.ok(f.elements().find((e) => e.type === 'SignaturePreview').props.path.includes('L40.0,50.0'));
+  f.fail(false); await f.button('Retry save').onPress(); await tick();
+  assert.equal(f.saved.length, 1); domain.validateJobSignature(f.saved[0].signature);
+  f.reopen(); assert.equal(f.elements().find((e) => e.type === 'SignaturePreview').props.path, f.saved[0].signature.path);
+  f.button('Clear signature').onPress(); f.render();
+  assert.equal(f.elements().find((e) => e.type === 'SignaturePreview').props.path, ''); f.cleanup();
+});
+
+test('signature capture handles measured pad resizing without connecting strokes across layouts', () => {
+  const f = formFixture('signature');
+  const pad = () => f.elements().find((e) => e.props.accessibilityLabel === 'Customer signature drawing area').props;
+  const point = (x,y) => ({ nativeEvent: { locationX:x, locationY:y } });
+  pad().onLayout({nativeEvent:{layout:{width:640,height:360}}});
+  pad().onResponderGrant(point(20,20)); f.render(); pad().onResponderMove(point(80,100)); f.render();
+  assert.match(f.elements().find(e=>e.type==='SignaturePreview').props.path,/M10.0,10.0 L40.0,50.0/);
+  pad().onLayout({nativeEvent:{layout:{width:520,height:180}}});
+  pad().onResponderMove(point(260,90)); f.render();
+  assert.match(f.elements().find(e=>e.type==='SignaturePreview').props.path,/M160.0,90.0/);
+  pad().onResponderTerminate();f.render();assert.equal(f.elements().find(e=>e.type==='ScrollView').props.scrollEnabled,true);f.cleanup();
 });
