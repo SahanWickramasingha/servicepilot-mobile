@@ -35,9 +35,15 @@ export async function saveJobEvidence(requestId: string, expectedRevision: numbe
     if (metadata.contentType !== "image/jpeg" || !metadata.size || metadata.size > 5 * 1024 * 1024 ||
       metadata.customMetadata?.technicianId !== uid || metadata.customMetadata?.requestId !== requestId) throw new Error("A job photo is unavailable. Select and upload it again.");
   }
+  // Preflight reads provide useful errors. Rules recheck the authoritative account
+  // and job at commit; the evidence revision transaction serializes edits. Keeping
+  // redundant preflight reads out of that transaction leaves Rules expression
+  // budget for validating all ten parts in a maximum-size evidence record.
+  const [jobSnapshot, profileSnapshot] = await Promise.all([
+    getDocFromServer(doc(db, "service_requests", requestId)), getDocFromServer(doc(db, "users", uid)),
+  ]);
+  const job = jobSnapshot.data(), profile = profileSnapshot.data();
   await runTransaction(db, async (transaction) => {
-    const job = (await transaction.get(doc(db, "service_requests", requestId))).data();
-    const profile = (await transaction.get(doc(db, "users", uid))).data();
     const reference = doc(db, "job_evidence", requestId), snapshot = await transaction.get(reference);
     session(uid); bookingAccount(profile, "technician");
     if (!job || bookingTechnician(job) !== uid || !("beforePhotos" in change ? ["accepted", "assigned", "in_progress"] : ["in_progress"]).includes(job.status)) throw new Error("Only the assigned technician can save evidence on an eligible job.");
@@ -53,6 +59,7 @@ export async function saveJobEvidence(requestId: string, expectedRevision: numbe
     })) return;
     if ((saved?.revision ?? 0) !== expectedRevision) throw new Error("Service evidence changed on another screen. Reopen it before saving your changes.");
     transaction.set(reference, { ...(saved ?? { beforePhotos: [], afterPhotos: [] }), ...change,
+      ...("notes" in change ? { notesUpdatedAt: serverTimestamp() } : {}),
       ...( "signature" in change ? { signature: { ...change.signature, signedAt: serverTimestamp() } } : {} ),
       requestId, technicianId: uid, customerId: job.customerId, revision: expectedRevision + 1, updatedAt: serverTimestamp() });
   });
