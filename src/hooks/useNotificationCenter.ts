@@ -4,7 +4,7 @@ import { AppState } from "react-native";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/src/firebase/config";
 import { subscribeToUserProfile, type UserRole } from "@/src/services/user.service";
-import { retryNotificationCenter, subscribeToNotificationCenter, type NotificationCenterItem } from "@/src/services/notification.service";
+import { loadNotificationHistory, markAllNotificationsRead, refreshNotificationUnreadTotal, retryNotificationCenter, subscribeToNotificationCenter, type NotificationCenterItem, type NotificationCenterStatus } from "@/src/services/notification.service";
 
 /** Profile and notification subscriptions belong to the same mounted Auth session. */
 export function useNotificationCenter(requiredRole: UserRole) {
@@ -15,7 +15,7 @@ export function useNotificationCenter(requiredRole: UserRole) {
     const listener = AppState.addEventListener('change', (next) => { if (next === 'active' && previous !== 'active') refresh(); previous = next; });
     return () => listener.remove();
   }, [requiredRole]));
-  const [state, setState] = useState<{ viewer: string | null; items: NotificationCenterItem[]; loading: boolean; errorMessage: string }>({
+  const [state, setState] = useState<{ viewer: string | null; items: NotificationCenterItem[]; loading: boolean; errorMessage: string; status?: NotificationCenterStatus }>({
     viewer: null, items: [], loading: true, errorMessage: "",
   });
   useEffect(() => {
@@ -43,7 +43,7 @@ export function useNotificationCenter(requiredRole: UserRole) {
         const centerCurrent = () => current() && centerVersion === centerGeneration;
         stopCenter = subscribeToNotificationCenter({ userId: user.uid, role: requiredRole }, (items, status) => {
           if (centerCurrent()) setState((previous) => ({ ...previous, viewer, items, loading: status?.loading ?? false,
-            errorMessage: status?.errors.length ? "Some notifications are unavailable. Check your connection and retry." : "" }));
+            status, errorMessage: status?.operationError || (status?.errors.length ? "Some notifications are unavailable. Check your connection and retry." : "") }));
         }, (_error, context) => {
           if (centerCurrent()) setState((previous) => ({ ...previous, loading: false, errorMessage:
             context.queryType === "system-messages" ? "Unable to load system messages."
@@ -59,5 +59,8 @@ export function useNotificationCenter(requiredRole: UserRole) {
     return () => { active = false; generation++; stopProfile?.(); closeCenter(); stopAuth(); };
   }, [requiredRole]);
   return { ...(state.viewer === (auth.currentUser?.uid ?? null) ? state
-    : { viewer: null, items: [], loading: true, errorMessage: "" }), retry };
+    : { viewer: null, items: [], loading: true, errorMessage: "" }), retry,
+    loadMore: () => loadNotificationHistory(auth.currentUser?.uid ?? "", requiredRole),
+    refreshTotal: () => refreshNotificationUnreadTotal(auth.currentUser?.uid ?? "", requiredRole),
+    markAll: () => markAllNotificationsRead(auth.currentUser?.uid ?? "", requiredRole) };
 }
