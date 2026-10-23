@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { connectAuthEmulator } from "firebase/auth";
+import { beforeAuthStateChanged, connectAuthEmulator } from "firebase/auth";
 import { createAppAuth } from "./authPersistence";
+import { installLocationAuthGuard } from "./locationAuthGuard";
 import {
   getFirestore,
   initializeFirestore,
@@ -39,6 +40,11 @@ function getConfiguredFirestore(): Firestore {
 }
 
 export const auth = createAppAuth(app);
+// Register once for the Auth singleton, including direct SDK replacement/sign-out.
+// Blocking cleanup runs before the old credentials are replaced. A failed cleanup
+// rejects the switch; never try to revoke account A using account B's credentials.
+installLocationAuthGuard(auth, beforeAuthStateChanged,
+  async () => (await import("@/src/services/foreground-location.service")).foregroundSharing);
 export const db = getConfiguredFirestore();
 // All Firestore initialization above uses the default database. Safe diagnostic
 // context comes from the initialized app, rather than assuming the CLI target.
