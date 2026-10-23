@@ -1,9 +1,9 @@
+import { NotificationHistoryControls } from "@/src/components/notifications/NotificationHistoryControls";
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { useNotificationCenter } from "@/src/hooks/useNotificationCenter";
 import {
   Bell,
-  CheckCheck,
   ChevronRight,
   CircleAlert,
   Megaphone,
@@ -26,35 +26,27 @@ import {
 } from "@/src/services/notification.service";
 
 export default function TechnicianNotificationsScreen() {
-  const { items, loading, errorMessage: subscriptionError, retry } = useNotificationCenter("technician");
+  const center = useNotificationCenter("technician");
+  const { items, loading, errorMessage: subscriptionError, retry } = center;
   const [actionError, setActionError] = useState("");
   const errorMessage = subscriptionError || actionError;
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
-  const unreadCount = items.filter((item) => !item.read).length;
   const hasLoadError = errorMessage.length > 0;
 
-  const markAllAsRead = async () => {
-    const currentUser = auth.currentUser;
-
-    if (!currentUser) {
-      return;
-    }
-
-    try { await Promise.all(
-      items
-        .filter((item) => !item.read)
-        .map((item) => markNotificationRead(item, currentUser.uid))
-    ); } catch { if (mounted.current && auth.currentUser?.uid === currentUser.uid) setActionError("Some read updates could not be saved. Check your connection and retry."); }
-  };
 
   const openItem = async (item: NotificationCenterItem) => {
     const currentUser = auth.currentUser;
 
     if (!currentUser) return;
-    try { if (!item.read) await markNotificationRead(item, currentUser.uid); }
-    catch { if (mounted.current && auth.currentUser?.uid === currentUser.uid) setActionError("Read status could not be saved. You can still open this job."); }
+    setActionError("");
+    // Offline Firestore writes may stay pending indefinitely. The read receipt
+    // must not block opening the job; the destination checks participant access.
+    if (!item.read) void markNotificationRead(item, currentUser.uid).catch(() => {
+      if (mounted.current && auth.currentUser?.uid === currentUser.uid) setActionError("Read status could not be saved. You can still open this job.");
+    });
+    await Promise.resolve();
     if (!mounted.current || auth.currentUser?.uid !== currentUser.uid) return;
 
     if (item.source === "personal" && item.requestId) {
@@ -86,18 +78,10 @@ export default function TechnicianNotificationsScreen() {
             <Text style={styles.subtitle}>
               {hasLoadError
                 ? "Some notifications couldn't load"
-                : unreadCount > 0
-                  ? `${unreadCount} unread`
-                  : "You're all caught up"}
+                : "Recent notifications • total available below"}
             </Text>
           </View>
 
-          {unreadCount > 0 && (
-            <TouchableOpacity style={styles.readAllButton} onPress={markAllAsRead}>
-              <CheckCheck size={17} color="#22C55E" />
-              <Text style={styles.readAllText}>Read All</Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         {!!errorMessage && (
@@ -155,7 +139,7 @@ export default function TechnicianNotificationsScreen() {
           <View style={styles.emptyCard}>
             <Bell size={38} color="#64748B" />
             <Text style={styles.emptyTitle}>
-              {hasLoadError ? "Notifications unavailable" : "No Notifications"}
+              {hasLoadError ? "Notifications unavailable" : center.status?.hasMore ? "No matching recent notifications. Load earlier history below." : "No Notifications"}
             </Text>
             <Text style={styles.emptyText}>
               {hasLoadError
@@ -164,6 +148,7 @@ export default function TechnicianNotificationsScreen() {
             </Text>
           </View>
         )}
+        <NotificationHistoryControls status={center.status} loadMore={center.loadMore} refreshTotal={center.refreshTotal} markAll={center.markAll} refreshRecent={retry} onError={setActionError} />
       </ScrollView>
     </View>
   );
