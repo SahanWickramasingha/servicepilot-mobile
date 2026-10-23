@@ -17,6 +17,7 @@ const { getAuth: getAdminAuth } = functionsRequire("firebase-admin/auth");
 const projection = functionsRequire("./lib/domain/mapProjection.js"), domain = functionsRequire("./lib/domain/map.js");
 const availability = functionsRequire("./lib/domain/availability.js"), areas = functionsRequire("./lib/domain/serviceAreas.js");
 const app = initAdmin({ projectId }, "availability-booking"), admin = getFirestore(app), sessions = new Map();
+const scheduler = functionsRequire("./lib/services/booking-schedule.service.js").createBookingScheduleService({auth:getAdminAuth(app),db:admin});
 const ts = rootRequire("typescript");
 function load(path, deps) {
   const exports = {}, code = ts.transpileModule(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"),
@@ -33,7 +34,11 @@ function services(session, sdk = firestore) {
     "@/src/constants/serviceRequests": constants, "@/src/utils/registrationDebug": {}, "@/src/utils/technicianRating": rating };
   const user = load("src/services/user.service.ts", deps), technician = load("src/services/technician.service.ts", deps);
   const notification = load("src/services/notification.service.ts", deps), location = load("src/services/location.service.ts", deps);
-  const request = load("src/services/request.service.ts", { ...deps, "@/src/services/technician.service": technician,
+  const request = load("src/services/request.service.ts", { ...deps, "./bookingSchedule.service": { callBookingSchedule: async input => {
+    if(session.auth.currentUser?.emailVerified !== true) throw Error("Please sign in with your verified account.");
+    if(sdk !== firestore && input.action === "accept") await setAvailability("busy");
+    return scheduler.change("Bearer " + await session.auth.currentUser.getIdToken(),input);
+  } }, "@/src/services/technician.service": technician,
     "@/src/services/notification.service": notification });
   return { user, technician, request, location };
 }
@@ -48,16 +53,17 @@ function requestData(overrides = {}) {
     customerPhone: "Private", technicianId: "availability-tech", technicianName: "Availability Technician", serviceCategory: "Electrical",
     title: "Test booking", description: "Local test", address: "Private customer address", serviceArea: "Kandy", division: "Kandy",
     preferredDate: "2099-10-10", preferredTime: "10:00 AM", scheduledAt: firestore.Timestamp.fromDate(new Date("2099-10-10T04:30:00Z")),
+    durationMinutes: 60, scheduledEndAt: firestore.Timestamp.fromDate(new Date("2099-10-10T05:30:00Z")), schedulingVersion: 1, bookingTimeZone: "Asia/Colombo", scheduleRevision: 0,
     priority: "normal", status: "requested", imageUrls: [], createdAt: firestore.serverTimestamp(), updatedAt: firestore.serverTimestamp(), ...overrides };
 }
 async function input() {
   return { profile: (await admin.doc("users/availability-customer").get()).data(),
     technician: await customer().services.technician.getApprovedTechnician("availability-tech"), serviceCategory: "Electrical",
     title: "Test booking", description: "Local test", address: "Private customer address", division: "Kandy", preferredDate: "2099-10-10",
-    preferredTime: "10:00 AM", scheduledAt: new Date("2099-10-10T04:30:00Z"), priority: "normal" };
+    preferredTime: "10:00 AM", durationMinutes: 60, scheduledAt: new Date("2099-10-10T04:30:00Z"), priority: "normal" };
 }
 async function seedJob(id, status = "requested") {
-  await admin.doc(`service_requests/${id}`).set({ ...requestData(), status, scheduledAt: new Date("2099-10-10T04:30:00Z"), createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+  await admin.doc(`service_requests/${id}`).set({ ...requestData(), status, scheduledAt: new Date("2099-10-10T04:30:00Z"), scheduledEndAt: new Date("2099-10-10T05:30:00Z"), createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
 }
 async function seedCompletionEvidence(id) {
   const job = (await admin.doc(`service_requests/${id}`).get()).data(), technicianId = job.technicianId || job.assignedTechnicianId;
@@ -173,10 +179,10 @@ test("legacy and malformed availability remain viewable as unknown and block new
   await setAvailability("available");
 });
 
-test("Available preserves multiple simultaneous jobs; completion keeps manually selected Offline and notifications", async () => {
+test("Available preserves multiple adjacent jobs; completion keeps manually selected Offline and notifications", async () => {
   await setAvailability("available");
   const details = await input();
-  const ids = await Promise.all([customer().services.request.createServiceRequest(details), customer().services.request.createServiceRequest(details)]);
+  const ids = await Promise.all([customer().services.request.createServiceRequest(details), customer().services.request.createServiceRequest({...details,preferredTime:"11:00 AM",scheduledAt:new Date("2099-10-10T05:30:00Z")})]);
   for (const id of ids) await tech().services.request.updateTechnicianRequestStatus(id, "accepted");
   assert.equal((await source()).availability, "available");
   await setAvailability("offline");
