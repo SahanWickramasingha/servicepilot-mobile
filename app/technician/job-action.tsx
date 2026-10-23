@@ -25,7 +25,8 @@ import {
 
 import { normalizeRequestStatus } from "@/src/constants/serviceRequests";
 import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
-import { updateTechnicianRequestStatus } from "@/src/services/request.service";
+import { setJobTimerPaused, updateTechnicianRequestStatus } from "@/src/services/request.service";
+import { workElapsedMs } from "@/functions/src/domain/workTimer";
 import { auth } from "@/src/firebase/config";
 import { useJobEvidence } from "@/src/hooks/useJobEvidence";
 import {
@@ -37,14 +38,15 @@ export default function TechnicianJobActionScreen() {
   const { request, requestId, loading, errorMessage } =
     useTechnicianRequest();
 
-  const [seconds, setSeconds] = useState(0);
-  const [running, setRunning] = useState(true);
+  const [now, setNow] = useState(Date.now);
+  const [timerBusy, setTimerBusy] = useState(false);
+  const timerInFlight = useRef(false);
   const [completing, setCompleting] = useState(false);
   const completionInFlight = useRef(false);
   const completionSession = useRef(0);
   const viewerUid = auth.currentUser?.uid;
   useEffect(() => {
-    completionSession.current++; completionInFlight.current = false; setCompleting(false);
+    completionSession.current++; completionInFlight.current = false; timerInFlight.current = false; setCompleting(false); setTimerBusy(false);
     return () => { completionSession.current++; };
   }, [requestId, viewerUid]);
 
@@ -54,6 +56,9 @@ export default function TechnicianJobActionScreen() {
   const afterDone = !!evidence.evidence?.afterPhotos.length;
   const signatureDone = !!evidence.evidence?.signature;
   const completedSteps = [beforeDone, notesDone, afterDone, signatureDone].filter(Boolean).length;
+  const running = request?.status === "in_progress" && !request.workTimer?.pausedAt;
+  const seconds = Math.floor(workElapsedMs(request?.workTimer, request?.startedAt,
+    request?.completedAt ?? request?.technicianCancelledAt ?? request?.cancelledAt, now) / 1000);
 
   useEffect(() => {
     if (!running) {
@@ -61,11 +66,21 @@ export default function TechnicianJobActionScreen() {
     }
 
     const timer = setInterval(() => {
-      setSeconds((current) => current + 1);
+      setNow(Date.now());
     }, 1000);
 
     return () => clearInterval(timer);
   }, [running]);
+
+  const toggleTimer = async () => {
+    if (!request || timerInFlight.current) return;
+    const version = completionSession.current, uid = viewerUid;
+    timerInFlight.current = true; setTimerBusy(true);
+    try { await setJobTimerPaused(requestId, running, request.workTimer?.revision ?? 0); }
+    catch (error) {
+      if (version === completionSession.current && auth.currentUser?.uid === uid) Alert.alert("Timer not saved", error instanceof Error ? error.message : "Check your connection and retry.");
+    } finally { if (version === completionSession.current) { timerInFlight.current = false; setTimerBusy(false); setNow(Date.now()); } }
+  };
 
   const formatTime = (totalSeconds: number) => {
     const hours = Math.floor(totalSeconds / 3600);
@@ -249,11 +264,11 @@ export default function TechnicianJobActionScreen() {
           </Text>
 
           <Text style={styles.timerValue}>
-            {formatTime(seconds)}
+            {request.startedAt || request.workTimer ? formatTime(seconds) : "Unavailable"}
           </Text>
 
           <Text style={styles.timerStatus}>
-            {running
+            {request.status !== "in_progress" ? "Service timer finalized" : running
               ? "Service timer is running"
               : "Service timer paused"}
           </Text>
@@ -264,9 +279,8 @@ export default function TechnicianJobActionScreen() {
               !running && styles.resumeButton,
             ]}
             activeOpacity={0.85}
-            onPress={() =>
-              setRunning((current) => !current)
-            }
+            disabled={timerBusy || request.status !== "in_progress" || (!request.startedAt && !request.workTimer)}
+            onPress={() => void toggleTimer()}
           >
             {running ? (
               <Pause
@@ -282,7 +296,7 @@ export default function TechnicianJobActionScreen() {
             )}
 
             <Text style={styles.timerButtonText}>
-              {running
+              {timerBusy ? "Saving timer…" : running
                 ? "Pause Service"
                 : "Resume Service"}
             </Text>
