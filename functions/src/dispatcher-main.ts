@@ -9,6 +9,7 @@ import { createDispatcherServer } from "./dispatcher-server";
 import { createDispatcherProvisioner } from "./services/dispatcher-provisioning.service";
 
 import { createAccountLifecycleService } from "./services/account-lifecycle.service";
+import { createBookingScheduleService } from "./services/booking-schedule.service";
 
 const emulatorMode = env.DISPATCHER_MODE === "emulator";
 const projectId = env.GOOGLE_CLOUD_PROJECT;
@@ -52,8 +53,12 @@ const provisioner = createDispatcherProvisioner({
   },
 });
 const port = Number(env.PORT ?? 8789);
+const bookingOrigin = env.BOOKING_WEB_ORIGIN;
+if (bookingOrigin && (new URL(bookingOrigin).origin !== bookingOrigin || (!emulatorMode && !bookingOrigin.startsWith("https://")))) {
+  throw new Error("BOOKING_WEB_ORIGIN must be an exact trusted web origin (HTTPS in production).");
+}
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Invalid provisioning server port.");
-const server = createDispatcherServer(provisioner, origin, createAccountLifecycleService({ auth: getAuth(app), db: getFirestore(app) }));
+const server = createDispatcherServer(provisioner, origin, createAccountLifecycleService({ auth: getAuth(app), db: getFirestore(app) }), createBookingScheduleService({ auth: getAuth(app), db: getFirestore(app) }), bookingOrigin);
 server.requestTimeout = 30000;
 server.headersTimeout = 10000;
 server.listen(port, emulatorMode ? "127.0.0.1" : (env.DISPATCHER_BIND_ADDRESS ?? "127.0.0.1"), () => {
