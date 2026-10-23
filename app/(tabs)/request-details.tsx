@@ -1,3 +1,4 @@
+import { BookingSchedulePanel } from "@/src/components/jobs/BookingSchedulePanel";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -553,6 +554,7 @@ export default function RequestDetailsScreen() {
             )}
           </TouchableOpacity>
         )}
+        <BookingSchedulePanel key={request.id} request={request} />
       </ScrollView>
     </View>
   );
