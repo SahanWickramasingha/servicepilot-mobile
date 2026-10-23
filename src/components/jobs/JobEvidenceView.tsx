@@ -4,6 +4,7 @@ import Svg, { Path } from "react-native-svg";
 import { auth } from "@/src/firebase/config";
 import { loadReviewPhoto } from "@/src/services/reviewPhotos.service";
 import { useJobEvidence } from "@/src/hooks/useJobEvidence";
+import { SIGNATURE_WIDTH, SIGNATURE_HEIGHT, SIGNATURE_STROKE } from "@/src/utils/signatureCoordinates";
 
 export function JobPhoto({ path }: { path: string }) {
   const viewer = auth.currentUser?.uid;
@@ -25,8 +26,8 @@ export function JobPhoto({ path }: { path: string }) {
     </Modal>
   </>;
 }
-export function SignaturePreview({ path }: { path: string }) {
-  return <Svg width="100%" height={180} viewBox="0 0 320 180" style={{ backgroundColor: "#F8FAFC" }}><Path d={path} stroke="#0F172A" strokeWidth={2} fill="none" /></Svg>;
+export function SignaturePreview({ path, fillPad = false }: { path: string; fillPad?: boolean }) {
+  return <Svg width="100%" height={fillPad ? "100%" : SIGNATURE_HEIGHT} viewBox={`0 0 ${SIGNATURE_WIDTH} ${SIGNATURE_HEIGHT}`} preserveAspectRatio="xMidYMid meet" style={{ backgroundColor: "#F8FAFC" }}><Path d={path} stroke="#0F172A" strokeWidth={SIGNATURE_STROKE} fill="none" /></Svg>;
 }
 export function JobEvidenceView({ requestId }: { requestId: string }) {
   const state = useJobEvidence(requestId), data = state.evidence;
