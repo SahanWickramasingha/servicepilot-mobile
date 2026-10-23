@@ -2,9 +2,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { ProvisioningError, type createDispatcherProvisioner } from "./services/dispatcher-provisioning.service";
 
 import type { createAccountLifecycleService } from "./services/account-lifecycle.service";
+import type { createBookingScheduleService } from "./services/booking-schedule.service";
 
 type Provisioner = ReturnType<typeof createDispatcherProvisioner>;
-export function createDispatcherServer(provisioner: Provisioner, allowedOrigin: string, lifecycle?: ReturnType<typeof createAccountLifecycleService>) {
+export function createDispatcherServer(provisioner: Provisioner, allowedOrigin: string, lifecycle?: ReturnType<typeof createAccountLifecycleService>, scheduling?: ReturnType<typeof createBookingScheduleService>, bookingOrigin?: string) {
   return createServer(async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
@@ -14,7 +15,7 @@ export function createDispatcherServer(provisioner: Provisioner, allowedOrigin: 
       response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
       response.end(JSON.stringify(body));
     };
-    if (origin && origin !== allowedOrigin) {
+    if (origin && origin !== allowedOrigin && !(request.url === "/v1/bookings/schedule" && origin === bookingOrigin)) {
       reply(403, { code: "permission-denied", message: "This origin is not allowed." });
       return;
     }
@@ -26,7 +27,8 @@ export function createDispatcherServer(provisioner: Provisioner, allowedOrigin: 
     }
     const action = request.url === "/v1/dispatchers" ? provisioner.create :
       request.url === "/v1/dispatchers/resend-invitation" ? provisioner.resend :
-        request.url === "/v1/accounts/lifecycle" ? lifecycle?.change : null;
+        request.url === "/v1/accounts/lifecycle" ? lifecycle?.change :
+          request.url === "/v1/bookings/schedule" ? scheduling?.change : null;
     if (request.method !== "POST" || !action) {
       reply(404, { code: "not-found", message: "Endpoint not found." }); return;
     }
