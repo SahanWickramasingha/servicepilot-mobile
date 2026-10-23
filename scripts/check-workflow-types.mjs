@@ -3,6 +3,7 @@ const config = ts.readConfigFile('tsconfig.json', ts.sys.readFile);
 if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, '\n'));
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, '.');
 const roots = ['app/technician/before-photos.tsx', 'app/technician/after-photos.tsx', 'app/technician/service-notes.tsx',
+  'app/(tabs)/create-request.tsx', 'app/technician/job-details.tsx', 'app/(tabs)/index.tsx', 'app/technician/(tabs)/index.tsx',
   'app/technician/signature.tsx', 'app/technician/job-action.tsx', 'app/(tabs)/request-details.tsx',
   'app/technician/notifications.tsx', 'app/(tabs)/notifications.tsx', 'src/components/maps/TechnicianLocationLifecycle.tsx'];
 const program = ts.createProgram(roots, { ...parsed.options, noEmit: true, incremental: false });
