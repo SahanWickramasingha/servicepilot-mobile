@@ -336,7 +336,7 @@ service cloud.firestore {
         "division",
         "preferredDate",
         "preferredTime",
-        "scheduledAt",
+        "scheduledAt", "scheduledEndAt", "durationMinutes", "schedulingVersion", "bookingTimeZone", "scheduleRevision",
         "priority",
         "status",
         "imageUrls",
@@ -361,7 +361,7 @@ service cloud.firestore {
         "division",
         "preferredDate",
         "preferredTime",
-        "scheduledAt",
+        "scheduledAt", "scheduledEndAt", "durationMinutes", "schedulingVersion", "bookingTimeZone", "scheduleRevision",
         "priority",
         "status",
         "imageUrls",
@@ -371,20 +371,9 @@ service cloud.firestore {
     }
 
     function isApprovedTechnicianId(technicianId) {
-      return exists(
-        /databases/$(database)/documents/users/$(technicianId)
-      ) &&
-        get(
-          /databases/$(database)/documents/users/$(technicianId)
-        ).data.role == "technician" &&
-        get(
-          /databases/$(database)/documents/users/$(technicianId)
-        ).data.technicianApprovalStatus == "approved" &&
-        profileHasActiveAccount(
-          get(
-            /databases/$(database)/documents/users/$(technicianId)
-          ).data
-        );
+      let profile = get(/databases/$(database)/documents/users/$(technicianId)).data;
+      return exists(/databases/$(database)/documents/users/$(technicianId)) &&
+        profile.role == "technician" && profile.technicianApprovalStatus == "approved" && profileHasActiveAccount(profile);
     }
 
     function validSystemMessageAuditCreate() {
@@ -499,6 +488,10 @@ service cloud.firestore {
         technicianAcceptsNewRequests(request.resource.data.technicianId) &&
         request.resource.data.status == "requested" &&
         request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time && validBookingAttempt(requestId) &&
+        request.resource.data.schedulingVersion == 1 && request.resource.data.bookingTimeZone == "Asia/Colombo" && request.resource.data.scheduleRevision == 0 &&
+        request.resource.data.durationMinutes is int && request.resource.data.durationMinutes > 0 &&
+        request.resource.data.scheduledEndAt is timestamp &&
+        request.resource.data.scheduledEndAt == request.resource.data.scheduledAt + duration.value(request.resource.data.durationMinutes, "m") &&
         request.resource.data.scheduledAt is timestamp &&
         request.resource.data.scheduledAt > request.time &&
         request.resource.data.priority in ["normal", "urgent"] &&
@@ -536,18 +529,28 @@ service cloud.firestore {
         (paths.size() < 3 || validJobPhoto(paths[2], jobId, technicianId, stage));
     }
     function validEvidencePart(parts, index) {
-      return parts.size() <= index || (parts[index] is map && parts[index].keys().hasOnly(['name', 'quantity']) &&
-        parts[index].name is string && parts[index].name.trim().size() > 0 && parts[index].name.size() <= 100 &&
-        parts[index].quantity is int && parts[index].quantity > 0 && parts[index].quantity <= 999);
+      return parts.size() <= index ? true : validEvidencePartRecord(parts[index]);
+    }
+    function validEvidencePartRecord(part) {
+      let name = part.name;
+      let quantity = part.quantity;
+      // keys() requires a map and trim() requires a string; other types fail
+      // closed, without redundant type expressions for every one of ten parts.
+      return part.keys().hasOnly(['name', 'quantity']) &&
+        name.trim().size() > 0 && name.size() <= 100 &&
+        quantity is int && quantity > 0 && quantity <= 999;
     }
     function validEvidenceNotes(notes) {
       return notes is map && notes.keys().hasOnly(['diagnosis', 'workCompleted', 'recommendation', 'parts']) &&
         notes.diagnosis is string && notes.diagnosis.trim().size() > 0 && notes.diagnosis.size() <= 3000 &&
         notes.workCompleted is string && notes.workCompleted.trim().size() > 0 && notes.workCompleted.size() <= 3000 &&
-        notes.recommendation is string && notes.recommendation.size() <= 3000 && notes.parts is list && notes.parts.size() <= 10 &&
-        validEvidencePart(notes.parts, 0) && validEvidencePart(notes.parts, 1) && validEvidencePart(notes.parts, 2) &&
-        validEvidencePart(notes.parts, 3) && validEvidencePart(notes.parts, 4) && validEvidencePart(notes.parts, 5) &&
-        validEvidencePart(notes.parts, 6) && validEvidencePart(notes.parts, 7) && validEvidencePart(notes.parts, 8) && validEvidencePart(notes.parts, 9);
+        notes.recommendation is string && notes.recommendation.size() <= 3000 && validEvidenceParts(notes.parts);
+    }
+    function validEvidenceParts(parts) {
+      return parts is list && parts.size() <= 10 &&
+        validEvidencePart(parts, 0) && validEvidencePart(parts, 1) && validEvidencePart(parts, 2) &&
+        validEvidencePart(parts, 3) && validEvidencePart(parts, 4) && validEvidencePart(parts, 5) &&
+        validEvidencePart(parts, 6) && validEvidencePart(parts, 7) && validEvidencePart(parts, 8) && validEvidencePart(parts, 9);
     }
     function validEvidenceSignature(signature) {
       return signature is map && signature.keys().hasOnly(['customerName', 'path', 'confirmed', 'signedAt']) &&
@@ -567,18 +570,59 @@ service cloud.firestore {
     function validJobEvidence(jobId) {
       let data = request.resource.data;
       let job = get(/databases/$(database)/documents/service_requests/$(jobId)).data;
-      return isVerifiedApprovedTechnician() && requestTechnicianMatches(job, request.auth.uid) &&
-        data.keys().hasOnly(['requestId', 'technicianId', 'customerId', 'revision', 'beforePhotos', 'afterPhotos', 'notes', 'signature', 'updatedAt']) &&
+      let author = get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      // The enclosing match already enforces hasActiveSession (including active
+      // profile, lifecycle and revocation). Do not repeat it per validated part.
+      return request.auth.token.email_verified == true && author.role == 'technician' &&
+        author.technicianApprovalStatus == 'approved' && requestTechnicianMatches(job, request.auth.uid) &&
+        data.keys().hasOnly(['requestId', 'technicianId', 'customerId', 'revision', 'beforePhotos', 'afterPhotos', 'notes', 'notesUpdatedAt', 'signature', 'updatedAt']) &&
         data.requestId == jobId && data.technicianId == request.auth.uid && data.customerId == job.customerId &&
         data.updatedAt == request.time && data.revision is int && data.revision == (request.method == 'create' ? 1 : resource.data.revision + 1) &&
-        ((request.method == 'update' && data.beforePhotos == resource.data.beforePhotos) || validJobPhotos(data.beforePhotos, jobId, request.auth.uid, 'before')) &&
-        ((request.method == 'update' && data.afterPhotos == resource.data.afterPhotos) || validJobPhotos(data.afterPhotos, jobId, request.auth.uid, 'after')) &&
-        (!data.keys().hasAny(['notes']) || (request.method == 'update' && data.notes == resource.data.get('notes', null)) || validEvidenceNotes(data.notes)) &&
-        (!data.keys().hasAny(['signature']) || (validEvidenceSignature(data.signature) &&
-          ((request.method != 'create' && data.signature == resource.data.get('signature', null)) || data.signature.signedAt == request.time))) &&
+        (request.method == 'update' && data.beforePhotos == resource.data.beforePhotos ? true : validJobPhotos(data.beforePhotos, jobId, request.auth.uid, 'before')) &&
+        (request.method == 'update' && data.afterPhotos == resource.data.afterPhotos ? true : validJobPhotos(data.afterPhotos, jobId, request.auth.uid, 'after')) &&
+        (!data.keys().hasAny(['notes']) ? !data.keys().hasAny(['notesUpdatedAt']) :
+          (request.method == 'update' && data.notes == resource.data.get('notes', null) ?
+            data.get('notesUpdatedAt', null) == resource.data.get('notesUpdatedAt', null) :
+            data.notesUpdatedAt == request.time && validEvidenceNotes(data.notes))) &&
+        (!data.keys().hasAny(['signature']) ||
+          (request.method == 'update' && data.signature == resource.data.get('signature', null) ? true :
+            validEvidenceSignature(data.signature) && data.signature.signedAt == request.time)) &&
         (job.status == 'in_progress' || (job.status in ['accepted', 'assigned'] &&
           data.afterPhotos.size() == 0 && !data.keys().hasAny(['notes', 'signature']))) &&
-        (request.method == 'create' || data.diff(resource.data).affectedKeys().hasOnly(['beforePhotos', 'afterPhotos', 'notes', 'signature', 'revision', 'updatedAt']));
+        (request.method == 'create' || data.diff(resource.data).affectedKeys().hasOnly(['beforePhotos', 'afterPhotos', 'notes', 'notesUpdatedAt', 'signature', 'revision', 'updatedAt']));
+    }
+    function freshWorkTimer(data) {
+      let timer = data.workTimer;
+      return timer.keys().hasOnly(['elapsedMs', 'runningSince', 'pausedAt', 'revision']) &&
+        timer.elapsedMs == 0 && timer.runningSince == request.time && timer.pausedAt == null && timer.revision == 0;
+    }
+    function pausedWorkTimer(before, after) {
+      let timer = after.workTimer;
+      let previous = before.get('workTimer', null);
+      return timer.keys().hasOnly(['elapsedMs', 'runningSince', 'pausedAt', 'revision']) &&
+        timer.elapsedMs == (previous == null ? 0 : previous.elapsedMs) &&
+        timer.runningSince == (previous == null ? before.startedAt : previous.runningSince) &&
+        timer.pausedAt == request.time && timer.pausedAt >= timer.runningSince &&
+        timer.revision == (previous == null ? 1 : previous.revision + 1) &&
+        (previous == null || previous.pausedAt == null);
+    }
+    function finalizedWorkTimer(before, after) {
+      return !before.keys().hasAny(['workTimer']) ? !after.keys().hasAny(['workTimer']) :
+        (before.workTimer.pausedAt != null ? after.workTimer == before.workTimer : pausedWorkTimer(before, after));
+    }
+    function validWorkTimerUpdate() {
+      let before = resource.data;
+      let after = request.resource.data;
+      let previous = before.get('workTimer', null);
+      let timer = after.workTimer;
+      return isVerifiedApprovedTechnician() && requestTechnicianMatches(before, request.auth.uid) &&
+        before.status == 'in_progress' && after.updatedAt == request.time &&
+        after.diff(before).affectedKeys().hasOnly(['workTimer', 'updatedAt']) &&
+        (pausedWorkTimer(before, after) ||
+          (previous != null && previous.pausedAt != null &&
+            timer.keys().hasOnly(['elapsedMs', 'runningSince', 'pausedAt', 'revision']) &&
+            timer.elapsedMs == previous.elapsedMs + previous.pausedAt.toMillis() - previous.runningSince.toMillis() &&
+            timer.elapsedMs >= 0 && timer.runningSince == request.time && timer.pausedAt == null && timer.revision == previous.revision + 1));
     }
     function validTechnicianRequestStatusUpdate(requestId) {
       let notificationType = request.resource.data.status == 'accepted' ? 'technician_accepted_request' :
@@ -602,16 +646,12 @@ service cloud.firestore {
             "cancelledBy",
             "rejectionReason",
             "technicianCancellationReason",
+            "workTimer",
             "updatedAt"
           ]) &&
         (
           (
-            resource.data.status in ["requested", "pending"] &&
-            request.resource.data.status == "accepted" &&
-            request.resource.data.acceptedAt == request.time &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "acceptedAt", "updatedAt"]) &&
-            bookingCustomerEligible(resource.data.customerId) &&
-            technicianAcceptsNewRequests(request.auth.uid)
+            false // Acceptance/reservation is authorized by the trusted scheduling endpoint.
           ) ||
           (
             resource.data.status in ["requested", "pending"] &&
@@ -624,13 +664,15 @@ service cloud.firestore {
           (
             resource.data.status in ["accepted", "assigned"] &&
             request.resource.data.status == "in_progress" && request.resource.data.startedAt == request.time &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "startedAt", "updatedAt"])
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "startedAt", "workTimer", "updatedAt"]) &&
+            (!request.resource.data.keys().hasAny(['workTimer']) || freshWorkTimer(request.resource.data))
           ) ||
           (
             resource.data.status in ["accepted", "assigned"] &&
             request.resource.data.status == "cancelled" &&
             request.resource.data.technicianCancelledAt == request.time &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "technicianCancelledAt", "cancelledBy", "technicianCancellationReason", "updatedAt"]) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "technicianCancelledAt", "cancelledBy", "technicianCancellationReason", "workTimer", "updatedAt"]) &&
+            finalizedWorkTimer(resource.data, request.resource.data) &&
             request.resource.data.cancelledBy == "technician" &&
             request.resource.data.technicianCancellationReason is string &&
             request.resource.data.technicianCancellationReason.size() > 0
@@ -638,7 +680,8 @@ service cloud.firestore {
           (
             resource.data.status == "in_progress" &&
             request.resource.data.status == "completed" && request.resource.data.completedAt == request.time &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "completedAt", "updatedAt"]) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "completedAt", "workTimer", "updatedAt"]) &&
+            finalizedWorkTimer(resource.data, request.resource.data) &&
             completeEvidence(requestId, resource.data)
           )
         ) && bookingNotice(requestId, notificationType, resource.data.customerId);
@@ -707,37 +750,13 @@ service cloud.firestore {
       ).data;
     }
 
-    function requestHasCurrentTechnicianId(data) {
-      return data.keys().hasAny(["technicianId"]) &&
-        data.technicianId is string &&
-        data.technicianId.size() > 0;
-    }
-
-    function requestHasLegacyTechnicianId(data) {
-      return data.keys().hasAny(["assignedTechnicianId"]) &&
-        data.assignedTechnicianId is string &&
-        data.assignedTechnicianId.size() > 0;
-    }
-
-    function requestHasConflictingTechnicianIds(data) {
-      return requestHasCurrentTechnicianId(data) &&
-        requestHasLegacyTechnicianId(data) &&
-        data.technicianId != data.assignedTechnicianId;
-    }
-
     function requestTechnicianMatches(data, technicianId) {
-      return !requestHasConflictingTechnicianIds(data) &&
-        (
-          (
-            requestHasCurrentTechnicianId(data) &&
-            data.technicianId == technicianId
-          ) ||
-          (
-            !requestHasCurrentTechnicianId(data) &&
-            requestHasLegacyTechnicianId(data) &&
-            data.assignedTechnicianId == technicianId
-          )
-        );
+      let current = data.get('technicianId', null);
+      let legacy = data.get('assignedTechnicianId', null);
+      let hasCurrent = current is string && current.size() > 0;
+      let hasLegacy = legacy is string && legacy.size() > 0;
+      return !(hasCurrent && hasLegacy && current != legacy) &&
+        ((hasCurrent && current == technicianId) || (!hasCurrent && hasLegacy && legacy == technicianId));
     }
 
     function bookingNotice(requestId, type, userId) {
@@ -887,7 +906,9 @@ service cloud.firestore {
     }
 
     function isVerifiedApprovedTechnician() {
-      return isActiveTechnician() &&
+      // isApprovedTechnicianId already checks role and active account. Avoid
+      // repeating those expressions for each evidence transaction read/write.
+      return signedIn() &&
         request.auth.token.email_verified == true &&
         isApprovedTechnicianId(request.auth.uid);
     }
@@ -1032,15 +1053,10 @@ service cloud.firestore {
     }
 
     function canReadReferencedSystemMessage(messageId) {
-      return signedIn() &&
-        exists(
-          /databases/$(database)/documents/system_messages/$(messageId)
-        ) &&
-        canReadSystemMessageAsRecipient(
-          get(
-            /databases/$(database)/documents/system_messages/$(messageId)
-          ).data
-        );
+      let message = get(/databases/$(database)/documents/system_messages/$(messageId)).data;
+      // A missing message still fails closed. Avoid duplicate exists/get calls
+      // for every receipt in an all-history batch; recipient policy is unchanged.
+      return signedIn() && canReadSystemMessageAsRecipient(message);
     }
 
     function validMessageReadWrite(readId) {
@@ -1279,7 +1295,7 @@ service cloud.firestore {
           )
         );
       allow update: if hasActiveSession() && (validCustomerRequestCancel(requestId) ||
-        validTechnicianRequestStatusUpdate(requestId));
+        validTechnicianRequestStatusUpdate(requestId) || validWorkTimerUpdate());
       allow delete: if false;
     }
 
