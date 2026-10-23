@@ -22,9 +22,9 @@ const notes = { diagnosis: 'Local diagnostic', workCompleted: 'Local repair', re
 const signature = { customerName: 'Local customer', path: 'M10.0,10.0 L40.0,50.0 L80.0,20.0 ', confirmed: true };
 const denied = (promise) => assert.rejects(promise, (error) => ['permission-denied', 'storage/unauthorized'].includes(error.code));
 const config = (client) => ({ auth: client.auth, db: client.db, storage: client.storage });
-function evidenceService(client) {
+function evidenceService(client, firestore = fsdk) {
   return loadService('src/services/jobEvidence.service.ts', { '@/src/firebase/config': config(client),
-    'firebase/firestore': fsdk, 'firebase/storage': ssdk, 'expo-image-picker': {}, './reviewPhotos.service': {},
+    'firebase/firestore': firestore, 'firebase/storage': ssdk, 'expo-image-picker': {}, './reviewPhotos.service': {},
     '@/src/utils/reviewValidation': loadService('src/utils/reviewValidation.ts', {}), '@/functions/src/domain/jobEvidence': domain,
     '@/functions/src/domain/booking': loadService('functions/src/domain/booking.ts', {}) });
 }
@@ -87,7 +87,7 @@ test('cross-account reads/writes, direct completion without evidence, spoofed ow
   }
   await denied(fsdk.updateDoc(fsdk.doc(tech.db, 'service_requests', id), { status: 'completed', completedAt: fsdk.serverTimestamp(), updatedAt: fsdk.serverTimestamp() }));
   const base = { requestId: id, technicianId: 'jw-tech', customerId: 'jw-owner', revision: 1, beforePhotos: [], afterPhotos: [], updatedAt: fsdk.serverTimestamp() };
-  for (const change of [{ customerId: 'jw-other' }, { notes: { ...notes, workCompleted: '' } }, { signature: { ...signature, path: '<svg/>', signedAt: fsdk.serverTimestamp() } },
+  for (const change of [{ customerId: 'jw-other' }, { notes: { ...notes, workCompleted: '' }, notesUpdatedAt: fsdk.serverTimestamp() }, { signature: { ...signature, path: '<svg/>', signedAt: fsdk.serverTimestamp() } },
     { beforePhotos: [objectPath(id, 'after')] }, { beforePhotos: [objectPath(id).replace('jw-tech/', 'jw-other-tech/')] }]) {
     await denied(fsdk.setDoc(fsdk.doc(tech.db, 'job_evidence', id), { ...base, ...change }));
   }
@@ -113,8 +113,88 @@ test('the supported maximum of three photos per stage and ten parts remains writ
     await service.saveJobEvidence(id, stage === 'before' ? 0 : 1, stage === 'before' ? { beforePhotos: paths } : { afterPhotos: paths });
   }
   const full = { ...notes, parts: Array.from({ length: 10 }, (_, i) => ({ name: `Local part ${i}`, quantity: 999 })) };
-  await service.saveJobEvidence(id, 2, { notes: full });
+  await assert.doesNotReject(service.saveJobEvidence(id, 2, { notes: full }), 'Maximum notes must save within the Rules expression budget');
   await service.saveJobEvidence(id, 2, { notes: { parts: full.parts, recommendation: '', workCompleted: full.workCompleted, diagnosis: full.diagnosis } });
-  await service.saveJobEvidence(id, 3, { signature }); await requestService(tech).updateTechnicianRequestStatus(id, 'completed');
+  await assert.doesNotReject(service.saveJobEvidence(id, 3, { signature }), 'Signature must save with maximum notes/photos retained');
+  await requestService(tech).updateTechnicianRequestStatus(id, 'completed');
   assert.equal((await admin.doc(`job_evidence/${id}`).get()).data().revision, 4);
+});
+
+test('server timestamp timers survive reopen, race safely, finalize with completion and deny forged or foreign timer writes', async () => {
+  const id = 'jw-timer'; await job(id, 'accepted');
+  const tech = clients.get('jw-tech'), requests = requestService(tech), service = evidenceService(tech);
+  const reference = fsdk.doc(tech.db, 'service_requests', id);
+  await requests.updateTechnicianRequestStatus(id, 'in_progress');
+  let saved = (await fsdk.getDocFromServer(reference)).data();
+  assert.equal(saved.workTimer.elapsedMs, 0); assert.equal(saved.workTimer.pausedAt, null);
+  await Promise.all([requests.setJobTimerPaused(id, true, 0), requests.setJobTimerPaused(id, true, 0)]);
+  saved = (await fsdk.getDocFromServer(reference)).data();
+  assert.equal(saved.workTimer.revision, 1); assert.ok(saved.workTimer.pausedAt.toMillis() >= saved.startedAt.toMillis());
+  const pausedElapsed = Math.floor(saved.workTimer.pausedAt.toMillis()) - Math.floor(saved.workTimer.runningSince.toMillis());
+  await requests.setJobTimerPaused(id, false, 1);
+  saved = (await fsdk.getDocFromServer(reference)).data();
+  assert.equal(saved.workTimer.revision, 2); assert.equal(saved.workTimer.elapsedMs, pausedElapsed);
+  await assert.rejects(requests.setJobTimerPaused(id, true, 1), /another screen/);
+  await denied(fsdk.updateDoc(reference, { workTimer: { ...saved.workTimer, elapsedMs: -10 }, updatedAt: fsdk.serverTimestamp() }));
+  await denied(fsdk.updateDoc(reference, { workTimer: { ...saved.workTimer, elapsedMs: 999999999, revision: 3, pausedAt: fsdk.serverTimestamp() }, updatedAt: fsdk.serverTimestamp() }));
+  for (const uid of ['jw-owner', 'jw-other-tech', 'jw-dispatcher', 'jw-disabled']) {
+    await denied(fsdk.updateDoc(fsdk.doc(clients.get(uid).db, 'service_requests', id), {
+      workTimer: { ...saved.workTimer, pausedAt: fsdk.serverTimestamp(), revision: 3 }, updatedAt: fsdk.serverTimestamp(),
+    }));
+  }
+  for (const stage of ['before', 'after']) { await upload(id, stage); await service.saveJobEvidence(id, stage === 'before' ? 0 : 1,
+    stage === 'before' ? { beforePhotos: [objectPath(id)] } : { afterPhotos: [objectPath(id, 'after')] }); }
+  await service.saveJobEvidence(id, 2, { notes }); await service.saveJobEvidence(id, 3, { signature });
+  const evidence = (await admin.doc(`job_evidence/${id}`).get()).data(); assert.ok(evidence.notesUpdatedAt.toMillis() > 0);
+  // A pause competing with completion can fail because completion wins; neither
+  // outcome can leave a running finalized timer or a timer write after completion.
+  const results = await Promise.allSettled([requests.setJobTimerPaused(id, true, 2), requests.updateTechnicianRequestStatus(id, 'completed')]);
+  assert.equal(results[1].status, 'fulfilled');
+  saved = (await fsdk.getDocFromServer(reference)).data(); assert.equal(saved.status, 'completed'); assert.ok(saved.workTimer.pausedAt);
+  await requests.updateTechnicianRequestStatus(id, 'completed');
+  await assert.rejects(requests.setJobTimerPaused(id, false, saved.workTimer.revision), /in-progress/);
+  assert.equal((await admin.collection('notifications').where('requestId', '==', id).get()).size, 2);
+});
+
+test('legacy in-progress jobs initialize a timer from their saved start and missing start is never invented', async () => {
+  const id = 'jw-legacy-timer'; await job(id);
+  await admin.doc(`service_requests/${id}`).update({ startedAt: new Date(Date.now() - 60000) });
+  const service = requestService(clients.get('jw-tech'));
+  await service.setJobTimerPaused(id, true, 0); await service.setJobTimerPaused(id, false, 1);
+  const timer = (await admin.doc(`service_requests/${id}`).get()).data().workTimer;
+  assert.ok(timer.elapsedMs >= 60000); assert.equal(timer.revision, 2);
+  await job('jw-no-start'); await assert.rejects(service.setJobTimerPaused('jw-no-start', true, 0), /no recorded start/);
+});
+
+test('authoritative evidence rules reject account and job changes after preflight without saving stale notes', async () => {
+  const tech = clients.get('jw-tech');
+  for (const variant of ['account', 'status']) {
+    const id = `jw-preflight-${variant}`; await job(id);
+    const service = evidenceService(tech, { ...fsdk, runTransaction: async (...args) => {
+      if (variant === 'account') await admin.doc('users/jw-tech').update({ accountStatus: 'disabled' });
+      else await admin.doc(`service_requests/${id}`).update({ status: 'completed' });
+      return fsdk.runTransaction(...args);
+    } });
+    try { await denied(service.saveJobEvidence(id, 0, { notes })); }
+    finally { await admin.doc('users/jw-tech').update({ accountStatus: 'active' }); }
+    assert.equal((await admin.doc(`job_evidence/${id}`).get()).exists, false);
+  }
+});
+
+test('optimized notes validation fails closed on malformed parts and forged audit timestamps; unchanged legacy notes stay usable', async () => {
+  const id = 'jw-parts-types'; await job(id); const tech = clients.get('jw-tech');
+  const base = { requestId: id, technicianId: 'jw-tech', customerId: 'jw-owner', revision: 1,
+    beforePhotos: [], afterPhotos: [], updatedAt: fsdk.serverTimestamp(), notesUpdatedAt: fsdk.serverTimestamp() };
+  for (const part of [null, {}, 42, { name: ['Part'], quantity: 1 }, { name: 1, quantity: 1 },
+    { name: ' ', quantity: 1 }, { name: 'Part', quantity: 1.5 }, { name: 'Part', quantity: '1' },
+    { name: 'Part', quantity: 0 }, { name: 'Part', quantity: 1000 }, { name: 'Part', quantity: 1, approved: true }]) {
+    await denied(fsdk.setDoc(fsdk.doc(tech.db, 'job_evidence', id), { ...base, notes: { ...notes, parts: [part] } }));
+  }
+  await denied(fsdk.setDoc(fsdk.doc(tech.db, 'job_evidence', id), { ...base, notes, notesUpdatedAt: fsdk.Timestamp.fromMillis(1000) }));
+  const legacy = 'jw-legacy-notes'; await job(legacy);
+  await admin.doc(`job_evidence/${legacy}`).set({ requestId: legacy, technicianId: 'jw-tech', customerId: 'jw-owner', revision: 1,
+    beforePhotos: [], afterPhotos: [], notes, updatedAt: new Date() });
+  await evidenceService(tech).saveJobEvidence(legacy, 1, { signature });
+  const saved = (await admin.doc(`job_evidence/${legacy}`).get()).data();
+  assert.deepEqual(saved.notes, notes); assert.equal(saved.notesUpdatedAt, undefined);
 });
