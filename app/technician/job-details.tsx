@@ -1,3 +1,4 @@
+import { BookingSchedulePanel } from "@/src/components/jobs/BookingSchedulePanel";
 // sahan 
 import { router } from "expo-router";
 import { useRef, useState } from "react";
@@ -398,6 +399,7 @@ export default function TechnicianJobDetailsScreen() {
             <Text style={styles.startButtonText}>Continue Service</Text>
           </TouchableOpacity>
         )}
+        <BookingSchedulePanel key={request.id} request={request} technician />
       </ScrollView>
 
       <ReasonModal
