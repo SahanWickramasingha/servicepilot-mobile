@@ -3,7 +3,7 @@ export type ServiceNotes = { diagnosis: string; workCompleted: string; recommend
 export type JobSignature = { customerName: string; path: string; confirmed: true; signedAt?: unknown };
 export type JobEvidence = {
   requestId: string; technicianId: string; customerId: string; revision: number;
-  beforePhotos: string[]; afterPhotos: string[]; notes?: ServiceNotes; signature?: JobSignature; updatedAt?: unknown;
+  beforePhotos: string[]; afterPhotos: string[]; notes?: ServiceNotes; notesUpdatedAt?: unknown; signature?: JobSignature; updatedAt?: unknown;
 };
 export const JOB_PHOTO_MAX = 3;
 
