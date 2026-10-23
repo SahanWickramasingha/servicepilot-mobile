@@ -176,7 +176,7 @@ test('two immediate Submit taps create only one request; a settled failure permi
   const attempts = [];
   const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
   const h = renderHarness('app/(tabs)/create-request.tsx', { initial: [profile, technician, 'Electrical', 'Repair', 'Description', 'Private', 'Kandy', tomorrow,
-    false, '11:00 AM', 'normal', 0, false, false, '', ''], dependencies: {
+    false, '11:00 AM', '60', 'normal', 0, false, false, '', ''], dependencies: {
     'expo-router': { useLocalSearchParams: () => ({ technicianId: 'gihan' }), router: { replace() {} } }, '@/src/firebase/config': { auth },
     '@react-native-community/datetimepicker': { __esModule: true, default: 'DateTimePicker' },
     '@/src/services/user.service': {}, '@/src/services/technician.service': {},
