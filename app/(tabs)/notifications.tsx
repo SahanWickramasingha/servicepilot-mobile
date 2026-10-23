@@ -1,3 +1,4 @@
+import { NotificationHistoryControls } from "@/src/components/notifications/NotificationHistoryControls";
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { useNotificationCenter } from "@/src/hooks/useNotificationCenter";
@@ -5,7 +6,6 @@ import {
   Bell,
   BriefcaseBusiness,
   CalendarClock,
-  CheckCheck,
   ChevronRight,
   CircleAlert,
   Info,
@@ -31,16 +31,14 @@ import {
 type FilterKey = "all" | "unread" | "important" | "system";
 
 export default function NotificationsScreen() {
-  const { items: notifications, loading, errorMessage: subscriptionError, retry } = useNotificationCenter("customer");
+  const center = useNotificationCenter("customer");
+  const { items: notifications, loading, errorMessage: subscriptionError, retry } = center;
   const [actionError, setActionError] = useState("");
   const errorMessage = subscriptionError || actionError;
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [filter, setFilter] = useState<FilterKey>("all");
 
-  const unreadCount = notifications.filter(
-    (item) => !item.read
-  ).length;
   const hasLoadError = errorMessage.length > 0;
   const visibleNotifications = notifications.filter((item) => {
     if (filter === "unread") {
@@ -58,19 +56,6 @@ export default function NotificationsScreen() {
     return true;
   });
 
-  const markAllAsRead = async () => {
-    const currentUser = auth.currentUser;
-
-    if (!currentUser) {
-      return;
-    }
-
-    try { await Promise.all(
-      notifications
-        .filter((item) => !item.read)
-        .map((item) => markNotificationRead(item, currentUser.uid))
-    ); } catch { if (mounted.current && auth.currentUser?.uid === currentUser.uid) setActionError("Some read updates could not be saved. Check your connection and retry."); }
-  };
 
   const openNotification = async (
     item: NotificationCenterItem
@@ -78,8 +63,12 @@ export default function NotificationsScreen() {
     const currentUser = auth.currentUser;
 
     if (!currentUser) return;
-    try { if (!item.read) await markNotificationRead(item, currentUser.uid); }
-    catch { if (mounted.current && auth.currentUser?.uid === currentUser.uid) setActionError("Read status could not be saved. You can still open this request."); }
+    setActionError("");
+    // Keep navigation available while a Firestore read receipt is queued offline.
+    if (!item.read) void markNotificationRead(item, currentUser.uid).catch(() => {
+      if (mounted.current && auth.currentUser?.uid === currentUser.uid) setActionError("Read status could not be saved. You can still open this request.");
+    });
+    await Promise.resolve();
     if (!mounted.current || auth.currentUser?.uid !== currentUser.uid) return;
 
     if (item.source === "personal" && item.relatedRequestId) {
@@ -115,26 +104,10 @@ export default function NotificationsScreen() {
             <Text style={styles.subtitle}>
               {hasLoadError
                 ? "Some notifications couldn't load"
-                : unreadCount > 0
-                ? `${unreadCount} unread notification${
-                    unreadCount > 1 ? "s" : ""
-                  }`
-                : "You're all caught up"}
+                : "Recent notifications • total available below"}
             </Text>
           </View>
 
-          {unreadCount > 0 && (
-            <TouchableOpacity
-              style={styles.readAllButton}
-              activeOpacity={0.8}
-              onPress={markAllAsRead}
-            >
-              <CheckCheck size={17} color="#3B82F6" />
-              <Text style={styles.readAllText}>
-                Read All
-              </Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         {!!errorMessage && (
@@ -239,7 +212,7 @@ export default function NotificationsScreen() {
               <Bell size={38} color="#64748B" />
             </View>
             <Text style={styles.emptyTitle}>
-              {hasLoadError ? "Notifications unavailable" : "No Notifications"}
+              {hasLoadError ? "Notifications unavailable" : center.status?.hasMore ? "No matching recent notifications. Load earlier history below." : "No Notifications"}
             </Text>
             <Text style={styles.emptyText}>
               {hasLoadError
@@ -248,6 +221,7 @@ export default function NotificationsScreen() {
             </Text>
           </View>
         )}
+        <NotificationHistoryControls status={center.status} loadMore={center.loadMore} refreshTotal={center.refreshTotal} markAll={center.markAll} refreshRecent={retry} onError={setActionError} />
       </ScrollView>
     </View>
   );
