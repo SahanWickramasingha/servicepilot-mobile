@@ -1,51 +1,99 @@
 {
   "indexes": [
     {
-      "collectionGroup": "service_reviews", "queryScope": "COLLECTION",
+      "collectionGroup": "service_reviews",
+      "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "technicianId", "order": "ASCENDING" },
-        { "fieldPath": "rating", "order": "ASCENDING" }
+        {
+          "fieldPath": "technicianId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rating",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
-      "collectionGroup": "service_reviews", "queryScope": "COLLECTION",
+      "collectionGroup": "service_reviews",
+      "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "technicianId", "order": "ASCENDING" },
-        { "fieldPath": "rating", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        {
+          "fieldPath": "technicianId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rating",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
-      "collectionGroup": "service_reviews", "queryScope": "COLLECTION",
+      "collectionGroup": "service_reviews",
+      "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "technicianId", "order": "ASCENDING" },
-        { "fieldPath": "rating", "order": "ASCENDING" },
-        { "fieldPath": "__name__", "order": "DESCENDING" }
+        {
+          "fieldPath": "technicianId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "rating",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "technician_map_profiles",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "approved", "order": "ASCENDING" },
-        { "fieldPath": "serviceCategory", "order": "ASCENDING" }
+        {
+          "fieldPath": "approved",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "serviceCategory",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "technician_map_profiles",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "approved", "order": "ASCENDING" },
-        { "fieldPath": "serviceDistrictIds", "arrayConfig": "CONTAINS" }
+        {
+          "fieldPath": "approved",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "serviceDistrictIds",
+          "arrayConfig": "CONTAINS"
+        }
       ]
     },
     {
       "collectionGroup": "technician_map_profiles",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "approved", "order": "ASCENDING" },
-        { "fieldPath": "serviceCategory", "order": "ASCENDING" },
-        { "fieldPath": "serviceDistrictIds", "arrayConfig": "CONTAINS" }
+        {
+          "fieldPath": "approved",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "serviceCategory",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "serviceDistrictIds",
+          "arrayConfig": "CONTAINS"
+        }
       ]
     },
     {
@@ -72,6 +120,88 @@
         },
         {
           "fieldPath": "senderRole",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "notifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "system_messages",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "audienceRoles",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "message_reads",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "messageId",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "service_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "technicianId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "service_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "assignedTechnicianId",
           "order": "ASCENDING"
         },
         {
