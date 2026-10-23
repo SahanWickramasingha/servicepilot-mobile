@@ -1,12 +1,14 @@
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, type GestureResponderEvent } from "react-native";
+import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, type GestureResponderEvent } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { auth } from "@/src/firebase/config";
 import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
 import { useJobEvidence } from "@/src/hooks/useJobEvidence";
 import { cleanupJobUploads, newJobPhotoAttempt, pickJobPhotos, saveJobEvidence, uploadJobPhoto, type JobPhotoStage, type ServiceNotes } from "@/src/services/jobEvidence.service";
 import { type SelectedReviewPhoto } from "@/src/services/reviewPhotos.service";
 import { JobPhoto, SignaturePreview } from "./JobEvidenceView";
+import { signaturePoint, SIGNATURE_WIDTH, SIGNATURE_HEIGHT } from "@/src/utils/signatureCoordinates";
 
 type Mode = JobPhotoStage | "notes" | "signature";
 const titles = { before: "Before Service Photos", after: "After Service Photos", notes: "Service Notes", signature: "Customer Signature" };
@@ -16,11 +18,13 @@ export function JobEvidenceScreen({ mode }: { mode: Mode }) {
   const [notes, setNotes] = useState<ServiceNotes>({ diagnosis: "", workCompleted: "", recommendation: "", parts: [] });
   const [name, setName] = useState(""), [path, setPath] = useState(""), [approved, setApproved] = useState(false);
   const [busy, setBusy] = useState(false), [progress, setProgress] = useState(0), [message, setMessage] = useState("");
+  const [drawing, setDrawing] = useState(false);
   const session = useRef(0), inFlight = useRef(false), dirty = useRef(false), hydrated = useRef(false), baseRevision = useRef(0), uploadAttempt = useRef("");
   const abort = useRef<AbortController | null>(null), pad = useRef({ width: 320, height: 180 });
+  const nextStroke = useRef(true);
   useEffect(() => {
     session.current++; hydrated.current = false; dirty.current = false; baseRevision.current = 0; uploadAttempt.current = "";
-    setOwner(viewer); setPhotos([]); setKept([]); setPath(""); setName(""); setApproved(false); setMessage(""); setBusy(false); inFlight.current = false;
+    setOwner(viewer); setPhotos([]); setKept([]); setPath(""); setName(""); setApproved(false); setMessage(""); setBusy(false); setDrawing(false); inFlight.current = false;
     setNotes({ diagnosis: "", workCompleted: "", recommendation: "", parts: [] });
     return () => { session.current++; abort.current?.abort(); };
   }, [viewer, job.requestId, mode]);
@@ -37,7 +41,7 @@ export function JobEvidenceScreen({ mode }: { mode: Mode }) {
   const choose = async (camera: boolean) => {
     if (inFlight.current) return; inFlight.current = true; const version = session.current; setBusy(true);
     try { const selected = await pickJobPhotos(3 - kept.length - photos.length, camera); if (version === session.current && selected.length) { changed(); uploadAttempt.current = ""; setPhotos((value) => [...value, ...selected]); } }
-    catch { if (version === session.current) setMessage("Unable to choose a photo. Check camera permission or choose a supported image smaller than 15 MB."); }
+    catch (error) { if (version === session.current) setMessage(error instanceof Error ? error.message : "Unable to choose a photo. Check permission or choose a supported image smaller than 15 MB."); }
     finally { if (version === session.current) { inFlight.current = false; setBusy(false); } }
   };
   const save = async () => {
@@ -75,13 +79,14 @@ export function JobEvidenceScreen({ mode }: { mode: Mode }) {
   };
   const draw = (event: GestureResponderEvent, start: boolean) => {
     if (busy || !canEdit || !state.confirmed) return;
-    const x = Math.max(0, Math.min(320, event.nativeEvent.locationX * 320 / pad.current.width)).toFixed(1);
-    const y = Math.max(0, Math.min(180, event.nativeEvent.locationY * 180 / pad.current.height)).toFixed(1);
-    changed(); setApproved(false); setPath((value) => value.length > 14950 ? value : `${value}${start ? "M" : "L"}${x},${y} `);
+    const point = signaturePoint(pad.current.width, pad.current.height, event.nativeEvent.locationX, event.nativeEvent.locationY);
+    if (!point) return;
+    const move = start || nextStroke.current; nextStroke.current = false;
+    changed(); setApproved(false); setPath((value) => value.length > 14950 ? value : `${value}${move ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)} `);
   };
   if (owner !== viewer || job.loading || state.loading) return <View style={styles.screen}><ActivityIndicator color="#60A5FA" /><Text style={styles.text}>Loading service evidence…</Text></View>;
   if (job.errorMessage || !job.request || state.error) return <View style={styles.screen}><Text style={styles.text}>{job.errorMessage || state.error || "Job unavailable."}</Text><Button label="Retry" onPress={state.retry} /><Button label="Back" onPress={() => router.back()} /></View>;
-  return <ScrollView style={styles.screen} contentContainerStyle={{ padding: 20, paddingBottom: 50 }} keyboardShouldPersistTaps="handled">
+  return <SafeAreaView style={styles.screen}><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}><ScrollView style={styles.screen} scrollEnabled={!drawing} contentContainerStyle={{ padding: 20, paddingBottom: 50, width: "100%", maxWidth: 560, alignSelf: "center" }} keyboardShouldPersistTaps="handled">
     <Button label="Back" onPress={() => router.back()} /><Text accessibilityRole="header" style={styles.title}>{titles[mode]}</Text>
     {!canEdit && <Text style={styles.text}>Saved service evidence. This job cannot be edited in its current status.</Text>}
     {!state.confirmed && <Text style={styles.error}>Showing saved evidence. Reconnect before saving.</Text>}
@@ -98,14 +103,18 @@ export function JobEvidenceScreen({ mode }: { mode: Mode }) {
     </>}
     {mode === "signature" && <>
       <Text style={styles.text}>Customer name</Text><TextInput accessibilityLabel="Customer signature name" editable={canEdit && !busy} maxLength={100} style={styles.input} value={name} onChangeText={(value) => { changed(); setName(value); setApproved(false); }} />
-      <Text style={styles.text}>Ask the customer to draw their signature below.</Text>
-      <View accessible accessibilityLabel="Customer signature drawing area" onLayout={(event) => { pad.current = event.nativeEvent.layout; }} onStartShouldSetResponder={() => canEdit && !busy && state.confirmed} onMoveShouldSetResponder={() => true} onResponderGrant={(event) => draw(event, true)} onResponderMove={(event) => draw(event, false)} style={{ height: 180 }}><View pointerEvents="none"><SignaturePreview path={path} /></View></View>
+      <Text style={styles.text}>Ask the customer to draw their signature below as a service acknowledgment.</Text>
+      <View accessible accessibilityLabel="Customer signature drawing area" onLayout={(event) => {
+        const layout = event.nativeEvent.layout;
+        if (layout.width !== pad.current.width || layout.height !== pad.current.height) nextStroke.current = true;
+        pad.current = layout;
+      }} onStartShouldSetResponder={() => canEdit && !busy && state.confirmed} onMoveShouldSetResponder={() => canEdit && !busy && state.confirmed} onResponderTerminationRequest={() => false} onResponderGrant={(event) => { setDrawing(true); draw(event, true); }} onResponderMove={(event) => draw(event, false)} onResponderRelease={() => setDrawing(false)} onResponderTerminate={() => setDrawing(false)} style={{ width: "100%", aspectRatio: SIGNATURE_WIDTH / SIGNATURE_HEIGHT }}><View pointerEvents="none" style={{ flex: 1 }}><SignaturePreview path={path} fillPad /></View></View>
       {canEdit && <><Button label="Clear signature" disabled={busy} onPress={() => { changed(); setPath(""); setApproved(false); }} /><TouchableOpacity accessibilityRole="checkbox" accessibilityState={{ checked: approved, disabled: busy }} disabled={busy} onPress={() => { changed(); setApproved((value) => !value); }} style={styles.button}><Text style={styles.text}>{approved ? "☑" : "☐"} Customer confirms approval of the completed service</Text></TouchableOpacity></>}
     </>}
     {busy && <View style={styles.row}><ActivityIndicator color="#60A5FA" /><Text style={styles.text}>{progress > 0 ? `Uploading ${Math.round(progress * 100)}%` : "Saving…"}</Text></View>}
     {!!message && <Text accessibilityRole="alert" style={styles.error}>{message}</Text>}
     {canEdit && <Button label={message ? "Retry save" : "Save"} disabled={busy || !state.confirmed} onPress={() => void save()} />}
-  </ScrollView>;
+  </ScrollView></KeyboardAvoidingView></SafeAreaView>;
 }
 function Button({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {
   return <TouchableOpacity accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={[styles.button, disabled && { opacity: 0.5 }]}><Text style={styles.text}>{label}</Text></TouchableOpacity>;
