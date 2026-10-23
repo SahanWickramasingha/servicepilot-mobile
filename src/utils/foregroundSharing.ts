@@ -40,8 +40,14 @@ export class ForegroundSharing {
   private last?: DeviceFix;
   private lastWrite = -Infinity;
   private tail: Promise<void> = Promise.resolve();
+  private remoteCleared = false;
 
   constructor(private adapter: SharingAdapter) {}
+  /** Runs in Firebase's blocking before-identity-change hook, using the OLD credentials. */
+  async prepareAuthChange(previousUid: string): Promise<void> {
+    if (this.uid !== previousUid || this.state.status === "off") return;
+    await this.stop();
+  }
   getSnapshot = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private update(values: Partial<SharingState>) {
@@ -61,19 +67,26 @@ export class ForegroundSharing {
     this.latest = undefined;
   }
   private revoke(uid: string): Promise<void> {
-    const operation = this.tail.catch(() => undefined).then(() => this.adapter.publish(uid));
+    const operation = this.tail.catch(() => undefined).then(() => this.adapter.publish(uid)).then(() => {
+      if (this.uid === uid) this.remoteCleared = true;
+    });
     this.tail = operation;
     return operation;
   }
   async setSession(uid?: string): Promise<void> {
     if (this.uid === uid) return;
+    // External Auth synchronization may have already replaced credentials. Never
+    // write for the old UID here; cancel locally and disclose unconfirmed removal.
+    const unconfirmed = this.uid && !this.remoteCleared;
+    const residual = unconfirmed ? "Previous account tracking stopped. Remote removal was not confirmed; a stale grey approximate marker may remain. Sign back into that account online to clear it." : this.state.error.startsWith("Previous account tracking stopped") ? this.state.error : "";
     this.cancelLocal();
     const generation = this.generation;
     this.uid = uid;
     this.optedIn = false;
     this.last = undefined;
     this.lastWrite = -Infinity;
-    this.update({ enabled: false, status: "off", error: "", revokeFailed: false });
+    this.remoteCleared = false;
+    this.update({ enabled: false, status: "off", error: residual, revokeFailed: false });
     // Start every login opted out; clear a marker left by a terminated prior process.
     if (uid) {
       try { await this.revoke(uid); }
@@ -92,7 +105,7 @@ export class ForegroundSharing {
     this.update({ enabled: false, status: "error", error: message });
     if (uid) {
       try { await this.revoke(uid); }
-      catch { if (stoppedGeneration === this.generation) this.update({ revokeFailed: true, error: `${message} Server removal failed; retry. The location expires after two minutes.` }); }
+      catch { if (stoppedGeneration === this.generation) this.update({ revokeFailed: true, error: `${message} Server removal failed; retry. After two minutes precise access and distance expire; a grey approximate marker may remain.` }); }
     }
   }
   private async offer(point: DeviceFix, generation: number): Promise<void> {
@@ -128,6 +141,7 @@ export class ForegroundSharing {
       }
       if (this.adapter.now() - candidate.sampledAt > 60000) throw new LocationSharingError("acquisition", "location/stale-fix", "The GPS fix is no longer recent. Retry.");
       this.removePendingWrite?.(); this.removePendingWrite = undefined;
+      this.remoteCleared = false;
       try { await this.adapter.publish(uid, candidate); }
       catch (cause) { throw locationSharingError(cause, "publish"); }
       if (generation === this.generation) {
@@ -190,7 +204,7 @@ export class ForegroundSharing {
       if (uid) await this.revoke(uid);
       if (generation === this.generation) this.update({ status: "off" });
     } catch {
-      if (generation === this.generation) this.update({ status: "error", revokeFailed: true, error: "Sharing stopped on this device, but server removal failed. Retry; the location expires after two minutes." });
+      if (generation === this.generation) this.update({ status: "error", revokeFailed: true, error: "Sharing stopped on this device, but server removal failed. Retry online. After two minutes precise access and distance expire; a grey approximate marker may remain." });
       throw new Error("Unable to remove shared location. Please retry before signing out.");
     }
   }
@@ -204,7 +218,7 @@ export class ForegroundSharing {
         this.update({ enabled: false, status: "paused" });
         if (this.uid) {
           try { await this.revoke(this.uid); }
-          catch { if (generation === this.generation) this.update({ error: "Sharing is paused. Server removal failed; the location expires after two minutes.", revokeFailed: true }); }
+          catch { if (generation === this.generation) this.update({ error: "Sharing is paused. Server removal failed; retry online. After two minutes precise access and distance expire; a grey approximate marker may remain.", revokeFailed: true }); }
         }
       }
     } else if (this.optedIn) await this.enable(false);
