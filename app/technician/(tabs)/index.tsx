@@ -171,9 +171,9 @@ export default function TechnicianDashboard() {
           >
             <Bell size={20} color="#FFFFFF" />
             {unreadCount > 0 && (
-              <View style={styles.notificationBadge}>
+              <View style={styles.notificationBadge} accessibilityLabel="Unread activity in recent notifications; open to check total">
                 <Text style={styles.notificationBadgeText}>
-                  {unreadCount > 9 ? "9+" : unreadCount}
+                  •
                 </Text>
               </View>
             )}
