@@ -17,10 +17,12 @@ function fixture(){
   const cap=q.parts.find(p=>p.kind==='limit')?.n;assert.ok(cap&&cap<=20,'every page and receipt query is bounded');
   const docs=values.slice(0,cap);return{docs,size:docs.length};
  };
- const notify=()=>{for(const l of [...listeners])if(!l.stopped){const result=evaluate(l.query),identity=JSON.stringify(result.docs.map(d=>[d.id,d.data()]));if(identity!==l.identity){l.identity=identity;l.next(result);}}};
+ const snapshot=q=>q.path?document(q.path):evaluate(q);
+ const identityOf=result=>JSON.stringify(result.docs?result.docs.map(d=>[d.id,d.data()]):[result.id,result.data()]);
+ const notify=()=>{for(const l of [...listeners])if(!l.stopped){const result=snapshot(l.query),identity=identityOf(result);if(identity!==l.identity){l.identity=identity;l.next(result);}}};
  const sdk={collection:(_,name)=>name,doc:(_,name,id)=>({path:`${name}/${id}`}),where:(field,op,value)=>({kind:'where',field,op,value}),
   documentId:()=> '__name__',orderBy:(field,dir)=>({kind:'order',field,dir}),limit:n=>({kind:'limit',n}),startAfter:cursor=>({kind:'after',cursor}),query:(name,...parts)=>({name,parts}),
-  onSnapshot:(query,next,error)=>{const l={query,next,error,stopped:false};listeners.push(l);queueMicrotask(()=>{if(!l.stopped){const snapshot=evaluate(query);l.identity=JSON.stringify(snapshot.docs.map(d=>[d.id,d.data()]));next(snapshot);}});return()=>l.stopped=true;},
+  onSnapshot:(query,next,error)=>{const l={query,next,error,stopped:false};listeners.push(l);queueMicrotask(()=>{if(!l.stopped){const result=snapshot(query);l.identity=identityOf(result);next(result);}});return()=>l.stopped=true;},
   getDocsFromServer:async q=>{if(failRead)throw Error('offline');const result=evaluate(q);if(hold){const wait=hold;hold=null;await wait;}return result;},
   getDocFromServer:async ref=>{if(failRead)throw Error('offline');return document(ref.path);},serverTimestamp:()=>stamp(999),
   writeBatch:()=>{const changes=[];return{update:(ref,data)=>changes.push([ref.path,data]),set:(ref,data)=>changes.push([ref.path,data]),commit:async()=>{if(failRead)throw Error('offline');for(const[path,data]of changes)rows.set(path,{...rows.get(path),...data});notify();}};},
@@ -72,4 +74,33 @@ test('a burst moving the full live boundary explicitly requests refresh instead 
 test('equal timestamps use Firestore ASCII document-ID ordering rather than locale collation',async()=>{
  const f=fixture();for(const id of ['a','A','_','9'])f.add(id,100);const c=f.start();await tick();
  assert.deepEqual(f.latest().items.map(i=>i.id),['a','_','A','9']);c.stop();
+});
+
+test('evicted history stays live for read updates, deletion and system audience withdrawal, with bounded listeners',async()=>{
+ const f=fixture();
+ for(let i=0;i<45;i++){
+  f.add(`p${String(i).padStart(2,'0')}`,i);
+  f.add(`s${String(i).padStart(2,'0')}`,i,'system_messages');
+ }
+ const c=f.start();await tick();await c.loadMore();await tick();
+ f.add('arrival',100);f.add('system-arrival',100,'system_messages');f.notify();await tick();
+ // p25/s25 fell between the live page and the original history cursor.
+ assert.ok(f.latest().items.some(i=>i.id==='p25'));
+ f.rows.set('notifications/p25',{...f.rows.get('notifications/p25'),read:true});f.notify();await tick();
+ assert.equal(f.latest().items.find(i=>i.id==='p25').read,true);
+ f.rows.set('system_messages/s25',{...f.rows.get('system_messages/s25'),audienceRoles:['technician']});
+ f.rows.delete('notifications/p25');f.notify();await tick();
+ assert.ok(!f.latest().items.some(i=>i.id==='p25'||i.id==='s25'));
+ assert.ok(f.listeners.filter(l=>!l.stopped&&l.query.path).length<=80);
+ c.stop();assert.ok(f.listeners.every(l=>l.stopped));
+});
+
+test('retained-row listener failures hide unverified content, expose retry status and ignore late callbacks after account changes',async()=>{
+ const f=fixture();for(let i=0;i<45;i++)f.add(`p${String(i).padStart(2,'0')}`,i);
+ const c=f.start();await tick();await c.loadMore();f.add('arrival',100);f.notify();await tick();
+ const retained=f.listeners.find(l=>!l.stopped&&l.query.path==='notifications/p25');assert.ok(retained);
+ retained.error(Object.assign(Error('offline'),{code:'unavailable'}));
+ assert.ok(!f.latest().items.some(i=>i.id==='p25'));assert.ok(f.latest().status.errors.includes('personal-notifications'));
+ const count=f.outputs.length;f.auth.currentUser={uid:'other'};retained.next({exists:()=>true,data:()=>({userId:'viewer',read:false})});
+ assert.equal(f.outputs.length,count);c.stop();assert.ok(f.listeners.every(l=>l.stopped));
 });

@@ -66,7 +66,15 @@ test('legacy unknown intervals block acceptance until explicitly reviewed; no in
  await seed('sc-legacy','sc-tech-c','10:00 AM','assigned',true);await seed('sc-after-legacy','sc-tech-c');
  await assert.rejects(call('sc-tech-c',{action:'accept',requestId:'sc-after-legacy'}),e=>e.code==='booking/schedule-review');
  assert.equal((await db.doc('service_requests/sc-legacy').get()).data().durationMinutes,undefined);
- await call('sc-tech-c',{action:'review-legacy',requestId:'sc-legacy',date:'2099-10-10',time:'02:00 PM',durationMinutes:60});
+ const review={action:'review-legacy',requestId:'sc-legacy',date:'2099-10-10',time:'02:00 PM',durationMinutes:60};
+ await call('sc-tech-c',review);
+ const saved=(await db.doc('service_requests/sc-legacy').get()).data(),lock=(await db.doc('booking_schedule_locks/sc-tech-c').get()).data();
+ const notices=(await db.collection('notifications').where('requestId','==','sc-legacy').get()).size;
+ await call('sc-tech-c',review);
+ assert.deepEqual((await db.doc('service_requests/sc-legacy').get()).data(),saved);
+ assert.deepEqual((await db.doc('booking_schedule_locks/sc-tech-c').get()).data(),lock);
+ assert.equal((await db.collection('notifications').where('requestId','==','sc-legacy').get()).size,notices);
+ await assert.rejects(call('sc-tech-c',{...review,time:'03:00 PM'}),e=>e.code==='booking/conflict');
  await call('sc-tech-c',{action:'accept',requestId:'sc-after-legacy'});
 });
 test('terminal cancellation releases its reservation and new adjacent work can be accepted while manual availability stays unchanged',async()=>{

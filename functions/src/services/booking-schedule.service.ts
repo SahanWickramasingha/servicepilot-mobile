@@ -39,7 +39,6 @@ export function createBookingScheduleService({ auth, db, now = Date.now }: { aut
       const allowed = customerAction ? ["requested", "pending", "accepted", "assigned"] : input.action === "accept" ? ["requested", "pending"] :
         input.action === "review-legacy" ? ["requested", "pending", "accepted", "assigned", "in_progress"] : ["requested", "pending", "accepted", "assigned"];
       if (!allowed.includes(job.status)) throw new RequestError(409, "booking/conflict", "This booking has already changed. Refresh its details.");
-      if (input.action === "review-legacy" && job.schedulingVersion === 1) throw new RequestError(409, "booking/conflict", "This schedule was already reviewed.");
       let interval: { start: number; end: number };
       let date = job.preferredDate, time = job.preferredTime, duration = job.durationMinutes;
       if (customerAction || input.action === "review-legacy") { date = input.date; time = input.time; duration = input.durationMinutes; }
@@ -49,6 +48,13 @@ export function createBookingScheduleService({ auth, db, now = Date.now }: { aut
       }
       try { interval = bookingInterval(date, time, duration); }
       catch { throw new RequestError(409, "booking/schedule-review", "An explicit valid duration and Colombo schedule are required. Review this booking's schedule."); }
+      if (input.action === "review-legacy" && job.schedulingVersion === 1) {
+        // A lost acknowledgement must not make an exact retry look like a new
+        // schedule edit or send another notification. Later edits still conflict.
+        if (job.preferredDate === date && job.preferredTime === time && job.durationMinutes === duration &&
+          job.scheduledAt?.toMillis?.() === interval.start && job.scheduledEndAt?.toMillis?.() === interval.end) return { requestId };
+        throw new RequestError(409, "booking/conflict", "This schedule was already reviewed.");
+      }
       if (interval.start <= now() && input.action !== "review-legacy") throw new RequestError(409, "booking/conflict", "Choose a future Colombo schedule.");
       const stamp = FieldValue.serverTimestamp();
       if (customerAction) {

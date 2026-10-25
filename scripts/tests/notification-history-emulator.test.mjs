@@ -13,6 +13,17 @@ const {initializeApp:adminApp,deleteApp:deleteAdmin}=require('firebase-admin/app
 const {getFirestore,Timestamp}=require('firebase-admin/firestore');
 const projectId='demo-servicepilot-review-author',app=adminApp({projectId},'notification-history-tests'),db=getFirestore(app),clients=[];
 const wait=async(predicate)=>{for(let i=0;i<400;i++){if(predicate())return;await new Promise(r=>setTimeout(r,25));}throw Error('Notification listener timed out.');};
+async function checkStableTotal(stream,events,expected){
+ for(let attempt=0;attempt<5;attempt++){
+  await stream.refreshTotal();const status=events.at(-1).status;
+  if(status.unreadTotal!==undefined){assert.equal(status.unreadTotal,expected);return;}
+  assert.match(status.operationError,/changed during the count/);
+  // Firestore can deliver receipt acknowledgements while the bounded scan runs.
+  // The public contract explicitly invalidates that result; retry only that case.
+  await new Promise(done=>setTimeout(done,50));
+ }
+ assert.fail('Unread total never stabilized after bounded retries.');
+}
 before(async()=>{
  fsdk.setLogLevel('silent');
  for(const uid of ['nh-owner','nh-foreign']){
@@ -50,11 +61,45 @@ test('bounded real queries and receipt joins load history and mark all unloaded 
   assert.equal(events.at(-1).items.filter(i=>i.source==='personal').length,20);
   await stream.loadMore();await stream.loadMore();await wait(()=>!events.at(-1).status.loading&&events.at(-1).items.filter(i=>i.source==='personal').length===45);
   const system=(await db.collection('system_messages').get()).docs.filter(d=>['active','sent'].includes(d.data().status)&&d.data().audienceRoles?.includes('customer')).length;
-  await stream.refreshTotal();assert.equal(events.at(-1).status.unreadTotal,45+system);
+  await checkStableTotal(stream,events,45+system);
   await stream.markAll();await wait(()=>events.at(-1).items.every(i=>i.read));
-  await stream.refreshTotal();assert.equal(events.at(-1).status.unreadTotal,0);
+  await checkStableTotal(stream,events,0);
   const personal=await db.collection('notifications').where('userId','==','nh-owner').get();assert.ok(personal.docs.every(d=>d.data().read));
   await assert.rejects(fsdk.getDocFromServer(fsdk.doc(clients[1].db,'notifications','nh-00')),e=>e.code==='permission-denied');
   await assert.rejects(fsdk.setDoc(fsdk.doc(clients[1].db,'message_reads','nh-owner_nh-0'),{userId:'nh-owner',messageId:'nh-0',readAt:fsdk.serverTimestamp()}),e=>e.code==='permission-denied');
  }finally{stream.stop();}
+});
+
+test('real boundary-eviction listeners track read/deletion and remove system messages when audience access is revoked',async()=>{
+ const c=clients[0],events=[],errors=[],ids=[];
+ const batch=db.batch(),base=Date.now();
+ for(let i=0;i<45;i++)for(const name of ['notifications','system_messages']){
+  const id=`nh-boundary-${String(i).padStart(2,'0')}`,ref=db.doc(`${name}/${id}`);ids.push(ref);
+  batch.set(ref,{userId:'nh-owner',read:false,type:'system',senderId:'local-admin',senderRole:'super_admin',senderName:'Local administrator',
+   audienceRoles:['customer'],status:'active',title:'Local boundary fixture',message:'Local test',priority:'normal',createdAt:Timestamp.fromMillis(base+i*100)});
+ }
+ await batch.commit();
+ const {connectNotificationHistory}=loadService('src/services/notificationHistory.ts',{'firebase/firestore':fsdk,'@/src/firebase/config':c});
+ const stream=connectNotificationHistory('nh-owner','customer',(id,data)=>({id,...data,source:'personal'}),(id,data)=>({id,...data}),
+  (items,status)=>events.push({items,status}),e=>errors.push(e));
+ const has=(id,source)=>events.at(-1)?.items.some(i=>i.id===id&&i.source===source);
+ try{
+  // A reused SDK can emit an older cached page before seeing the Admin-seeded
+  // fixtures. Capture a history cursor only after this test's live head arrives.
+  await wait(()=>events.at(-1)&&!events.at(-1).status.loading&&has('nh-boundary-44','personal')&&has('nh-boundary-44','system'));
+  await stream.loadMore();await wait(()=>has('nh-boundary-05','personal')&&has('nh-boundary-05','system'));
+  for(const name of ['notifications','system_messages']){
+   const ref=db.doc(`${name}/nh-boundary-arrival`);ids.push(ref);
+   const original=(await db.doc(`${name}/nh-boundary-44`).get()).data();await ref.set({...original,createdAt:Timestamp.fromMillis(base+10000)});
+  }
+  await wait(()=>has('nh-boundary-arrival','personal')&&has('nh-boundary-arrival','system')&&has('nh-boundary-25','personal')&&has('nh-boundary-25','system'));
+  await db.doc('notifications/nh-boundary-25').update({read:true});
+  await wait(()=>events.at(-1).items.find(i=>i.id==='nh-boundary-25'&&i.source==='personal')?.read===true);
+  await db.doc('notifications/nh-boundary-25').delete();
+  await db.doc('system_messages/nh-boundary-25').update({audienceRoles:['technician']});
+  await wait(()=>!has('nh-boundary-25','personal')&&!has('nh-boundary-25','system'));
+  assert.deepEqual(errors,[],'a withdrawn system message is removed without breaking remaining history');
+ }finally{
+  stream.stop();const cleanup=db.batch();ids.forEach(ref=>cleanup.delete(ref));await cleanup.commit();
+ }
 });

@@ -30,6 +30,7 @@ export class ForegroundSharing {
   private listeners = new Set<() => void>();
   private uid?: string;
   private generation = 0;
+  private sessionGeneration = 0;
   private active = true;
   private optedIn = false;
   private acquisition?: AbortController;
@@ -45,7 +46,7 @@ export class ForegroundSharing {
   constructor(private adapter: SharingAdapter) {}
   /** Runs in Firebase's blocking before-identity-change hook, using the OLD credentials. */
   async prepareAuthChange(previousUid: string): Promise<void> {
-    if (this.uid !== previousUid || this.state.status === "off") return;
+    if (this.uid !== previousUid || (this.state.status === "off" && this.remoteCleared)) return;
     await this.stop();
   }
   getSnapshot = () => this.state;
@@ -67,8 +68,13 @@ export class ForegroundSharing {
     this.latest = undefined;
   }
   private revoke(uid: string): Promise<void> {
-    const operation = this.tail.catch(() => undefined).then(() => this.adapter.publish(uid)).then(() => {
-      if (this.uid === uid) this.remoteCleared = true;
+    const session = this.sessionGeneration;
+    const operation = this.tail.catch(() => undefined).then(async () => {
+      // External Auth synchronization can invalidate queued cleanup before it
+      // reaches the adapter. Never start that write using replacement credentials.
+      if (session !== this.sessionGeneration || this.uid !== uid) return;
+      await this.adapter.publish(uid);
+      if (session === this.sessionGeneration && this.uid === uid) this.remoteCleared = true;
     });
     this.tail = operation;
     return operation;
@@ -81,6 +87,7 @@ export class ForegroundSharing {
     const residual = unconfirmed ? "Previous account tracking stopped. Remote removal was not confirmed; a stale grey approximate marker may remain. Sign back into that account online to clear it." : this.state.error.startsWith("Previous account tracking stopped") ? this.state.error : "";
     this.cancelLocal();
     const generation = this.generation;
+    this.sessionGeneration++;
     this.uid = uid;
     this.optedIn = false;
     this.last = undefined;
@@ -226,13 +233,16 @@ export class ForegroundSharing {
   async cleanup(): Promise<void> {
     const stopped = this.stop();
     const generation = this.generation;
-    try { await stopped; } finally { if (generation === this.generation) this.uid = undefined; }
+    try { await stopped; } finally {
+      if (generation === this.generation) { this.uid = undefined; this.sessionGeneration++; }
+    }
   }
 
   // Only for a confirmed administrative revocation. The trusted backend has
   // already removed both coordinate documents. Normal logout still awaits stop().
   endRevokedSession(): void {
     this.cancelLocal();
+    this.sessionGeneration++;
     this.uid = undefined;
     this.optedIn = false;
     this.update({ enabled: false, status: "off", error: "", revokeFailed: false });

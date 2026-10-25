@@ -1,4 +1,4 @@
-import { collection, doc, documentId, getDocFromServer, getDocsFromServer, limit, onSnapshot, orderBy,
+import { collection, doc, documentId, getDocsFromServer, limit, onSnapshot, orderBy,
   query, serverTimestamp, startAfter, where, writeBatch, type DocumentData, type QueryDocumentSnapshot } from "firebase/firestore";
 import { auth, db } from "@/src/firebase/config";
 import type { UserRole } from "./user.service";
@@ -7,11 +7,13 @@ import type { NotificationCenterItem, NotificationCenterStatus, NotificationQuer
 export const NOTIFICATION_PAGE_SIZE = 20;
 type Row = { id: string; data: DocumentData; cursor: QueryDocumentSnapshot<DocumentData> };
 type Source = { key: string; kind: NotificationQueryType; collection: string; filters: ReturnType<typeof where>[];
-  pages: Map<number, Map<string, Row>>; retained: Map<string, Row>; cursor?: QueryDocumentSnapshot<DocumentData>; more: boolean; pagesLoaded: number };
+  pages: Map<number, Map<string, Row>>; retained: Map<string, Row>; retainedStops: Map<string, () => void>;
+  cursor?: QueryDocumentSnapshot<DocumentData>; more: boolean; pagesLoaded: number };
 
 /** Three recent queries plus receipt queries scoped only to loaded system IDs.
  * History pages stay live. Rows evicted across page boundaries are individually
- * verified before retention, so a new arrival cannot silently discard history.
+ * kept live with bounded document listeners, including deletion/read/audience
+ * changes after eviction. Unverified or inaccessible retained rows are hidden.
  */
 export function connectNotificationHistory(userId: string, role: UserRole,
   mapPersonal: (id: string, data: DocumentData) => NotificationCenterItem,
@@ -29,7 +31,7 @@ export function connectNotificationHistory(userId: string, role: UserRole,
     { key: "personal", kind: "personal-notifications" as const, collection: "notifications", filters: [where("userId", "==", userId)] },
     ...["active", "sent"].map((status) => ({ key: status, kind: "system-messages" as const, collection: "system_messages",
       filters: [where("audienceRoles", "array-contains", role), where("status", "==", status)] })),
-  ].map((source) => ({ ...source, pages: new Map(), retained: new Map(), more: true, pagesLoaded: 0 }));
+  ].map((source) => ({ ...source, pages: new Map(), retained: new Map(), retainedStops: new Map(), more: true, pagesLoaded: 0 }));
   const current = () => alive && auth.currentUser === viewer && viewer?.uid === userId;
   const requireCurrent = () => { if (!current()) throw new Error("Account changed. Reopen notifications."); };
   const changed = () => { version++; total = undefined; };
@@ -85,14 +87,40 @@ export function connectNotificationHistory(userId: string, role: UserRole,
   const pageQuery = (source: Source, cursor?: QueryDocumentSnapshot<DocumentData>) => query(collection(db, source.collection),
     ...source.filters, orderBy("createdAt", "desc"), orderBy(documentId(), "desc"),
     ...(cursor ? [startAfter(cursor)] : []), limit(NOTIFICATION_PAGE_SIZE));
+  const dropRetained = (source: Source, id: string) => {
+    source.retainedStops.get(id)?.(); source.retainedStops.delete(id); source.retained.delete(id);
+    const key = `history:retained:${source.key}:${id}`;
+    pending.delete(key); failures.delete(key);
+  };
+  const retain = (source: Source, old: Row) => {
+    if (source.retainedStops.has(old.id) || [...source.pages.values()].some((page) => page.has(old.id))) return;
+    if (source.retainedStops.size >= NOTIFICATION_PAGE_SIZE * source.pagesLoaded) { windowChanged = true; return; }
+    const key = `history:retained:${source.key}:${old.id}`;
+    pending.add(key); let active = true;
+    const stop = onSnapshot(doc(db, source.collection, old.id), (saved) => {
+      if (!current() || !active) return;
+      const data = saved.data();
+      const eligible = saved.exists() && data && (source.key === "personal" ? data.userId === userId :
+        data.status === source.key && Array.isArray(data.audienceRoles) && data.audienceRoles.includes(role));
+      if (eligible) source.retained.set(old.id, { ...old, data }); else dropRetained(source, old.id);
+      pending.delete(key); failures.delete(key); changed(); syncReceipts(); emit();
+    }, (cause) => {
+      if (!current() || !active) return;
+      dropRetained(source, old.id); changed(); syncReceipts();
+      // Withdrawn system messages may become unreadable under the existing Rules.
+      if ((cause as { code?: string }).code === "permission-denied") emit();
+      else fail(key, source.kind, cause);
+    });
+    source.retainedStops.set(old.id, () => { active = false; stop(); });
+  };
   const attach = (source: Source, cursor?: QueryDocumentSnapshot<DocumentData>) => new Promise<void>((resolve) => {
     const finish = () => { pendingPages.delete(finish); resolve(); };
     pendingPages.add(finish);
     const pageIndex = source.pagesLoaded++, key = pageIndex ? `history:${source.key}:${pageIndex}` : source.key;
-    pending.add(key); let first = true, generation = 0;
+    pending.add(key); let first = true;
     stops.push(onSnapshot(pageQuery(source, cursor), (snapshot) => {
       if (!current()) return;
-      const event = ++generation, previous = source.pages.get(pageIndex) ?? new Map<string, Row>();
+      const previous = source.pages.get(pageIndex) ?? new Map<string, Row>();
       const rows = new Map(snapshot.docs.map((item) => [item.id, { id: item.id, data: item.data(), cursor: item }]));
       if (pageIndex === 0 && source.pagesLoaded > 1 && previous.size === NOTIFICATION_PAGE_SIZE &&
         snapshot.size === NOTIFICATION_PAGE_SIZE && ![...rows.keys()].some((id) => previous.has(id))) windowChanged = true;
@@ -102,26 +130,15 @@ export function connectNotificationHistory(userId: string, role: UserRole,
       // A limit-query removal can be a boundary shift OR deletion/withdrawal.
       for (const [id, old] of previous) if (!rows.has(id)) {
         if (source.pagesLoaded === 1) continue; // The next page starts at the current live boundary.
-        if (source.retained.size >= NOTIFICATION_PAGE_SIZE * source.pagesLoaded) { windowChanged = true; continue; }
-        source.retained.set(id, old);
-        void getDocFromServer(doc(db, source.collection, id)).then((saved) => {
-          if (!current() || event !== generation) return;
-          const data = saved.data();
-          const eligible = data && (source.key === "personal" ? data.userId === userId :
-            data.status === source.key && Array.isArray(data.audienceRoles) && data.audienceRoles.includes(role));
-          if (eligible) source.retained.set(id, { ...old, data }); else source.retained.delete(id);
-          changed(); syncReceipts(); emit();
-        }, (cause) => { if (current() && event === generation) {
-          if ((cause as { code?: string }).code === "permission-denied") source.retained.delete(id);
-          else fail(key, source.kind, cause);
-          syncReceipts(); emit();
-        } });
+        retain(source, old);
       }
-      for (const id of rows.keys()) source.retained.delete(id);
+      for (const id of rows.keys()) dropRetained(source, id);
       syncReceipts(); emit(); if (first) { first = false; finish(); }
     }, (cause) => {
-      generation++;
-      if (current() && (cause as { code?: string }).code === "permission-denied") { source.pages.delete(pageIndex); source.retained.clear(); changed(); syncReceipts(); }
+      if (current() && (cause as { code?: string }).code === "permission-denied") {
+        source.pages.delete(pageIndex); for (const id of source.retainedStops.keys()) dropRetained(source, id);
+        changed(); syncReceipts();
+      }
       fail(key, source.kind, cause); if (first) { first = false; finish(); }
     }));
   });
@@ -179,7 +196,10 @@ export function connectNotificationHistory(userId: string, role: UserRole,
   };
   sources.forEach((source) => { void attach(source); });
   return {
-    stop: () => { alive = false; stops.forEach((stop) => stop()); receiptStops.forEach((stop) => stop()); pendingPages.forEach((finish) => finish()); receipts.clear(); sources.forEach((source) => { source.pages.clear(); source.retained.clear(); }); },
+    stop: () => {
+      alive = false; stops.forEach((stop) => stop()); receiptStops.forEach((stop) => stop()); pendingPages.forEach((finish) => finish()); receipts.clear();
+      sources.forEach((source) => { for (const id of source.retainedStops.keys()) dropRetained(source, id); source.pages.clear(); });
+    },
     loadMore: async () => {
       if (historyBusy || windowChanged) return;
       requireCurrent(); historyBusy = true; emit();

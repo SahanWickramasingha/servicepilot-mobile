@@ -7,15 +7,15 @@ const { ForegroundSharing }=loadService('src/utils/foregroundSharing.ts',{'@/fun
 const { installLocationAuthGuard }=loadService('src/firebase/locationAuthGuard.ts',{});
 const tick=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
 function fixture(){
- const auth={currentUser:{uid:'A'}}, events=[], watches=new Set(), timers=new Set(); let middleware, offline=false, release;
+ const auth={currentUser:{uid:'A'}}, events=[], watches=new Set(), timers=new Set(); let middleware, offline=false, release, removal;
  const sharing=new ForegroundSharing({now:()=>100000,permission:async()=>true,servicesEnabled:async()=>true,
   current:async()=>({latitude:7,longitude:80,sampledAt:100000}),
   watch:async(next)=>{watches.add(next);return()=>watches.delete(next);},every:(next)=>{timers.add(next);return()=>timers.delete(next);},
-  publish:async(uid,point)=>{assert.equal(auth.currentUser?.uid,uid,'old cleanup must use old credentials');if(offline)throw Error('offline');if(point&&release)await release.promise;events.push({uid,point});},
+  publish:async(uid,point)=>{assert.equal(auth.currentUser?.uid,uid,'old cleanup must use old credentials');if(offline)throw Error('offline');if(point&&release)await release.promise;if(!point&&removal)await removal;events.push({uid,point});},
  });
  installLocationAuthGuard(auth,(_,next)=>{middleware=next;return()=>{};},async()=>sharing);
  const replace=async(uid)=>{const next=uid?{uid}:null;await middleware(next);auth.currentUser=next;await sharing.setSession(uid??undefined);};
- return {auth,sharing,events,watches,timers,replace,offline:(value)=>offline=value,hold:(value)=>release=value};
+ return {auth,sharing,events,watches,timers,replace,offline:(value)=>offline=value,hold:(value)=>release=value,holdRemoval:(value)=>removal=value};
 }
 test('direct replacement/sign-out revoke before credentials change; repeated switches stop watchers and delayed callbacks',async()=>{
  const f=fixture(); await f.sharing.setSession('A');await f.sharing.enable();const old=[...f.watches][0];
@@ -40,4 +40,32 @@ test('already-replaced external Auth state cancels locally and discloses residua
  const count=f.events.length;await f.sharing.setSession(undefined);assert.equal(f.events.length,count);assert.equal(f.watches.size,0);assert.equal(f.timers.size,0);
  assert.match(f.sharing.getSnapshot().error,/Remote removal was not confirmed/);await f.sharing.setSession('B');
  assert.equal(f.events.at(-1).uid,'B');assert.equal(f.sharing.getSnapshot().enabled,false);
+});
+
+test('direct replacement waits for initial remote cleanup even while sharing is locally OFF',async()=>{
+ const f=fixture();let release;f.holdRemoval(new Promise(done=>release=done));
+ const starting=f.sharing.setSession('A');await tick();const replacing=f.replace('B');await tick();
+ try{assert.equal(f.auth.currentUser.uid,'A','initial unconfirmed removal must block replacement');}
+ finally{release();await Promise.all([starting,replacing]);}
+ assert.equal(f.auth.currentUser.uid,'B');assert.equal(f.sharing.getSnapshot().enabled,false);
+ await f.sharing.setActive(false);await f.sharing.setActive(true);assert.equal(f.watches.size,0);
+});
+
+test('queued removal from an obsolete session cannot execute under a replacement account',async()=>{
+ const f=fixture();await f.sharing.setSession('A');let release;f.hold({promise:new Promise(done=>release=done)});
+ const enabling=f.sharing.enable();await tick();
+ const stopping=f.sharing.stop().then(()=>true,()=>false);await tick();
+ f.auth.currentUser={uid:'B'};await f.sharing.setSession(undefined);const changed=f.sharing.setSession('B');
+ release();await Promise.all([enabling,changed]);assert.equal(await stopping,true,'obsolete cleanup must be cancelled before the adapter write');
+ assert.equal(f.events.filter(e=>e.uid==='A'&&!e.point).length,1,'only the original authorized initialization removed A');
+ assert.equal(f.events.at(-1).uid,'B');assert.equal(f.sharing.getSnapshot().enabled,false);
+ assert.match(f.sharing.getSnapshot().error,/Remote removal was not confirmed/);
+});
+
+test('backgrounding while replacement waits must not cancel the same-account remote OFF write',async()=>{
+ const f=fixture();await f.sharing.setSession('A');let release;f.hold({promise:new Promise(done=>release=done)});
+ const enabling=f.sharing.enable();await tick();const replacing=f.replace('B');await tick();
+ await f.sharing.setActive(false);release();await Promise.all([enabling,replacing]);
+ assert.equal(f.events.filter(e=>e.uid==='A').at(-1).point,undefined,'A must be remotely OFF before B replaces it');
+ await f.sharing.setActive(true);assert.equal(f.watches.size,0);assert.equal(f.sharing.getSnapshot().enabled,false);
 });
