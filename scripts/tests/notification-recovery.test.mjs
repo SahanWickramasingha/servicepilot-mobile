@@ -33,6 +33,20 @@ test('shared notification errors survive unrelated source updates and disappear 
   } finally { stops.forEach((stop) => stop()); }
   assert.ok(f.listeners.every((l) => l.stopped)); assert.equal(f.session.observers(), 0);
 });
+
+test('missing composite indexes wait for explicit Retry, then recreate both status queries and clear recovery errors', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture(), stop = f.subscribe();
+  try {
+    f.settle(0);
+    for (const listener of f.listeners.slice(0, 3)) listener.error(Object.assign(Error('The query requires an index.'), { code: 'failed-precondition' }));
+    assert.deepEqual(f.last().status.errors.sort(), ['personal-notifications', 'system-messages']);
+    t.mock.timers.tick(120000); assert.equal(f.listeners.length, 3);
+    f.service.retryNotificationCenter('customer-a', 'customer');
+    assert.equal(f.listeners.length, 6); assert.ok(f.listeners.slice(0, 3).every((l) => l.stopped));
+    f.settle(3); assert.deepEqual(f.last().status.errors, []);
+  } finally { stop(); }
+});
 test('notification retries have bounded backoff and account changes cancel pending work and reject late callbacks', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = fixture(), stop = f.subscribe();
