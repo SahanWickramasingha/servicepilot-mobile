@@ -1,12 +1,13 @@
 import { collection, doc, getDocFromServer, onSnapshot, runTransaction, serverTimestamp } from "firebase/firestore";
-import { deleteObject, getMetadata, ref, uploadBytesResumable } from "firebase/storage";
 import * as ImagePicker from "expo-image-picker";
-import { auth, db, storage } from "@/src/firebase/config";
+import { auth, db } from "@/src/firebase/config";
 import { bookingAccount, bookingTechnician } from "@/functions/src/domain/booking";
 import { type JobEvidence, type JobPhotoStage, type JobSignature, type ServiceNotes, validateJobPhotoPaths, validateJobSignature, validateServiceNotes } from "@/functions/src/domain/jobEvidence";
 import { createSessionStream } from "./session-subscriptions";
-import { prepareSelectedPhotos, pickReviewPhotos, readPhotoBytes, type SelectedReviewPhoto } from "./reviewPhotos.service";
+import { prepareSelectedPhotos, pickReviewPhotos, type SelectedReviewPhoto } from "./reviewPhotos.service";
 import { validateImageBytes } from "@/src/utils/reviewValidation";
+import { uploadPrivatePhoto, confirmPrivatePhoto, deleteUnreferencedPrivatePhoto } from "./privatePhotos.service";
+import { isR2Photo } from "@/src/utils/photoReferences";
 export type { JobEvidence, JobPhotoStage, JobSignature, ServiceNotes };
 const stream = createSessionStream<[JobEvidence | null, boolean]>(() => [null, false]);
 export function subscribeToJobEvidence(requestId: string, next: (data: JobEvidence | null, confirmed: boolean) => void, error: (cause: Error) => void) {
@@ -30,10 +31,11 @@ export async function saveJobEvidence(requestId: string, expectedRevision: numbe
   if ("signature" in change) validateJobSignature(change.signature);
   // All referenced photos must exist before the client can acknowledge a save.
   const paths = "beforePhotos" in change ? change.beforePhotos : "afterPhotos" in change ? change.afterPhotos : [];
+  const prior = paths.some((path) => !isR2Photo(path)) ? (await getDocFromServer(doc(db, "job_evidence", requestId))).data() as JobEvidence | undefined : undefined;
   for (const path of paths) {
-    const metadata = await getMetadata(ref(storage, path)); session(uid);
-    if (metadata.contentType !== "image/jpeg" || !metadata.size || metadata.size > 5 * 1024 * 1024 ||
-      metadata.customMetadata?.technicianId !== uid || metadata.customMetadata?.requestId !== requestId) throw new Error("A job photo is unavailable. Select and upload it again.");
+    if (isR2Photo(path)) await confirmPrivatePhoto(path, uid);
+    else if (!("beforePhotos" in change ? prior?.beforePhotos : prior?.afterPhotos)?.includes(path)) throw new Error("Choose and upload a new photo before saving. Existing historical photos remain available.");
+    session(uid);
   }
   // Preflight reads provide useful errors. Rules recheck the authoritative account
   // and job at commit; the evidence revision transaction serializes edits. Keeping
@@ -76,31 +78,21 @@ export async function pickJobPhotos(remaining: number, camera = false): Promise<
 export function newJobPhotoAttempt(): string { return doc(collection(db, "job_evidence")).id; }
 export async function uploadJobPhoto(requestId: string, stage: JobPhotoStage, attemptId: string, slot: number, photo: SelectedReviewPhoto, onProgress: (value: number) => void, signal?: AbortSignal): Promise<string> {
   const uid = auth.currentUser?.uid ?? ""; session(uid, signal);
-  const path = `job_photos/${uid}/${requestId}/${stage}/${attemptId}/${slot}.jpg`;
-  validateJobPhotoPaths([path], uid, requestId, stage);
-  validateImageBytes(await readPhotoBytes(photo.uri), true); session(uid, signal);
   const blob = await (await fetch(photo.uri)).blob();
   try {
-    // A retry uses the same immutable upload path, never an overwrite.
-    try { const existing = await getMetadata(ref(storage, path)); session(uid, signal); if (existing.size === photo.size) return path; }
-    catch (error) { if ((error as { code?: string }).code !== "storage/object-not-found") throw error; }
-    const task = uploadBytesResumable(ref(storage, path), blob, { contentType: "image/jpeg", cacheControl: "private, max-age=0, no-store",
-      customMetadata: { requestId, technicianId: uid, stage, attemptId } });
-    const cancel = () => task.cancel(); signal?.addEventListener("abort", cancel);
-    const stopAuth = auth.onAuthStateChanged((user) => { if (user?.uid !== uid) task.cancel(); });
-    try { await new Promise<void>((resolve, reject) => task.on("state_changed", (value) => onProgress(value.bytesTransferred / value.totalBytes), reject, resolve)); session(uid, signal); }
-    finally { stopAuth(); signal?.removeEventListener("abort", cancel); }
-    return path;
+    if (!blob.size || blob.size > 5 * 1024 * 1024) throw new Error("Choose a processed job photo of 5 MiB or less.");
+    const bytes = await new Promise<Uint8Array>((resolve, reject) => {
+      const reader = new FileReader(); reader.onerror = () => reject(new Error("Unable to read the selected photo."));
+      reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer)); reader.readAsArrayBuffer(blob);
+    });
+    validateImageBytes(bytes, true); session(uid, signal);
+    return await uploadPrivatePhoto({ uid, requestId, purpose: stage, attemptId, slot, blob, bytes, contentType: "image/jpeg" }, onProgress, signal);
   } finally { (blob as Blob & { close?: () => void }).close?.(); }
 }
-/** Never delete without a fresh ownership/reference check; ambiguous commits keep files. */
+/** Explicit cleanup only; legacy Firebase files are never mutated by this flow. */
 export async function cleanupJobUploads(requestId: string, uid: string, paths: string[]): Promise<void> {
   session(uid);
   const saved = (await getDocFromServer(doc(db, "job_evidence", requestId))).data() as JobEvidence | undefined; session(uid);
   const referenced = [...(saved?.beforePhotos ?? []), ...(saved?.afterPhotos ?? [])];
-  for (const path of paths) {
-    if (!path.startsWith(`job_photos/${uid}/${requestId}/`) || referenced.includes(path)) continue;
-    try { session(uid); await deleteObject(ref(storage, path)); }
-    catch (error) { if ((error as { code?: string }).code !== "storage/object-not-found") throw error; }
-  }
+  for (const path of paths) if (isR2Photo(path) && !referenced.includes(path)) { session(uid); await deleteUnreferencedPrivatePhoto(path, uid); }
 }
