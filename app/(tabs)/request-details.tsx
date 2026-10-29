@@ -1,4 +1,5 @@
 import { BookingSchedulePanel } from "@/src/components/jobs/BookingSchedulePanel";
+import { RequestAttachments } from "@/src/components/jobs/RequestAttachments";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -487,10 +488,9 @@ export default function RequestDetailsScreen() {
         </Text>
         <View style={styles.descriptionCard}>
           <Text style={styles.descriptionText}>
-            {request.imageUrls.length > 0
-              ? `${request.imageUrls.length} attachment(s) added`
-              : "No attachments added."}
+            {request.imageUrls.length === 0 ? "No attachments added." : "Optional customer photos"}
           </Text>
+          <RequestAttachments paths={request.imageUrls} />
         </View>
 
         <Text style={styles.sectionTitle}>
