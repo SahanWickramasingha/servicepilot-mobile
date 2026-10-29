@@ -8,6 +8,7 @@
       ]
     }
   },
+  "exclude": ["photo-worker"],
   "include": [
     "**/*.ts",
     "**/*.tsx",
