@@ -28,6 +28,8 @@ import { UserProfile } from "@/src/services/user.service";
 import { type PublicTechnicianProfile } from "@/src/services/technician.service";
 import { bookingInterval, BOOKING_TIME_ZONE } from "@/functions/src/domain/scheduling";
 import { callBookingSchedule } from "./bookingSchedule.service";
+import { validateRequestPaths } from "@/src/utils/requestAttachments";
+import { reportSubmissionFailure, submissionOperationError } from "@/src/utils/requestSubmissionDiagnostics";
 
 export interface ServiceRequest {
   id: string;
@@ -185,6 +187,23 @@ function sortByCreatedDesc(
 
 export function createServiceRequestAttemptId(): string { return doc(collection(db, "service_requests")).id; }
 
+/** Server confirmation before retrying uploads; never trust a cached absence. */
+export async function confirmServiceRequestAttempt(uid: string, id: string): Promise<boolean> {
+  bookingSession(uid);
+  let receipt;
+  try { receipt = (await getDocFromServer(doc(db, "booking_attempts", uid, "requests", id))).data(); }
+  catch (cause) {
+    reportSubmissionFailure("receipt-confirm", cause, { projectId: db.app?.options.projectId, authenticated: !!auth.currentUser, verified: auth.currentUser?.emailVerified === true, ownerMatches: auth.currentUser?.uid === uid });
+    throw submissionOperationError("receipt-confirm", cause);
+  }
+  bookingSession(uid);
+  if (!receipt) return false;
+  const saved = (await getDocFromServer(doc(db, "service_requests", id))).data();
+  bookingSession(uid);
+  if (receipt.requestId !== id || receipt.customerId !== uid || saved?.customerId !== uid) throw new Error("Unable to confirm the saved request. Retry with the original account.");
+  return true;
+}
+
 function bookingSession(uid: string) {
   if (auth.currentUser?.uid !== uid || auth.currentUser.emailVerified !== true) {
     throw new BookingError("booking/session", "Please sign in with your verified account before saving this booking.");
@@ -207,12 +226,18 @@ export async function createServiceRequest(input: CreateServiceRequestInput): Pr
   const attemptId = input.attemptId ?? createServiceRequestAttemptId();
   if (!/^[A-Za-z0-9]{20}$/.test(attemptId)) throw new BookingError("booking/invalid", "Invalid submission. Reopen the booking form.");
   const requestRef = doc(db, "service_requests", attemptId);
+  validateRequestPaths(input.imageUrls ?? [], uid, attemptId);
   const receiptRef = doc(db, "booking_attempts", uid, "requests", attemptId);
   try {
     return await runTransaction(db, async (transaction) => {
       const profile = (await transaction.get(doc(db, "users", uid))).data();
-      const receipt = await transaction.get(receiptRef);
       bookingSession(uid); bookingAccount(profile, "customer");
+      let receipt;
+      try { receipt = await transaction.get(receiptRef); }
+      catch (cause) {
+        reportSubmissionFailure("receipt-read", cause, { projectId: db.app?.options.projectId, authenticated: !!auth.currentUser, verified: auth.currentUser?.emailVerified === true, ownerMatches: auth.currentUser?.uid === uid });
+        throw submissionOperationError("receipt-read", cause);
+      }
       if (receipt.exists()) {
         const saved = (await transaction.get(requestRef)).data();
         if (!saved || saved.customerId !== uid) throw new BookingError("booking/conflict", "The saved submission could not be confirmed. Contact support.");
@@ -263,6 +288,8 @@ export async function createServiceRequest(input: CreateServiceRequestInput): Pr
         }
       } catch { /* An unconfirmed or unauthorized read cannot turn failure into success. */ }
     }
+    reportSubmissionFailure("booking-transaction", error);
+    if ((error as { operation?: string }).operation) throw error;
     throw actionableBookingError(error);
   }
 }
