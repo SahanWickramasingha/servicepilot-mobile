@@ -32,6 +32,10 @@ yarn-error.*
 
 # local env files
 .env*.local
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/
 
 # local Firebase Admin SDK credentials
 secrets/
