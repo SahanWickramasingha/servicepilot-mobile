@@ -1,0 +1,9 @@
+title: ServicePilot Photo Metadata
+description: Trusted photo confirmation records and bounded cleanup; no Auth admin or delete permissions.
+stage: GA
+includedPermissions:
+  - datastore.databases.get
+  - datastore.entities.get
+  - datastore.entities.list
+  - datastore.entities.create
+  - datastore.entities.update
