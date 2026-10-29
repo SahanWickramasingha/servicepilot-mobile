@@ -43,7 +43,7 @@ export function useNotificationCenter(requiredRole: UserRole) {
         const centerCurrent = () => current() && centerVersion === centerGeneration;
         stopCenter = subscribeToNotificationCenter({ userId: user.uid, role: requiredRole }, (items, status) => {
           if (centerCurrent()) setState((previous) => ({ ...previous, viewer, items, loading: status?.loading ?? false,
-            status, errorMessage: status?.operationError || (status?.errors.length ? "Some notifications are unavailable. Check your connection and retry." : "") }));
+            status, errorMessage: status?.operationError || (status?.errors.length ? "Some notifications are unavailable. Please retry." : "") }));
         }, (_error, context) => {
           if (centerCurrent()) setState((previous) => ({ ...previous, loading: false, errorMessage:
             context.queryType === "system-messages" ? "Unable to load system messages."
