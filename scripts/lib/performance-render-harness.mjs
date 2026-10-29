@@ -32,6 +32,7 @@ export function renderHarness(path, { root = '.', initial = [], dependencies = {
     // Evidence rendering has its own focused tests; unrelated screen workloads
     // do not load native image-picker/Storage implementations in Node.
     '@/src/components/jobs/JobEvidenceView': { JobEvidenceView: 'JobEvidenceView' },
+    '@/src/components/jobs/RequestAttachments': { RequestAttachments: 'RequestAttachments' },
     ...dependencies };
   function load(logical) {
     if (modules.has(logical)) return modules.get(logical);
