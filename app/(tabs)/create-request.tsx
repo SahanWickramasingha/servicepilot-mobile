@@ -11,7 +11,6 @@ import DateTimePicker, {
 import {
   ArrowLeft,
   CalendarDays,
-  Camera,
   Clock3,
   ImagePlus,
   MapPin,
@@ -21,6 +20,7 @@ import {
 } from "lucide-react-native";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -40,7 +40,9 @@ import {
   getPriorityLabel,
 } from "@/src/constants/serviceRequests";
 import { auth } from "@/src/firebase/config";
-import { createServiceRequest, createServiceRequestAttemptId } from "@/src/services/request.service";
+import { submissionFailureMessage, reportSubmissionFailure } from "@/src/utils/requestSubmissionDiagnostics";
+import { cleanupUnsubmittedPhotos, pickRequestPhotos, uploadRequestPhoto, type RequestPhoto } from "@/src/services/requestAttachments.service";
+import { confirmServiceRequestAttempt, createServiceRequest, createServiceRequestAttemptId } from "@/src/services/request.service";
 import {
   getUserProfile,
   UserProfile,
@@ -126,7 +128,14 @@ export default function CreateRequestScreen() {
   const [durationMinutes, setDurationMinutes] = useState("");
   const [priority, setPriority] =
     useState<RequestPriority>("normal");
-  const [photoCount, setPhotoCount] = useState(0);
+  const [photos, setPhotos] = useState<RequestPhoto[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
+  const pickerBusy = useRef(false);
+  const uploadController = useRef<AbortController | null>(null);
+  const intent = useRef<Parameters<typeof createServiceRequest>[0] | null>(null);
+  const bookingAttempted = useRef(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -145,6 +154,10 @@ export default function CreateRequestScreen() {
       setProfile(null); setTechnician(null); setErrorMessage(""); setSuccessMessage("");
       setAddress(""); setDivision(""); setSubmitting(false); setLoading(true);
       submissionAttempt.current = null;
+      uploadController.current?.abort(); intent.current = null;
+      bookingAttempted.current = false;
+      setPhotos([]); setLocked(false); setPicking(false); pickerBusy.current = false;
+      setTitle(""); setDescription(""); setDurationMinutes(""); setSelectedDate(null); setPreferredTime("");
       let profileLoaded = false, technicianLoaded = false;
       const finishLoading = () => { if (isCurrent() && profileLoaded && technicianLoaded) setLoading(false); };
       if (!user) { setErrorMessage("Please sign in again."); setLoading(false); return; }
@@ -168,7 +181,7 @@ export default function CreateRequestScreen() {
         technicianLoaded = true; setTechnician(null); setErrorMessage("Unable to verify technician availability. Check your connection."); finishLoading();
       });
     });
-    return () => { sessionVersion.current++; stopTechnician?.(); stopAuth(); };
+    return () => { uploadController.current?.abort(); sessionVersion.current++; stopTechnician?.(); stopAuth(); };
   }, [params.technicianId]);
 
   const preferredDate = selectedDate
@@ -231,13 +244,29 @@ export default function CreateRequestScreen() {
   ]);
 
   const canSubmit =
-    !validationMessage && !submitting && !!profile;
+    (!validationMessage || locked) && !submitting && !picking && !!profile;
+
+  const addPhotos = async () => {
+    if (pickerBusy.current || submissionVersion.current !== null || locked || submitting || photos.length >= 2) return;
+    pickerBusy.current = true; setPicking(true);
+    const version = sessionVersion.current;
+    const uid = auth.currentUser?.uid;
+    const current = () => version === sessionVersion.current && uid === auth.currentUser?.uid;
+    try {
+      const selected = await pickRequestPhotos(2 - photos.length);
+      if (current() && selected.length) {
+        if (!bookingAttempted.current) { intent.current = null; submissionAttempt.current = null; }
+        setPhotos((previous) => [...previous, ...selected].slice(0, 2));
+      }
+    } catch (cause) { if (current()) setErrorMessage((cause as Error).message); }
+    finally { if (version === sessionVersion.current) { pickerBusy.current = false; setPicking(false); } }
+  };
 
   const handleSubmit = async () => {
     const version = sessionVersion.current;
-    if (submissionVersion.current === version) return;
+    if (submissionVersion.current === version || pickerBusy.current) return;
     const isCurrent = () => version === sessionVersion.current && auth.currentUser?.uid === profile?.uid;
-    if (!profile || !technician || validationMessage) {
+    if (!profile || (!technician && !locked) || (validationMessage && !locked)) {
       setErrorMessage(validationMessage);
       return;
     }
@@ -254,14 +283,20 @@ export default function CreateRequestScreen() {
       setSuccessMessage("");
 
       if (submissionAttempt.current?.uid !== profile.uid) submissionAttempt.current = { uid: profile.uid, id: createServiceRequestAttemptId() };
-      const requestId = await createServiceRequest({
+      if (bookingAttempted.current && await confirmServiceRequestAttempt(profile.uid, submissionAttempt.current.id)) {
+        if (isCurrent()) router.replace({ pathname: "/request-details", params: { id: submissionAttempt.current.id } });
+        return;
+      }
+      if (!isCurrent()) return;
+      setLocked(true);
+      intent.current ??= {
         attemptId: submissionAttempt.current.id,
         profile,
         serviceCategory,
         title,
         description,
         address,
-        technician,
+        technician: technician!,
         division,
         preferredDate,
         preferredTime,
@@ -269,7 +304,17 @@ export default function CreateRequestScreen() {
         durationMinutes: Number(durationMinutes),
         priority,
         imageUrls: [],
-      });
+      };
+      uploadController.current = new AbortController();
+      const paths: string[] = [];
+      for (let i = 0; i < photos.length; i++) {
+        paths.push(await uploadRequestPhoto(profile.uid, submissionAttempt.current.id, i, photos[i],
+          (fraction) => { if (isCurrent()) setUploadProgress(`Uploading photo ${i + 1}/${photos.length}: ${Math.round(fraction * 100)}%`); }, uploadController.current.signal));
+      }
+      if (!isCurrent()) return;
+      intent.current.imageUrls = paths;
+      bookingAttempted.current = true;
+      const requestId = await createServiceRequest(intent.current);
 
       if (!isCurrent()) return;
 
@@ -281,11 +326,23 @@ export default function CreateRequestScreen() {
       });
     } catch (error: any) {
       if (!isCurrent()) return;
-      console.error("Create request error:", error);
-      setErrorMessage(
-        error?.message ||
-          "Unable to create service request."
-      );
+      if (!bookingAttempted.current && submissionAttempt.current) {
+        // No booking transaction has been invoked for this ID, so there is no
+        // uncertain booking to abandon. Failed cleanup must not lock optional photos.
+        // An acknowledged upload with a failed confirmation remains available
+        // for retry at the same immutable path. Selection edits invalidate that
+        // pre-booking ID; an uncertain booking ID is never editable/discarded.
+        if (error?.uploadAcknowledged !== true && error?.retainPhotoAttempt !== true) {
+          try { await cleanupUnsubmittedPhotos(profile.uid, submissionAttempt.current.id); }
+          catch (cause) { reportSubmissionFailure("photo-cleanup", cause); }
+        }
+        if (!isCurrent()) return;
+        intent.current = null;
+        if (error?.uploadAcknowledged !== true && error?.retainPhotoAttempt !== true) submissionAttempt.current = null;
+        setLocked(false); setUploadProgress("");
+      }
+      if (!isCurrent()) return;
+      setErrorMessage(submissionFailureMessage(error, error?.operation ?? (bookingAttempted.current ? undefined : "photo-upload")));
     } finally {
       if (submissionVersion.current === version) submissionVersion.current = null;
       if (isCurrent()) setSubmitting(false);
@@ -374,6 +431,7 @@ export default function CreateRequestScreen() {
           </View>
         )}
 
+        <View pointerEvents={locked ? "none" : "auto"}>
         <Text style={styles.sectionTitle}>
           Selected Technician
         </Text>
@@ -513,7 +571,11 @@ export default function CreateRequestScreen() {
           </View>
         </View>
 
-        <View style={styles.card}><FieldLabel label="Service duration (minutes, required)" /><TextInput accessibilityLabel="Service duration in minutes" value={durationMinutes} onChangeText={setDurationMinutes} keyboardType="number-pad" placeholder="Enter an explicit duration" placeholderTextColor="#64748B" style={styles.iconTextInput} /></View>
+        <View style={styles.card}>
+          <FieldLabel label="Service duration (minutes, required)" />
+          <TextInput accessibilityLabel="Service duration in whole minutes, required" value={durationMinutes} onChangeText={setDurationMinutes} keyboardType="number-pad" placeholder="Enter duration in minutes" placeholderTextColor="#64748B" style={styles.input} editable={!locked} />
+          {(!Number.isSafeInteger(Number(durationMinutes)) || Number(durationMinutes) <= 0) && <Text accessibilityLiveRegion="polite" style={styles.inlineValidationText}>Enter the service duration in whole minutes.</Text>}
+        </View>
         <Text style={styles.sectionTitle}>
           Preferred Schedule • Asia/Colombo
         </Text>
@@ -645,41 +707,44 @@ export default function CreateRequestScreen() {
         </Text>
         <View style={styles.card}>
           <Text style={styles.photoHint}>
-            Photo upload UI is ready for a future storage
-            integration. Selected previews are not uploaded yet.
+            Optional · Up to 2 photos · Each under 2 MB
           </Text>
           <View style={styles.photoRow}>
             <TouchableOpacity
               style={styles.addPhotoBox}
               activeOpacity={0.8}
-              onPress={() =>
-                setPhotoCount((current) =>
-                  Math.min(current + 1, 4)
-                )
-              }
+              accessibilityRole="button"
+              accessibilityLabel="Add Photo"
+              disabled={picking || photos.length >= 2 || locked}
+              onPress={addPhotos}
             >
               <ImagePlus size={26} color="#60A5FA" />
               <Text style={styles.addPhotoText}>
-                Add Photo
+                {picking ? "Opening photos…" : "Add Photo"}
               </Text>
             </TouchableOpacity>
 
-            {Array.from({ length: photoCount }).map(
-              (_, index) => (
+            {photos.map(
+              (photo, index) => (
                 <View
                   key={index}
                   style={styles.photoPreview}
                 >
-                  <Camera size={23} color="#94A3B8" />
-                  <Text style={styles.photoNumber}>
-                    {index + 1}
-                  </Text>
+                  <Image source={{ uri: photo.uri }} style={{ width: 70, height: 60 }} accessibilityLabel={`Selected photo ${index + 1}`} />
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Remove photo ${index + 1}`} disabled={locked} onPress={() => {
+                    if (bookingAttempted.current || submissionVersion.current !== null) return;
+                    intent.current = null; submissionAttempt.current = null;
+                    setPhotos((items) => items.filter((_, i) => i !== index));
+                  }} style={{ minHeight: 44, justifyContent: "center" }}><Text style={styles.addPhotoText}>Remove</Text></TouchableOpacity>
                 </View>
               )
             )}
           </View>
         </View>
 
+        </View>
+        {!!uploadProgress && <Text accessibilityLiveRegion="polite" style={styles.photoHint}>{uploadProgress}</Text>}
+        {locked && !submitting && <Text style={styles.photoHint}>The booking result is not yet confirmed. Retry checks this same submission. Do not start another request until its result is confirmed.</Text>}
         <TouchableOpacity
           style={[
             styles.submitButton,
@@ -1096,7 +1161,7 @@ const styles = StyleSheet.create({
   },
   photoPreview: {
     width: 92,
-    height: 92,
+    minHeight: 112,
     borderRadius: 13,
     backgroundColor: "#101F30",
     borderWidth: 1,
