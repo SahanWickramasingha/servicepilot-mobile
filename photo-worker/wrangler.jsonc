@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "servicepilot-private-photos",
+  // Set account_id after account setup, or use CLOUDFLARE_ACCOUNT_ID locally.
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-29",
+  "workers_dev": true,
+  "vars": {
+    "FIREBASE_PROJECT_ID": "servicepilot-756d9",
+    "FIREBASE_WEB_API_KEY": "AIzaSyAKPlFn0eosrpqD0v8FxAfk-NsgONd51i4",
+    "ALLOWED_ORIGINS": "",
+    "PENDING_TTL_SECONDS": "86400",
+    "PHOTO_UPLOADS_ENABLED": "true"
+  },
+  "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "servicepilot-photos" }],
+  "ratelimits": [{ "name": "PHOTO_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }],
+  "observability": { "enabled": false }
+  // No cron is enabled automatically. See README for bounded safe cleanup.
+}
