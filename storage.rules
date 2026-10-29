@@ -87,16 +87,28 @@ service firebase.storage {
       }
       // Create: profile + request. Read/delete: profile + evidence. Never more
       // than two distinct cross-service document lookups per evaluation.
-      allow create: if resource == null && owner() && stage in ['before', 'after'] && assigned() &&
-        attemptId.matches('^[A-Za-z0-9]{20}$') && filename.matches('^[0-2][.]jpg$') &&
-        request.resource.size > 0 && request.resource.size <= 5 * 1024 * 1024 && request.resource.contentType == 'image/jpeg' &&
-        request.resource.metadata == { 'technicianId': technicianId, 'requestId': requestId, 'stage': stage, 'attemptId': attemptId };
+      // Historical Firebase provider is read-only; new scoped photos use R2.
+      allow create: if false;
       allow get: if owner() || (active() && referenced() &&
         (profile().role == 'super_admin' || (customer() && evidence().customerId == request.auth.uid)));
-      allow delete: if owner() && !referenced();
+      allow delete: if false;
       allow list, update: if false;
     }
-    // Unimplemented request attachments and other object paths remain denied.
+    match /request_attachments/{customerId}/{requestId}/{slot} {
+      function jobExists() { return firestore.exists(/databases/(default)/documents/service_requests/$(requestId)); }
+      function job() { return firestore.get(/databases/(default)/documents/service_requests/$(requestId)).data; }
+      function owned() { return customer() && request.auth.uid == customerId; }
+      function path() { return 'request_attachments/' + customerId + '/' + requestId + '/' + slot; }
+      // Exactly two immutable slots; no bearer download URLs or public reads.
+      // Each evaluation uses at most the profile and the authoritative request.
+      allow create: if false;
+      allow get: if owned() || (active() && request.auth.token.email_verified == true && approved(profile()) &&
+        jobExists() && job().customerId == customerId && validTechnician(job()) && technicianFor(job()) == request.auth.uid &&
+        path() in job().get('imageUrls', []));
+      // A concurrent successful commit also prevents cleanup at the rules boundary.
+      allow delete: if false;
+      allow list, update: if false;
+    }
     match /{allPaths=**} { allow read, write: if false; }
   }
 }
