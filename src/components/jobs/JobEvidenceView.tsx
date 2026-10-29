@@ -1,21 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Text, TouchableOpacity, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { auth } from "@/src/firebase/config";
-import { loadReviewPhoto } from "@/src/services/reviewPhotos.service";
+import { loadPrivatePhoto } from "@/src/services/privatePhotos.service";
 import { useJobEvidence } from "@/src/hooks/useJobEvidence";
 import { SIGNATURE_WIDTH, SIGNATURE_HEIGHT, SIGNATURE_STROKE } from "@/src/utils/signatureCoordinates";
 
-export function JobPhoto({ path }: { path: string }) {
-  const viewer = auth.currentUser?.uid;
+export function JobPhoto({ path, label = "job photo" }: { path: string; label?: string }) {
+  const [viewer, setViewer] = useState(auth.currentUser?.uid);
+  const owner = useRef(auth.currentUser);
   const [image, setImage] = useState<string | null>(null), [error, setError] = useState(false), [opened, setOpened] = useState(false), [attempt, setAttempt] = useState(0);
+  useEffect(() => auth.onAuthStateChanged((user) => {
+    if (owner.current === user) return;
+    owner.current = user; setViewer(user?.uid); setImage(null); setOpened(false); setError(false); setAttempt((value) => value + 1);
+  }), []);
   useEffect(() => {
     let current = true; setImage(null); setError(false); setOpened(false);
-    void loadReviewPhoto(path).then((value) => { if (current && viewer === auth.currentUser?.uid) setImage(value); }, () => { if (current && viewer === auth.currentUser?.uid) setError(true); });
+    void loadPrivatePhoto(path).then((value) => { if (current && viewer === auth.currentUser?.uid) setImage(value); }, () => { if (current && viewer === auth.currentUser?.uid) setError(true); });
     return () => { current = false; };
   }, [path, viewer, attempt]);
   return <>
-    <TouchableOpacity accessibilityRole="button" accessibilityLabel={error ? "Job photo unavailable. Retry" : "Open saved job photo"} onPress={() => image ? setOpened(true) : setAttempt((value) => value + 1)} style={{ width: 90, minHeight: 90, backgroundColor: "#17263A", padding: 4 }}>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={error ? `${label} unavailable. Retry` : `Open saved ${label}`} onPress={() => image ? setOpened(true) : setAttempt((value) => value + 1)} style={{ width: 90, minHeight: 90, backgroundColor: "#17263A", padding: 4 }}>
       {image ? <Image source={{ uri: image }} style={{ width: 82, height: 82 }} /> : error ? <Text style={{ color: "#FCA5A5" }}>Photo unavailable. Retry</Text> : <ActivityIndicator color="#60A5FA" />}
     </TouchableOpacity>
     <Modal visible={opened && !!image && viewer === auth.currentUser?.uid} transparent onRequestClose={() => setOpened(false)}>
