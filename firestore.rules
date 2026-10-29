@@ -495,7 +495,26 @@ service cloud.firestore {
         request.resource.data.scheduledAt is timestamp &&
         request.resource.data.scheduledAt > request.time &&
         request.resource.data.priority in ["normal", "urgent"] &&
-        request.resource.data.imageUrls is list && bookingNotice(requestId, 'new_customer_request', request.resource.data.technicianId);
+        validRequestAttachments(requestId) && bookingNotice(requestId, 'new_customer_request', request.resource.data.technicianId);
+    }
+
+    function validRequestAttachments(requestId) {
+      let paths = request.resource.data.imageUrls;
+      return paths is list && paths.size() <= 2 && paths.toSet().size() == paths.size() &&
+        (paths.size() < 1 || confirmedR2Photo(paths[0], requestId, request.auth.uid, 'request')) &&
+        (paths.size() < 2 || confirmedR2Photo(paths[1], requestId, request.auth.uid, 'request'));
+    }
+    function confirmedR2Photo(ref, requestId, ownerId, purpose) {
+      return ref is string && ref.matches('^r2:v1:[a-f0-9]{64}$') && validR2Record(ref.split(':')[2], requestId, ownerId, purpose);
+    }
+    function validR2Record(id, requestId, ownerId, purpose) {
+      let photo = get(/databases/$(database)/documents/photo_objects/$(id)).data;
+      return photo.provider == 'r2' && photo.id == id && photo.state == 'confirmed' &&
+        photo.ownerId == ownerId && photo.requestId == requestId && photo.purpose == purpose &&
+        photo.expiresAt is timestamp && photo.expiresAt > request.time &&
+        photo.size is int && photo.size > 0 &&
+        (purpose == 'request' ? photo.size < 2000000 && photo.contentType in ['image/jpeg', 'image/png', 'image/webp'] :
+          photo.size <= 5 * 1024 * 1024 && photo.contentType == 'image/jpeg');
     }
 
     function validCustomerRequestCancel(requestId) {
@@ -518,9 +537,11 @@ service cloud.firestore {
     }
 
     function validJobPhoto(path, jobId, technicianId, stage) {
-      let parts = path is string ? path.split('/') : [];
-      return parts.size() == 6 && parts[0] == 'job_photos' && parts[1] == technicianId && parts[2] == jobId && parts[3] == stage &&
-        parts[4].matches('^[A-Za-z0-9]{20}$') && parts[5].matches('^[0-2][.]jpg$');
+      // Existing Firebase/R2 references may be retained. New references must be
+      // independently confirmed by the trusted Worker; clients cannot mint a
+      // nonexistent legacy Firebase path to bypass completion requirements.
+      return (request.method == 'update' && path in resource.data.get(stage == 'before' ? 'beforePhotos' : 'afterPhotos', [])) ||
+        confirmedR2Photo(path, jobId, technicianId, stage);
     }
     function validJobPhotos(paths, jobId, technicianId, stage) {
       return paths is list && paths.size() <= 3 && paths.toSet().size() == paths.size() &&
@@ -1265,6 +1286,8 @@ service cloud.firestore {
     }
 
     match /booking_attempts/{customerId}/requests/{requestId} {
+      // First submissions read a missing receipt. Authorize this single get from
+      // the authenticated path owner, never from nonexistent resource.data.
       allow get: if hasActiveSession() && isVerifiedCustomer() && request.auth.uid == customerId;
       allow list, update, delete: if false;
       allow create: if hasActiveSession() && isVerifiedCustomer() && request.auth.uid == customerId &&
@@ -1275,6 +1298,10 @@ service cloud.firestore {
         getAfter(/databases/$(database)/documents/service_requests/$(requestId)).data.customerId == customerId &&
         getAfter(/databases/$(database)/documents/service_requests/$(requestId)).data.createdAt == request.time;
     }
+
+    // Only the Worker's least-privilege OAuth identity may write trusted records.
+    // Direct clients cannot forge confirmations or enumerate private metadata.
+    match /photo_objects/{photoId} { allow read, write: if false; }
 
     match /job_evidence/{requestId} {
       allow get: if hasActiveSession() && (isSuperAdmin() ||
