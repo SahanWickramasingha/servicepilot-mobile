@@ -19,6 +19,9 @@ function fixture({ picker = {}, photos = {} } = {}) {
     '@/src/firebase/config': { auth: session.auth, db: {}, storage: {} }, '@/functions/src/domain/booking': booking, '@/functions/src/domain/jobEvidence': domain,
     './reviewPhotos.service': { readPhotoBytes: async () => new Uint8Array([255, 216, 255, 0]), pickReviewPhotos() {}, prepareSelectedPhotos() {}, ...photos },
     '@/src/utils/reviewValidation': loadService('src/utils/reviewValidation.ts', {}), 'expo-image-picker': picker,
+    './privatePhotos.service': { confirmPrivatePhoto: async (path) => { if (!metadata.has(path)) throw Error('Missing upload'); },
+      deleteUnreferencedPrivatePhoto: async (path) => { deleted.push(path); metadata.delete(path); },
+      uploadPrivatePhoto: async (_, progress) => { progress(1); return `r2:v1:${'a'.repeat(64)}`; } },
     'firebase/firestore': { collection: (_, name) => name, doc: (_, collection, id) => ({ path: id ? `${collection}/${id}` : collection, id: attempt }),
       serverTimestamp: () => 'server-time', getDocFromServer: async (ref) => snapshot(ref.path),
       runTransaction: async (_, callback) => callback({ get: async (ref) => snapshot(ref.path), set: (ref, value) => { data.set(ref.path, value); writes++; } }),
@@ -43,13 +46,13 @@ test('completion requires every existing UI requirement and validates notes, sig
   for (const invalid of [{ ...signature, path: '' }, { ...signature, confirmed: false }, { ...signature, path: '<script>alert()</script>' }]) assert.throws(() => domain.validateJobSignature(invalid));
 });
 test('saved photos and notes restore from the correct job, exact retries are idempotent and stale revisions cannot erase newer work', async () => {
-  const f = fixture(); f.media(path()); await f.service.saveJobEvidence('job-a', 0, { beforePhotos: [path()] });
-  await f.service.saveJobEvidence('job-a', 0, { beforePhotos: [path()] }); assert.equal(f.writes(), 1);
+  const f = fixture(), photo = `r2:v1:${'a'.repeat(64)}`; f.media(photo); await f.service.saveJobEvidence('job-a', 0, { beforePhotos: [photo] });
+  await f.service.saveJobEvidence('job-a', 0, { beforePhotos: [photo] }); assert.equal(f.writes(), 1);
   await f.service.saveJobEvidence('job-a', 1, { notes }); assert.deepEqual(f.data.get('job_evidence/job-a').notes, notes);
   await assert.rejects(f.service.saveJobEvidence('job-a', 1, { signature }), /changed on another screen/);
   await f.service.saveJobEvidence('job-a', 2, { signature });
   await f.service.saveJobEvidence('job-a', 2, { signature }); assert.equal(f.writes(), 3);
-  assert.equal(f.data.get('job_evidence/job-a').beforePhotos[0], path());
+  assert.equal(f.data.get('job_evidence/job-a').beforePhotos[0], photo);
 });
 test('missing upload, disabled account, different assigned technician and completed job never acknowledge a save', async () => {
   const f = fixture(); await assert.rejects(f.service.saveJobEvidence('job-a', 0, { beforePhotos: [path()] })); assert.equal(f.writes(), 0);
@@ -59,15 +62,16 @@ test('missing upload, disabled account, different assigned technician and comple
 });
 test('orphan cleanup retains committed references, never deletes another owner path and stops on an account switch', async () => {
   const f = fixture(); f.data.set('job_evidence/job-a', complete());
-  const orphan = path().replace('/0.jpg', '/1.jpg'); f.media(orphan);
+  const orphan = `r2:v1:${'b'.repeat(64)}`; f.media(orphan);
   await f.service.cleanupJobUploads('job-a', 'tech-a', [path(), orphan, path('before', 'other')]); assert.deepEqual(f.deleted, [orphan]);
   f.session.emit('other'); await assert.rejects(f.service.cleanupJobUploads('job-a', 'tech-a', [path()])); assert.deepEqual(f.deleted, [orphan]);
 });
 test('photo retry reuses one immutable path and reports upload progress', async (t) => {
   const f = fixture(); t.mock.method(globalThis, 'fetch', async () => ({ blob: async () => new Blob([new Uint8Array([255, 216, 255, 0])]) }));
+  const previousReader = globalThis.FileReader; globalThis.FileReader = class { readAsArrayBuffer(blob) { blob.arrayBuffer().then((value) => { this.result = value; this.onload(); }); } }; t.after(() => { globalThis.FileReader = previousReader; });
   const values = []; const first = await f.service.uploadJobPhoto('job-a', 'before', attempt, 0, { uri: 'local-fixture', size: 4 }, (v) => values.push(v));
-  assert.equal(first, path()); assert.deepEqual(values, [1]);
-  assert.equal(await f.service.uploadJobPhoto('job-a', 'before', attempt, 0, { uri: 'local-fixture', size: 4 }, (v) => values.push(v)), first); assert.deepEqual(values, [1]);
+  assert.equal(first, `r2:v1:${'a'.repeat(64)}`); assert.deepEqual(values, [1]);
+  assert.equal(await f.service.uploadJobPhoto('job-a', 'before', attempt, 0, { uri: 'local-fixture', size: 4 }, (v) => values.push(v)), first); assert.deepEqual(values, [1, 1]);
 });
 test('camera permission denial and cancellation never create photos; library choice stays available', async () => {
   let granted = false, canceled = true;
