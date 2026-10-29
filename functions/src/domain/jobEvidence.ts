@@ -10,6 +10,9 @@ export const JOB_PHOTO_MAX = 3;
 export function validateJobPhotoPaths(paths: unknown, technicianId: string, requestId: string, stage: JobPhotoStage): asserts paths is string[] {
   if (!Array.isArray(paths) || paths.length < 1 || paths.length > JOB_PHOTO_MAX || new Set(paths).size !== paths.length) throw new Error("Save between one and three photos for this stage.");
   for (const path of paths) {
+    // Ownership/stage and trusted confirmation are checked by Firestore Rules.
+    // Legacy Firebase paths remain valid for existing saved evidence.
+    if (typeof path === "string" && /^r2:v1:[a-f0-9]{64}$/.test(path)) continue;
     const parts = typeof path === "string" ? path.split("/") : [];
     if (parts.length !== 6 || parts[0] !== "job_photos" || parts[1] !== technicianId || parts[2] !== requestId || parts[3] !== stage ||
       !/^[A-Za-z0-9]{20}$/.test(parts[4]) || !/^[0-2]\.jpg$/.test(parts[5])) throw new Error("Invalid job photo ownership or stage.");
