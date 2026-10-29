@@ -5,7 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { auth } from "@/src/firebase/config";
 import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
 import { useJobEvidence } from "@/src/hooks/useJobEvidence";
-import { cleanupJobUploads, newJobPhotoAttempt, pickJobPhotos, saveJobEvidence, uploadJobPhoto, type JobPhotoStage, type ServiceNotes } from "@/src/services/jobEvidence.service";
+import { newJobPhotoAttempt, pickJobPhotos, saveJobEvidence, uploadJobPhoto, type JobPhotoStage, type ServiceNotes } from "@/src/services/jobEvidence.service";
 import { type SelectedReviewPhoto } from "@/src/services/reviewPhotos.service";
 import { JobPhoto, SignaturePreview } from "./JobEvidenceView";
 import { signaturePoint, SIGNATURE_WIDTH, SIGNATURE_HEIGHT } from "@/src/utils/signatureCoordinates";
@@ -23,10 +23,10 @@ export function JobEvidenceScreen({ mode }: { mode: Mode }) {
   const abort = useRef<AbortController | null>(null), pad = useRef({ width: 320, height: 180 });
   const nextStroke = useRef(true);
   useEffect(() => {
-    session.current++; hydrated.current = false; dirty.current = false; baseRevision.current = 0; uploadAttempt.current = "";
+    const generation = ++session.current; hydrated.current = false; dirty.current = false; baseRevision.current = 0; uploadAttempt.current = "";
     setOwner(viewer); setPhotos([]); setKept([]); setPath(""); setName(""); setApproved(false); setMessage(""); setBusy(false); setDrawing(false); inFlight.current = false;
     setNotes({ diagnosis: "", workCompleted: "", recommendation: "", parts: [] });
-    return () => { session.current++; abort.current?.abort(); };
+    return () => { session.current = generation + 1; abort.current?.abort(); };
   }, [viewer, job.requestId, mode]);
   useEffect(() => {
     if (!state.confirmed || hydrated.current || dirty.current || owner !== viewer) return;
@@ -47,34 +47,27 @@ export function JobEvidenceScreen({ mode }: { mode: Mode }) {
   const save = async () => {
     if (inFlight.current || !viewer || owner !== viewer || !canEdit || !state.confirmed) return;
     inFlight.current = true; setBusy(true); setProgress(0); setMessage(""); const version = session.current, uid = viewer, uploaded: string[] = [];
-    abort.current = new AbortController(); let committing = false;
-    const attempted: string[] = [];
+    abort.current = new AbortController();
     try {
       if (mode === "before" || mode === "after") {
         uploadAttempt.current ||= newJobPhotoAttempt();
         for (let index = 0; index < photos.length; index++) {
-          attempted.push(`job_photos/${uid}/${job.requestId}/${mode}/${uploadAttempt.current}/${index}.jpg`);
           uploaded.push(await uploadJobPhoto(job.requestId, mode, uploadAttempt.current, index, photos[index], (fraction) => {
           if (version === session.current) setProgress((index + fraction) / photos.length);
           }, abort.current.signal));
         }
-        if (version !== session.current) {
-          if (auth.currentUser?.uid === uid) { try { await cleanupJobUploads(job.requestId, uid, attempted); } catch { /* Retry cleanup with an authoritative connection. */ } }
-          return;
-        }
-        committing = true;
+        if (version !== session.current || auth.currentUser?.uid !== uid) return;
         await saveJobEvidence(job.requestId, baseRevision.current, mode === "before" ? { beforePhotos: [...kept, ...uploaded] } : { afterPhotos: [...kept, ...uploaded] });
       } else await saveJobEvidence(job.requestId, baseRevision.current, mode === "notes" ? { notes } : { signature: { customerName: name.trim(), path, confirmed: approved as true } });
       if (version === session.current && auth.currentUser?.uid === uid) { dirty.current = false; setMessage("Saved successfully."); router.back(); }
     } catch (error) {
       if (version === session.current && auth.currentUser?.uid === uid) {
-        setMessage(error instanceof Error && !('code' in error) ? error.message : "Unable to confirm this save. Your selections are kept; check your connection and retry.");
+        const code = (error as { code?: string }).code;
+        setMessage(error instanceof Error && (!code || code.startsWith("photos/") || code === "booking/session") ? error.message : "Unable to confirm this save. Your selections are kept; check your connection and retry.");
         // The fresh read in cleanup protects any files referenced by a lost-ack commit.
       }
-      const code = (error as { code?: string }).code;
-      if (auth.currentUser?.uid === uid && (!committing || code === "permission-denied" || !code)) {
-        try { await cleanupJobUploads(job.requestId, uid, attempted); } catch { /* Offline/ambiguous: retain files for safe retry. */ }
-      }
+      // Keep the exact upload attempt on failure/lost acknowledgement. The
+      // trusted expiry process safely collects only unreferenced old objects.
     } finally { if (version === session.current) { inFlight.current = false; setBusy(false); } }
   };
   const draw = (event: GestureResponderEvent, start: boolean) => {
