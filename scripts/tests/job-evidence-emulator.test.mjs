@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, after, test } from 'node:test';
 import { createRequire } from 'node:module';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword } from 'firebase/auth';
 import * as fsdk from 'firebase/firestore';
@@ -18,13 +18,18 @@ const trusted = adminApp({ projectId }, 'job-evidence-tests'), admin = getFirest
 const domain = loadService('functions/src/domain/jobEvidence.ts', {});
 const attempt = 'abcdefghijklmnopqrst';
 const objectPath = (job, stage = 'before', slot = 0) => `job_photos/jw-tech/${job}/${stage}/${attempt}/${slot}.jpg`;
+const r2Path = (job, stage = 'before', slot = 0) => 'r2:v1:' + createHash('sha256').update(job + ':' + stage + ':' + slot).digest('hex');
+async function confirm(id, stage = 'before', slot = 0) {
+  const photoId = r2Path(id, stage, slot).slice(6);
+  await admin.doc('photo_objects/' + photoId).set({ id: photoId, provider: 'r2', ownerId: 'jw-tech', requestId: id, purpose: stage, state: 'confirmed', size: 4, contentType: 'image/jpeg', expiresAt: new Date(Date.now() + 86400000) });
+}
 const notes = { diagnosis: 'Local diagnostic', workCompleted: 'Local repair', recommendation: '', parts: [{ name: 'Part', quantity: 1 }] };
 const signature = { customerName: 'Local customer', path: 'M10.0,10.0 L40.0,50.0 L80.0,20.0 ', confirmed: true };
 const denied = (promise) => assert.rejects(promise, (error) => ['permission-denied', 'storage/unauthorized'].includes(error.code));
 const config = (client) => ({ auth: client.auth, db: client.db, storage: client.storage });
 function evidenceService(client, firestore = fsdk) {
   return loadService('src/services/jobEvidence.service.ts', { '@/src/firebase/config': config(client),
-    'firebase/firestore': firestore, 'firebase/storage': ssdk, 'expo-image-picker': {}, './reviewPhotos.service': {},
+    'firebase/firestore': firestore, 'firebase/storage': ssdk, 'expo-image-picker': {}, './reviewPhotos.service': {}, './privatePhotos.service': { confirmPrivatePhoto: async () => {} },
     '@/src/utils/reviewValidation': loadService('src/utils/reviewValidation.ts', {}), '@/functions/src/domain/jobEvidence': domain,
     '@/functions/src/domain/booking': loadService('functions/src/domain/booking.ts', {}) });
 }
@@ -66,12 +71,13 @@ test('job photos save/reopen for the assigned technician and owning customer; co
   const id = 'jw-complete'; await job(id); const tech = clients.get('jw-tech'), service = evidenceService(tech), requests = requestService(tech);
   await assert.rejects(requests.updateTechnicianRequestStatus(id, 'completed'), /evidence/);
   for (const stage of ['before', 'after']) {
-    await upload(id, stage); await service.saveJobEvidence(id, stage === 'before' ? 0 : 1, stage === 'before' ? { beforePhotos: [objectPath(id)] } : { afterPhotos: [objectPath(id, 'after')] });
+    await confirm(id, stage); await service.saveJobEvidence(id, stage === 'before' ? 0 : 1, stage === 'before' ? { beforePhotos: [r2Path(id)] } : { afterPhotos: [r2Path(id, 'after')] });
   }
   await service.saveJobEvidence(id, 2, { notes }); await service.saveJobEvidence(id, 3, { signature });
   const saved = (await fsdk.getDocFromServer(fsdk.doc(clients.get('jw-owner').db, 'job_evidence', id))).data();
-  assert.equal(saved.notes.workCompleted, notes.workCompleted); assert.equal(saved.signature.path, signature.path); assert.equal(saved.beforePhotos[0], objectPath(id));
-  assert.equal(await download(id, clients.get('jw-owner')), 200); assert.equal(await download(id, clients.get('jw-other')), 403); assert.equal(await download(id, undefined), 403);
+  assert.equal(saved.notes.workCompleted, notes.workCompleted); assert.equal(saved.signature.path, signature.path); assert.equal(saved.beforePhotos[0], r2Path(id));
+  await denied(upload(id)); // New legacy Firebase uploads are intentionally disabled.
+  assert.equal(await download(id, clients.get('jw-other')), 403); assert.equal(await download(id, undefined), 403);
   await requests.updateTechnicianRequestStatus(id, 'completed'); await requests.updateTechnicianRequestStatus(id, 'completed');
   assert.equal((await admin.doc(`service_requests/${id}`).get()).data().status, 'completed');
   assert.equal((await admin.doc('users/jw-tech').get()).data().availability, 'offline');
@@ -95,21 +101,20 @@ test('cross-account reads/writes, direct completion without evidence, spoofed ow
   await denied(upload(id, 'before', tech, new Uint8Array(5 * 1024 * 1024 + 1)));
   await denied(upload(id, 'before', tech, undefined, metadata(id), objectPath(id).replace('/0.jpg', '/3.jpg')));
 });
-test('a partial failure can delete only its unreferenced upload; stale revisions and disabled owners cannot replace evidence', async () => {
+test('persisted R2 evidence preserves stale-revision and disabled-owner protections', async () => {
   const id = 'jw-partial'; await job(id); const tech = clients.get('jw-tech'), service = evidenceService(tech);
-  await upload(id); await service.cleanupJobUploads(id, 'jw-tech', [objectPath(id)]);
-  await assert.rejects(ssdk.getMetadata(ssdk.ref(tech.storage, objectPath(id))), (e) => e.code === 'storage/object-not-found');
-  await upload(id); await service.saveJobEvidence(id, 0, { beforePhotos: [objectPath(id)] });
+  await confirm(id); await service.saveJobEvidence(id, 0, { beforePhotos: [r2Path(id)] });
   await assert.rejects(service.saveJobEvidence(id, 0, { notes }), /changed on another screen/);
   await admin.doc('users/jw-tech').update({ accountStatus: 'disabled' });
-  try { await denied(ssdk.getMetadata(ssdk.ref(tech.storage, objectPath(id)))); await denied(fsdk.getDocFromServer(fsdk.doc(tech.db, 'job_evidence', id))); }
+  try { await denied(fsdk.getDocFromServer(fsdk.doc(tech.db, 'job_evidence', id))); }
   finally { await admin.doc('users/jw-tech').update({ accountStatus: 'active' }); }
 });
+
 test('the supported maximum of three photos per stage and ten parts remains writable within Rules evaluation limits', async () => {
   const id = 'jw-maximum'; await job(id); const tech = clients.get('jw-tech'), service = evidenceService(tech);
   for (const stage of ['before', 'after']) {
     const paths = [];
-    for (let index = 0; index < 3; index++) { paths.push(objectPath(id, stage, index)); await upload(id, stage, tech, undefined, metadata(id, stage), paths[index]); }
+    for (let index = 0; index < 3; index++) { paths.push(r2Path(id, stage, index)); await confirm(id, stage, index); }
     await service.saveJobEvidence(id, stage === 'before' ? 0 : 1, stage === 'before' ? { beforePhotos: paths } : { afterPhotos: paths });
   }
   const full = { ...notes, parts: Array.from({ length: 10 }, (_, i) => ({ name: `Local part ${i}`, quantity: 999 })) };
@@ -142,8 +147,8 @@ test('server timestamp timers survive reopen, race safely, finalize with complet
       workTimer: { ...saved.workTimer, pausedAt: fsdk.serverTimestamp(), revision: 3 }, updatedAt: fsdk.serverTimestamp(),
     }));
   }
-  for (const stage of ['before', 'after']) { await upload(id, stage); await service.saveJobEvidence(id, stage === 'before' ? 0 : 1,
-    stage === 'before' ? { beforePhotos: [objectPath(id)] } : { afterPhotos: [objectPath(id, 'after')] }); }
+  for (const stage of ['before', 'after']) { await confirm(id, stage); await service.saveJobEvidence(id, stage === 'before' ? 0 : 1,
+    stage === 'before' ? { beforePhotos: [r2Path(id)] } : { afterPhotos: [r2Path(id, 'after')] }); }
   await service.saveJobEvidence(id, 2, { notes }); await service.saveJobEvidence(id, 3, { signature });
   const evidence = (await admin.doc(`job_evidence/${id}`).get()).data(); assert.ok(evidence.notesUpdatedAt.toMillis() > 0);
   // A pause competing with completion can fail because completion wins; neither
