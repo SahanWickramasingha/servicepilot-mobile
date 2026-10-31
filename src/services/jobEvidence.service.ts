@@ -2,7 +2,7 @@ import { collection, doc, getDocFromServer, onSnapshot, runTransaction, serverTi
 import * as ImagePicker from "expo-image-picker";
 import { auth, db } from "@/src/firebase/config";
 import { bookingAccount, bookingTechnician } from "@/functions/src/domain/booking";
-import { type JobEvidence, type JobPhotoStage, type JobSignature, type ServiceNotes, validateJobPhotoPaths, validateJobSignature, validateServiceNotes } from "@/functions/src/domain/jobEvidence";
+import { type JobEvidence, type JobPhotoStage, type JobSignature, type ServiceNotes, normalizeServiceNotes, validateJobPhotoPaths, validateJobSignature } from "@/functions/src/domain/jobEvidence";
 import { createSessionStream } from "./session-subscriptions";
 import { prepareSelectedPhotos, pickReviewPhotos, type SelectedReviewPhoto } from "./reviewPhotos.service";
 import { validateImageBytes } from "@/src/utils/reviewValidation";
@@ -27,7 +27,7 @@ export async function saveJobEvidence(requestId: string, expectedRevision: numbe
   const uid = auth.currentUser?.uid ?? ""; session(uid);
   if ("beforePhotos" in change) validateJobPhotoPaths(change.beforePhotos, uid, requestId, "before");
   if ("afterPhotos" in change) validateJobPhotoPaths(change.afterPhotos, uid, requestId, "after");
-  if ("notes" in change) validateServiceNotes(change.notes);
+  if ("notes" in change) change = { notes: normalizeServiceNotes(change.notes) };
   if ("signature" in change) validateJobSignature(change.signature);
   // All referenced photos must exist before the client can acknowledge a save.
   const paths = "beforePhotos" in change ? change.beforePhotos : "afterPhotos" in change ? change.afterPhotos : [];
