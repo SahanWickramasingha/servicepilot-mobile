@@ -22,10 +22,10 @@ import {
 
 import {
   ACTIVE_REQUEST_STATUSES,
-  SERVICE_CATEGORIES,
   getRequestStatusColor,
   getRequestStatusLabel,
 } from "@/src/constants/serviceRequests";
+import { SERVICE_CATEGORY_DEFINITIONS, categoryDirectoryRoute } from "@/functions/src/domain/serviceCategories";
 import { auth } from "@/src/firebase/config";
 import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
 import { TechnicianRating } from "@/src/components/technicians/TechnicianRating";
@@ -300,21 +300,18 @@ export default function HomeScreen() {
           </Text>
         </View>
         <View style={styles.categoryGrid}>
-          {SERVICE_CATEGORIES.map((category) => (
+          {SERVICE_CATEGORY_DEFINITIONS.map((category) => (
             <TouchableOpacity
-              key={category}
+              key={category.id}
               style={styles.categoryCard}
               activeOpacity={0.82}
               onPress={() =>
-                router.push({
-                  pathname: "/technicians",
-                  params: { category },
-                })
+                router.push(categoryDirectoryRoute(category.id))
               }
             >
               <Wrench size={18} color="#60A5FA" />
               <Text style={styles.categoryText}>
-                {category}
+                {category.label}
               </Text>
             </TouchableOpacity>
           ))}
