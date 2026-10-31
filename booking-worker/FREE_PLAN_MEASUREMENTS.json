@@ -1,0 +1,446 @@
+{
+  "generatedAt": "2026-10-31T12:10:13.592Z",
+  "runtime": "local workerd via Miniflare",
+  "platform": "win32",
+  "cpuModel": "AMD Ryzen 7 7435HS                             ",
+  "method": "Windows workerd-process accumulated user+kernel CPU counters; new PID identified for each trial. Includes native/off-thread crypto and local Miniflare routing/runtime overhead, excludes Node fixture CPU and network waiting. Timer granularity and process-wide scope prevent exact per-Worker billing comparison. Warm values are batch averages, not individual-request maxima. Synthetic Google responses omit real TLS/provider data. Cold is first request in fresh isolate after runtime.ready, including empty JWK/OAuth caches; startup separate. No inspector attached.",
+  "bundleSha256": "7875e5d556ac3b1ce1433786334b3165faba6c57001641beaf48efc9f6158b9f",
+  "buildMethod": "last local Wrangler dry-run bundle",
+  "certifiedForFree": false,
+  "rows": [
+    {
+      "scenario": "health",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 15.625,
+      "meanProcessCpuMs": 15.625,
+      "wallMs": 62.44869999999901,
+      "maxSubrequests": 0
+    },
+    {
+      "scenario": "health",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 109.375,
+      "meanProcessCpuMs": 10.9375,
+      "wallMs": 101.27149999999892,
+      "maxSubrequests": 0
+    },
+    {
+      "scenario": "health",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 0,
+      "meanProcessCpuMs": 0,
+      "wallMs": 13.487599999998565,
+      "maxSubrequests": 0
+    },
+    {
+      "scenario": "health",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 15.625,
+      "meanProcessCpuMs": 1.5625,
+      "wallMs": 61.043399999998655,
+      "maxSubrequests": 0
+    },
+    {
+      "scenario": "health",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 0,
+      "meanProcessCpuMs": 0,
+      "wallMs": 16.49250000000029,
+      "maxSubrequests": 0
+    },
+    {
+      "scenario": "health",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 0,
+      "meanProcessCpuMs": 0,
+      "wallMs": 51.6063000000031,
+      "maxSubrequests": 0
+    },
+    {
+      "scenario": "accept-empty",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 62.5,
+      "meanProcessCpuMs": 62.5,
+      "wallMs": 114.71569999999883,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "accept-empty",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 109.375,
+      "meanProcessCpuMs": 10.9375,
+      "wallMs": 322.46959999999854,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "accept-empty",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 46.875,
+      "meanProcessCpuMs": 46.875,
+      "wallMs": 68.20900000000074,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "accept-empty",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 203.125,
+      "meanProcessCpuMs": 20.3125,
+      "wallMs": 291.14829999999347,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "accept-empty",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 46.875,
+      "meanProcessCpuMs": 46.875,
+      "wallMs": 66.85439999999653,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "accept-empty",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 156.25,
+      "meanProcessCpuMs": 15.625,
+      "wallMs": 261.3672000000006,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "accept-1000",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 78.125,
+      "meanProcessCpuMs": 78.125,
+      "wallMs": 102.1278999999995,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "accept-1000",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 250,
+      "meanProcessCpuMs": 25,
+      "wallMs": 398.8169999999991,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "accept-1000",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 78.125,
+      "meanProcessCpuMs": 78.125,
+      "wallMs": 90.75079999999798,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "accept-1000",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 265.625,
+      "meanProcessCpuMs": 26.5625,
+      "wallMs": 403.3317999999963,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "accept-1000",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 62.5,
+      "meanProcessCpuMs": 62.5,
+      "wallMs": 79.33640000000014,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "accept-1000",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 234.375,
+      "meanProcessCpuMs": 23.4375,
+      "wallMs": 370.5470999999925,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "retry-1000",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 234.375,
+      "meanProcessCpuMs": 234.375,
+      "wallMs": 792.811099999999,
+      "maxSubrequests": 37
+    },
+    {
+      "scenario": "retry-1000",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 1125,
+      "meanProcessCpuMs": 112.5,
+      "wallMs": 7276.968700000001,
+      "maxSubrequests": 35
+    },
+    {
+      "scenario": "retry-1000",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 171.875,
+      "meanProcessCpuMs": 171.875,
+      "wallMs": 840.4500000000007,
+      "maxSubrequests": 37
+    },
+    {
+      "scenario": "retry-1000",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 1125,
+      "meanProcessCpuMs": 112.5,
+      "wallMs": 7418.652999999995,
+      "maxSubrequests": 35
+    },
+    {
+      "scenario": "retry-1000",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 140.625,
+      "meanProcessCpuMs": 140.625,
+      "wallMs": 782.2068999999974,
+      "maxSubrequests": 37
+    },
+    {
+      "scenario": "retry-1000",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 1203.125,
+      "meanProcessCpuMs": 120.3125,
+      "wallMs": 7254.661599999999,
+      "maxSubrequests": 35
+    },
+    {
+      "scenario": "reject-501",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 109.375,
+      "meanProcessCpuMs": 109.375,
+      "wallMs": 73.3920999999973,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "reject-501",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 218.75,
+      "meanProcessCpuMs": 21.875,
+      "wallMs": 334.17720000000554,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "reject-501",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 78.125,
+      "meanProcessCpuMs": 78.125,
+      "wallMs": 94.5673999999999,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "reject-501",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 234.375,
+      "meanProcessCpuMs": 23.4375,
+      "wallMs": 333.4495999999781,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "reject-501",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 78.125,
+      "meanProcessCpuMs": 78.125,
+      "wallMs": 87.261599999998,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "reject-501",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 140.625,
+      "meanProcessCpuMs": 14.0625,
+      "wallMs": 327.7685000000056,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "large-profile",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 31.25,
+      "meanProcessCpuMs": 31.25,
+      "wallMs": 76.97419999999693,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "large-profile",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 140.625,
+      "meanProcessCpuMs": 14.0625,
+      "wallMs": 392.7586000000083,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "large-profile",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 46.875,
+      "meanProcessCpuMs": 46.875,
+      "wallMs": 72.67289999999775,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "large-profile",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 140.625,
+      "meanProcessCpuMs": 14.0625,
+      "wallMs": 387.2989999999918,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "large-profile",
+      "temperature": "cold-first-request",
+      "requests": 1,
+      "processCpuMs": 31.25,
+      "meanProcessCpuMs": 31.25,
+      "wallMs": 63.39689999999973,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "large-profile",
+      "temperature": "warm",
+      "requests": 10,
+      "processCpuMs": 203.125,
+      "meanProcessCpuMs": 20.3125,
+      "wallMs": 358.69290000002366,
+      "maxSubrequests": 7
+    }
+  ],
+  "stats": [
+    {
+      "scenario": "health",
+      "temperature": "cold-first-request",
+      "batches": 3,
+      "requests": 3,
+      "medianMeanProcessCpuMs": 0,
+      "maxMeanProcessCpuMs": 15.625,
+      "maxSubrequests": 0
+    },
+    {
+      "scenario": "health",
+      "temperature": "warm",
+      "batches": 3,
+      "requests": 30,
+      "medianMeanProcessCpuMs": 1.5625,
+      "maxMeanProcessCpuMs": 10.9375,
+      "maxSubrequests": 0
+    },
+    {
+      "scenario": "accept-empty",
+      "temperature": "cold-first-request",
+      "batches": 3,
+      "requests": 3,
+      "medianMeanProcessCpuMs": 46.875,
+      "maxMeanProcessCpuMs": 62.5,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "accept-empty",
+      "temperature": "warm",
+      "batches": 3,
+      "requests": 30,
+      "medianMeanProcessCpuMs": 15.625,
+      "maxMeanProcessCpuMs": 20.3125,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "accept-1000",
+      "temperature": "cold-first-request",
+      "batches": 3,
+      "requests": 3,
+      "medianMeanProcessCpuMs": 78.125,
+      "maxMeanProcessCpuMs": 78.125,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "accept-1000",
+      "temperature": "warm",
+      "batches": 3,
+      "requests": 30,
+      "medianMeanProcessCpuMs": 25,
+      "maxMeanProcessCpuMs": 26.5625,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "retry-1000",
+      "temperature": "cold-first-request",
+      "batches": 3,
+      "requests": 3,
+      "medianMeanProcessCpuMs": 171.875,
+      "maxMeanProcessCpuMs": 234.375,
+      "maxSubrequests": 37
+    },
+    {
+      "scenario": "retry-1000",
+      "temperature": "warm",
+      "batches": 3,
+      "requests": 30,
+      "medianMeanProcessCpuMs": 112.5,
+      "maxMeanProcessCpuMs": 120.3125,
+      "maxSubrequests": 35
+    },
+    {
+      "scenario": "reject-501",
+      "temperature": "cold-first-request",
+      "batches": 3,
+      "requests": 3,
+      "medianMeanProcessCpuMs": 78.125,
+      "maxMeanProcessCpuMs": 109.375,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "reject-501",
+      "temperature": "warm",
+      "batches": 3,
+      "requests": 30,
+      "medianMeanProcessCpuMs": 21.875,
+      "maxMeanProcessCpuMs": 23.4375,
+      "maxSubrequests": 7
+    },
+    {
+      "scenario": "large-profile",
+      "temperature": "cold-first-request",
+      "batches": 3,
+      "requests": 3,
+      "medianMeanProcessCpuMs": 31.25,
+      "maxMeanProcessCpuMs": 46.875,
+      "maxSubrequests": 9
+    },
+    {
+      "scenario": "large-profile",
+      "temperature": "warm",
+      "batches": 3,
+      "requests": 30,
+      "medianMeanProcessCpuMs": 14.0625,
+      "maxMeanProcessCpuMs": 20.3125,
+      "maxSubrequests": 7
+    }
+  ]
+}
