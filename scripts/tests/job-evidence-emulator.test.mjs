@@ -82,7 +82,7 @@ test('job photos save/reopen for the assigned technician and owning customer; co
   assert.equal((await admin.doc(`service_requests/${id}`).get()).data().status, 'completed');
   assert.equal((await admin.doc('users/jw-tech').get()).data().availability, 'offline');
   assert.equal((await admin.collection('notifications').where('requestId', '==', id).get()).size, 1);
-  await assert.rejects(service.saveJobEvidence(id, 4, { notes: { ...notes, diagnosis: 'Changed' } }), /eligible job/);
+  await assert.rejects(service.saveJobEvidence(id, 4, { notes: { ...notes, diagnosis: 'Changed diagnosis' } }), /eligible job/);
   await denied(ssdk.deleteObject(ssdk.ref(tech.storage, objectPath(id))));
 });
 test('cross-account reads/writes, direct completion without evidence, spoofed ownership/stage and invalid signature/notes are denied', async () => {
@@ -101,6 +101,31 @@ test('cross-account reads/writes, direct completion without evidence, spoofed ow
   await denied(upload(id, 'before', tech, new Uint8Array(5 * 1024 * 1024 + 1)));
   await denied(upload(id, 'before', tech, undefined, metadata(id), objectPath(id).replace('/0.jpg', '/3.jpg')));
 });
+test('notes Rules enforce 10/3000 boundaries and valid parts while retaining unchanged historical notes', async () => {
+  const id = 'jw-notes-limits'; await job(id);
+  const tech = clients.get('jw-tech'), service = evidenceService(tech);
+  const reference = fsdk.doc(tech.db, 'job_evidence', id);
+  const base = { requestId: id, technicianId: 'jw-tech', customerId: 'jw-owner', revision: 1,
+    beforePhotos: [], afterPhotos: [], updatedAt: fsdk.serverTimestamp(), notesUpdatedAt: fsdk.serverTimestamp() };
+  for (const invalid of [
+    { ...notes, diagnosis: '123456789' }, { ...notes, diagnosis: ' 123456789 ' },
+    { ...notes, workCompleted: '123456789' }, { ...notes, diagnosis: 'x'.repeat(3001) },
+    { ...notes, workCompleted: 'x'.repeat(3001) }, { ...notes, recommendation: 'x'.repeat(3001) },
+    { ...notes, parts: [{ name: '', quantity: 1 }] }, { ...notes, parts: [{ name: 'x'.repeat(101), quantity: 1 }] },
+    ...[0, -1, 1.5, 1000].map(quantity => ({ ...notes, parts: [{ name: 'Bearing', quantity }] })),
+  ]) await denied(fsdk.setDoc(reference, { ...base, notes: invalid }));
+  await service.saveJobEvidence(id, 0, { notes: { ...notes, diagnosis: ' 1234567890 ', workCompleted: 'x'.repeat(3000), parts: [{ name: '', quantity: 1 }] } });
+  assert.deepEqual((await fsdk.getDocFromServer(reference)).data().notes.parts, []);
+
+  const legacy = 'jw-notes-legacy'; await job(legacy);
+  const historical = { ...notes, diagnosis: 'Fault', workCompleted: 'Fixed' };
+  await admin.doc(`job_evidence/${legacy}`).set({ ...base, requestId: legacy, notes: historical, updatedAt: new Date(), notesUpdatedAt: new Date() });
+  await service.saveJobEvidence(legacy, 1, { signature });
+  assert.deepEqual((await fsdk.getDocFromServer(fsdk.doc(tech.db, 'job_evidence', legacy))).data().notes, historical);
+  await denied(fsdk.updateDoc(fsdk.doc(tech.db, 'job_evidence', legacy), { notes: { ...historical, diagnosis: 'New' },
+    notesUpdatedAt: fsdk.serverTimestamp(), updatedAt: fsdk.serverTimestamp(), revision: 3 }));
+});
+
 test('persisted R2 evidence preserves stale-revision and disabled-owner protections', async () => {
   const id = 'jw-partial'; await job(id); const tech = clients.get('jw-tech'), service = evidenceService(tech);
   await confirm(id); await service.saveJobEvidence(id, 0, { beforePhotos: [r2Path(id)] });
