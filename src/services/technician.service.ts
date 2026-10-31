@@ -18,7 +18,8 @@ import {
   average,
 } from "firebase/firestore";
 
-import { SERVICE_CATEGORIES, ServiceCategory } from "@/src/constants/serviceRequests";
+import { ServiceCategory } from "@/src/constants/serviceRequests";
+import { categoryProjectionLabels, resolveServiceCategory, technicianCategory, technicianCategoryLabel, type ServiceCategoryId } from "@/functions/src/domain/serviceCategories";
 import { auth, db, firebaseRuntimeTarget } from "@/src/firebase/config";
 import { createSessionStream } from "./session-subscriptions";
 import { readTechnicianAvailability, TechnicianAvailability } from "@/functions/src/domain/availability";
@@ -36,6 +37,7 @@ export interface PublicTechnicianProfile {
   address: string;
   profilePhotoUrl?: string;
   specialization: string;
+  serviceCategoryId?: ServiceCategoryId;
   experience: string;
   qualifications: string;
   certifications: string;
@@ -60,7 +62,7 @@ export interface TechnicianReviewSummary {
 }
 
 type PublicProjection = {
-  technicianId: string; fullName: string; specialization: string; approved: boolean;
+  technicianId: string; fullName: string; specialization: string; serviceCategory?: string; serviceCategoryId?: string; approved: boolean;
   serviceDistrictIds: string[]; serviceAreasByDistrict?: StoredServiceAreasByDistrict;
   averageRating: number; reviewCount: number;
   availability?: unknown;
@@ -73,7 +75,8 @@ function mapTechnician(data: PublicProjection): PublicTechnicianProfile {
     fullName: data.fullName || "Service Technician",
     email: "", phone: "", address: "",
     profilePhotoUrl: details?.profilePhotoUrl || undefined,
-    specialization: data.specialization || "General Maintenance",
+    specialization: technicianCategoryLabel(data),
+    ...(technicianCategory(data) ? { serviceCategoryId: technicianCategory(data)!.id } : {}),
     experience: details?.experience || "Not provided",
     qualifications: details?.qualifications || "Not provided",
     certifications: details?.certifications || "Not provided",
@@ -94,9 +97,7 @@ function matchesCategory(
     return true;
   }
 
-  return technician.specialization
-    .toLowerCase()
-    .includes(category.toLowerCase());
+  return technician.serviceCategoryId === resolveServiceCategory(category)?.id && technician.serviceCategoryId !== undefined;
 }
 
 function matchesDivision(
@@ -124,10 +125,10 @@ export function subscribeToApprovedTechnicians(
 ) {
   const count = Math.min(MAP_MAX_ITEMS, Math.max(1, filters?.pageCount ?? 1) * MAP_PAGE_SIZE);
   const districtId = districtIdForName(filters?.division ?? "");
-  const category = SERVICE_CATEGORIES.find((value) => value === filters?.category);
+  const category = filters?.category && filters.category !== "All" ? categoryProjectionLabels(filters.category) : undefined;
   const techniciansQuery = query(collection(db, "technician_map_profiles"), where("approved", "==", true),
     ...(districtId ? [where("serviceDistrictIds", "array-contains", districtId)] : []),
-    ...(category ? [where("serviceCategory", "==", category)] : []),
+    ...(category ? [where("serviceCategory", "in", category)] : []),
     orderBy(documentId()), limit(count));
   // Include client-side filters as well as the bounded query in the stream identity.
   const key = JSON.stringify([filters?.category || "All", filters?.division || "All", count]);
@@ -141,6 +142,7 @@ export function subscribeToApprovedTechnicians(
         void Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref))).then((verified) => {
           if (!alive || version !== generation) return;
           const technicians = verified
+          .filter((item) => item.data()?.approved === true)
           .map((item) => mapTechnician(item.data() as PublicProjection))
           .filter((technician) =>
             matchesCategory(technician, filters?.category)
