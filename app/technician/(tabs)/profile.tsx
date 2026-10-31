@@ -1,4 +1,5 @@
 import { router } from "expo-router";
+import { technicianCategoryLabel } from "@/functions/src/domain/serviceCategories";
 import {
   Award,
   Bell,
@@ -59,8 +60,7 @@ export default function TechnicianProfileScreen() {
     );
   }
 
-  const specialization =
-    profile.specialization || "Specialization not provided";
+  const specialization = technicianCategoryLabel(profile);
   const serviceDivision =
     profile.serviceDistrictIds !== undefined
       ? resolveServiceDistrictIds(profile).map((id) => declaredServiceAreaLabel(id, profile.serviceAreasByDistrict)).join("; ") || "Service districts not set"
