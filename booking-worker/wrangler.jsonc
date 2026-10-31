@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "servicepilot-booking",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-30",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "FIREBASE_PROJECT_ID": "servicepilot-756d9",
+    "CORS_ALLOWED_ORIGINS": ""
+  },
+  "observability": { "enabled": false }
+}
