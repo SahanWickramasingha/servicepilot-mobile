@@ -1,4 +1,5 @@
 import { router } from "expo-router";
+import { SERVICE_CATEGORY_DEFINITIONS, type ServiceCategoryId } from "@/functions/src/domain/serviceCategories";
 import { useMemo, useState } from "react";
 import {
   AirVent,
@@ -24,6 +25,7 @@ import {
 
 type ServiceItem = {
   id: string;
+  categoryId: ServiceCategoryId;
   name: string;
   description: string;
   icon: React.ReactNode;
@@ -32,42 +34,49 @@ type ServiceItem = {
 const services: ServiceItem[] = [
   {
     id: "ac-repair",
+    categoryId: "air-conditioning",
     name: "AC Repair",
     description: "Air conditioner repair & maintenance",
     icon: <AirVent size={23} color="#60A5FA" />,
   },
   {
     id: "washing-machine",
+    categoryId: "appliance-repair",
     name: "Washing Machine Repair",
     description: "Washing machine repair & maintenance",
     icon: <WashingMachine size={23} color="#38BDF8" />,
   },
   {
     id: "electrical",
+    categoryId: "electrical",
     name: "Electrical Installation",
     description: "Electrical repairs, wiring & installation",
     icon: <Zap size={23} color="#F59E0B" />,
   },
   {
     id: "plumbing",
+    categoryId: "plumbing",
     name: "Plumbing",
     description: "Leaks, pipes, taps & plumbing repairs",
     icon: <Wrench size={23} color="#22C55E" />,
   },
   {
     id: "tv",
+    categoryId: "appliance-repair",
     name: "TV Repair",
     description: "LED, LCD and Smart TV repair",
     icon: <Tv size={23} color="#A78BFA" />,
   },
   {
     id: "refrigerator",
+    categoryId: "appliance-repair",
     name: "Refrigerator Repair",
     description: "Refrigerator repair & maintenance",
     icon: <Refrigerator size={23} color="#22D3EE" />,
   },
   {
     id: "other",
+    categoryId: "other",
     name: "Other Services",
     description: "Select this for another service type",
     icon: <Sparkles size={23} color="#94A3B8" />,
@@ -101,11 +110,12 @@ export default function SelectServiceScreen() {
       - pass selected service through params
     */
 
+    const category = SERVICE_CATEGORY_DEFINITIONS.find(item => item.id === service.categoryId)!;
     router.replace({
       pathname: "/create-request",
       params: {
-        service: service.name,
-        serviceId: service.id,
+        service: category.label,
+        serviceId: category.id,
       },
     });
   };
@@ -234,7 +244,7 @@ export default function SelectServiceScreen() {
 
           <View style={styles.helpContent}>
             <Text style={styles.helpTitle}>
-              Can't find the service?
+              Can&apos;t find the service?
             </Text>
 
             <Text style={styles.helpText}>
