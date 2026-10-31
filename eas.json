@@ -1,0 +1,20 @@
+{
+  "cli": { "appVersionSource": "remote" },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "environment": "preview",
+      "credentialsSource": "remote",
+      "env": { "SERVICEPILOT_RELEASE": "1", "EXPO_PUBLIC_USE_FIREBASE_EMULATORS": "0" },
+      "android": { "buildType": "apk" }
+    },
+    "production": {
+      "distribution": "store",
+      "environment": "production",
+      "credentialsSource": "remote",
+      "autoIncrement": true,
+      "env": { "SERVICEPILOT_RELEASE": "1", "EXPO_PUBLIC_USE_FIREBASE_EMULATORS": "0" },
+      "android": { "buildType": "app-bundle" }
+    }
+  }
+}
