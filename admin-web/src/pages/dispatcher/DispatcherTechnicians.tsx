@@ -1,3 +1,4 @@
+import { technicianCategoryLabel } from "../../../../functions/src/domain/serviceCategories";
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -27,6 +28,7 @@ export default function DispatcherTechnicians() {
         [
           user.fullName,
           user.email,
+          technicianCategoryLabel(user),
           user.specialization,
           user.serviceDivision,
           user.experience,
@@ -81,7 +83,7 @@ export default function DispatcherTechnicians() {
               <thead>
                 <tr>
                   <th>Technician</th>
-                  <th>Specialization</th>
+                  <th>Service category</th>
                   <th>Division</th>
                   <th>Experience</th>
                   <th>Status</th>
@@ -99,7 +101,7 @@ export default function DispatcherTechnicians() {
                         <strong>{displayText(technician.fullName)}</strong>
                         <span>{displayText(technician.email)}</span>
                       </td>
-                      <td>{displayText(technician.specialization)}</td>
+                      <td>{technicianCategoryLabel(technician)}</td>
                       <td>
                         {displayText(
                           technician.serviceDivision || technician.serviceAreas
