@@ -1,12 +1,5 @@
-export const SERVICE_CATEGORIES = [
-  "Electrical",
-  "Plumbing",
-  "Air Conditioning",
-  "Appliance Repair",
-  "IT / Computer Support",
-  "General Maintenance",
-  "Other",
-] as const;
+import { SERVICE_CATEGORY_LABELS } from "@/functions/src/domain/serviceCategories";
+export const SERVICE_CATEGORIES = SERVICE_CATEGORY_LABELS;
 
 export const REQUEST_STATUSES = [
   "requested",
