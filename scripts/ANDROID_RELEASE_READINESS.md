@@ -1,5 +1,9 @@
 # Android release preparation — 2026-10-25
 
+Follow-up (2026-10-31): see [GOOGLE_PLAY_RELEASE.md](GOOGLE_PLAY_RELEASE.md) for
+the prepared permanent host, EAS APK/AAB profiles, environment guards and current
+release gates. The missing-EAS statements below describe the earlier inspection.
+
 Preparation only. No APK/native project generation, EAS remote build, deployment,
 production endpoint probe, billing change or production-data operation was run.
 
