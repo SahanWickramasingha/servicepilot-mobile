@@ -111,7 +111,7 @@ test('photo screen preserves selections after failure, retries a real save and r
 });
 
 function formFixture(mode) {
-  let data = null, fail = false; const saved = [], routes = [];
+  let data = null, fail = false, waitForSave; const saved = [], routes = [];
   const deps = {
     'expo-router': { router: { back: () => routes.push('back') } },
     'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
@@ -123,6 +123,7 @@ function formFixture(mode) {
       if (change.notes) domain.validateServiceNotes(change.notes);
       if (change.signature) domain.validateJobSignature(change.signature);
       if (fail) throw new Error('Recoverable save failure');
+      if (waitForSave) await waitForSave;
       data = { ...complete(), ...change }; saved.push(change);
     } },
   };
@@ -133,6 +134,7 @@ function formFixture(mode) {
   const field = (label) => h.elements().find((e) => e.type === 'TextInput' && e.props.accessibilityLabel === label).props;
   render();
   return { render, button, field, saved, routes, elements: () => h.elements(), fail: (value) => { fail = value; },
+    pauseSave: () => { let release; waitForSave = new Promise(resolve => { release = resolve; }); return () => { waitForSave = undefined; release(); }; },
     reopen: () => { h.cleanup(); h = create(); render(); }, cleanup: () => h.cleanup() };
 }
 
@@ -146,6 +148,78 @@ test('notes form rejects incomplete input, preserves values after failure and re
   f.fail(false); await f.button('Retry save').onPress(); await tick(); assert.equal(f.saved.length, 1);
   f.reopen(); assert.equal(f.field('Work completed (required)').value, 'Replaced bearing');
   assert.deepEqual(f.saved[0].notes.parts, []); assert.equal(f.saved[0].notes.recommendation, ''); f.cleanup();
+});
+
+test('notes enforce trimmed minimum and raw maximum per field and optional parts', () => {
+  for (const field of ['diagnosis', 'workCompleted']) {
+    for (const value of ['', '         ', ' 123456789 ', 'x'.repeat(3001)]) {
+      assert.throws(() => domain.validateServiceNotes({ ...notes, [field]: value }), error => error.field === field);
+    }
+    for (const value of [' 1234567890 ', 'x'.repeat(3000)]) domain.validateServiceNotes({ ...notes, [field]: value });
+  }
+  assert.deepEqual(domain.normalizeServiceNotes({ diagnosis: notes.diagnosis, workCompleted: notes.workCompleted }), { ...notes, recommendation: '', parts: [] });
+  assert.deepEqual(domain.normalizeServiceNotes({ ...notes, parts: [{ name: '  ', quantity: 1 }, { name: '', quantity: '' }, { name: ' Bearing ', quantity: '2' }] }).parts, [{ name: 'Bearing', quantity: 2 }]);
+  for (const quantity of ['', 'abc', '1.5', 0, -1, 1.5, 1000, null, true]) {
+    assert.throws(() => domain.normalizeServiceNotes({ ...notes, parts: [{ name: 'Bearing', quantity }] }), error => error.field === 'parts.0.quantity');
+  }
+  assert.throws(() => domain.normalizeServiceNotes({ ...notes, parts: [{ name: '', quantity: 2 }] }), error => error.field === 'parts.0.name');
+  assert.throws(() => domain.normalizeServiceNotes({ ...notes, parts: [{ name: 'x'.repeat(101), quantity: 1 }] }), error => error.field === 'parts.0.name');
+  assert.throws(() => domain.normalizeServiceNotes({ ...notes, recommendation: 'x'.repeat(3001) }), error => error.field === 'recommendation');
+});
+
+test('notes form shows concise inline errors, ignores untouched parts and rejects entered invalid quantities', async () => {
+  const f = formFixture('notes');
+  assert.equal(f.elements().filter(e => e.type === 'Text' && e.props.children === 'Min. 10 characters').length, 2);
+  assert.equal(f.elements().filter(e => e.props.accessibilityRole === 'alert').length, 0);
+  assert.ok(f.elements().some(e => e.type === 'Text' && e.props.children === 'Recommendations (optional)'));
+  assert.equal(f.button('Save').primary, true);
+  f.field('Diagnosis (required)').onChangeText('  short  '); f.render();
+  f.field('Work completed (required)').onChangeText('Work completed'); f.render();
+  await f.button('Save').onPress(); await tick(); f.render();
+  assert.ok(f.elements().some(e => e.type === 'Text' && e.props.children === 'Enter at least 10 characters.'));
+  assert.equal(f.elements().filter(e => e.props.accessibilityRole === 'alert').length, 1, 'Validation stays beside the field without a duplicate banner');
+  assert.ok(!f.elements().some(e => e.type === 'Text' && /after trimming|maximum|\/ 3000|Blank default rows/.test(String(e.props.children))));
+  assert.equal(f.field('Diagnosis (required)').maxLength, 3000);
+  assert.equal(f.saved.length, 0);
+  f.field('Diagnosis (required)').onChangeText('Motor fault'); f.render();
+  f.button('Add part').onPress(); f.render();
+  for (const label of ['Part name', 'Quantity']) assert.ok(f.elements().some(e => e.type === 'Text' && e.props.children === label));
+  await f.button('Save').onPress(); await tick(); f.render();
+  assert.deepEqual(f.saved[0].notes.parts, []);
+  f.reopen(); f.button('Add part').onPress(); f.render();
+  f.field('Part 1 name').onChangeText('Bearing'); f.render();
+  f.field('Part 1 quantity').onChangeText('0'); f.render();
+  await f.button('Save').onPress(); await tick(); f.render();
+  assert.ok(f.elements().some(e => e.type === 'Text' && e.props.children === 'Use a whole number from 1 to 999.'));
+  assert.equal(f.elements().filter(e => e.props.accessibilityRole === 'alert').length, 1);
+  assert.equal(f.saved.length, 1); f.cleanup();
+});
+
+test('notes primary Save shows saving feedback and prevents another press while the existing save is pending', async () => {
+  const f = formFixture('notes');
+  f.field('Diagnosis (required)').onChangeText('Motor fault'); f.render();
+  f.field('Work completed (required)').onChangeText('Replaced bearing'); f.render();
+  const resume = f.pauseSave();
+  f.button('Save').onPress(); await tick(); f.render();
+  const button = f.button('Saving…');
+  assert.equal(button.primary, true); assert.equal(button.loading, true); assert.equal(button.disabled, true);
+  const component = f.elements().find(e => e.type?.name === 'Button' && e.props.label === 'Saving…');
+  const touchable = component.type(component.props);
+  assert.equal(touchable.props.accessibilityState.busy, true);
+  assert.equal(touchable.props.accessibilityState.disabled, true);
+  assert.equal(f.saved.length, 0);
+  // The existing in-flight guard also protects against a stale callback.
+  button.onPress(); resume(); await tick(); f.render();
+  assert.equal(f.saved.length, 1); assert.equal(f.routes.length, 1); f.cleanup();
+});
+
+test('historical short notes remain usable for completion and unrelated evidence saves', async () => {
+  const historical = { ...notes, diagnosis: 'Fault', workCompleted: 'Fixed' };
+  domain.requireCompletionEvidence({ ...complete(), notes: historical }, 'job-a', 'tech-a', 'customer-a');
+  const f = fixture(); f.data.set('job_evidence/job-a', { ...complete(), notes: historical });
+  await f.service.saveJobEvidence('job-a', 4, { signature: { ...signature, customerName: 'Updated name' } });
+  assert.deepEqual(f.data.get('job_evidence/job-a').notes, historical);
+  await assert.rejects(f.service.saveJobEvidence('job-a', 5, { notes: { ...historical, diagnosis: 'New' } }), error => error.field === 'diagnosis');
 });
 
 test('signature form captures actual strokes, locks scrolling while drawing, rejects empty capture and restores saved drawing', async () => {
