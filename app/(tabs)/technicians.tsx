@@ -23,28 +23,23 @@ import {
   Wrench,
 } from "lucide-react-native";
 
-import {
-  SERVICE_CATEGORIES,
-  ServiceCategory,
-} from "@/src/constants/serviceRequests";
+import { SERVICE_CATEGORY_DEFINITIONS, categoryFilterFromParam, type ServiceCategoryId } from "@/functions/src/domain/serviceCategories";
+import { DISTRICTS } from "@/functions/src/domain/map";
 import {
   PublicTechnicianProfile,
   subscribeToApprovedTechnicians,
 } from "@/src/services/technician.service";
 
-type CategoryFilter = ServiceCategory | "All";
+type CategoryFilter = ServiceCategoryId | "All";
 
 export default function TechniciansScreen() {
   const params = useLocalSearchParams<{
     category?: string;
     division?: string;
+    search?: string;
   }>();
 
-  const initialCategory = SERVICE_CATEGORIES.includes(
-    params.category as ServiceCategory
-  )
-    ? (params.category as ServiceCategory)
-    : "All";
+  const initialCategory = categoryFilterFromParam(params.category);
 
   const [technicians, setTechnicians] = useState<
     PublicTechnicianProfile[]
@@ -54,7 +49,7 @@ export default function TechniciansScreen() {
   const [division, setDivision] = useState(
     params.division ?? "All"
   );
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(params.search ?? "");
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [pageCount, setPageCount] = useState(1);
@@ -66,6 +61,7 @@ export default function TechniciansScreen() {
     setDivision(params.division ?? "All");
     setPageCount(1);
   }, [initialCategory, params.division]);
+  useEffect(() => { setSearch(params.search ?? ""); }, [params.search]);
 
   useEffect(() => {
     let stop: (() => void) | undefined;
@@ -105,11 +101,8 @@ export default function TechniciansScreen() {
   }, [category, division, pageCount]);
 
   const divisions = useMemo(() => {
-    const unique = new Set(
-      technicians.map((item) => item.serviceDivision)
-    );
-    return ["All", ...Array.from(unique).sort()];
-  }, [technicians]);
+    return ["All", ...DISTRICTS.map(item => item.name).sort()];
+  }, []);
 
   const filteredTechnicians = useMemo(() => {
     const cleanSearch = search.trim().toLowerCase();
@@ -174,7 +167,7 @@ export default function TechniciansScreen() {
           <Search size={18} color="#64748B" />
           <TextInput
             value={search}
-            onChangeText={setSearch}
+            onChangeText={(value) => { setSearch(value); router.setParams({ search: value }); }}
             placeholder="Search technician, category, division"
             placeholderTextColor="#64748B"
             style={styles.searchInput}
@@ -187,13 +180,13 @@ export default function TechniciansScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.filterRow}
         >
-          {(["All", ...SERVICE_CATEGORIES] as CategoryFilter[]).map(
+          {[{ id: "All" as const, label: "All" }, ...SERVICE_CATEGORY_DEFINITIONS].map(
             (item) => (
               <FilterChip
-                key={item}
-                label={item}
-                active={category === item}
-                onPress={() => { setPageCount(1); setCategory(item); }}
+                key={item.id}
+                label={item.label}
+                active={category === item.id}
+                onPress={() => { setPageCount(1); setCategory(item.id); router.setParams({ category: item.id }); }}
               />
             )
           )}
