@@ -12,6 +12,7 @@ const documents = pureModule('src/utils/liveDocuments.ts');
 const { createBoundedSessionCache } = pureModule('src/utils/boundedSessionCache.ts');
 // Run the real pooling/reducer logic in host tests, bound to each fixture's Auth.
 export function performanceTestDependency(id, deps) {
+  if (id === '@/functions/src/domain/serviceCategories' || id === './serviceCategories' || id === '../domain/serviceCategories') return pureModule('functions/src/domain/serviceCategories.ts');
   if (id.startsWith('@noble/hashes/')) return require(id);
   if (id === '@/src/utils/photoReferences') return pureModule('src/utils/photoReferences.ts');
   if (id === './privatePhotos.service') {
