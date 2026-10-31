@@ -27,6 +27,8 @@ import {
   updateUserProfileSafe,
 } from "@/src/services/user.service";
 import { ProtectedRoute } from "@/src/components/auth/ProtectedRoute";
+import { ServiceCategoryPicker } from "@/src/components/technicians/ServiceCategoryPicker";
+import { technicianCategory } from "@/functions/src/domain/serviceCategories";
 import { DistrictPicker } from "@/src/components/maps/DistrictPicker";
 import { ServiceAreaPicker } from "@/src/components/maps/ServiceAreaPicker";
 import { resolveServiceDistrictIds } from "@/functions/src/domain/map";
@@ -42,6 +44,7 @@ export default function EditProfileScreen() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isTechnician, setIsTechnician] = useState(false);
+  const [serviceCategoryId, setServiceCategoryId] = useState("");
   const [districts, setDistricts] = useState<string[]>([]);
   const [areas, setAreas] = useState<ServiceAreasByDistrict>({});
 
@@ -66,6 +69,7 @@ export default function EditProfileScreen() {
         setPhone(profile.phone ?? "");
         setAddress(profile.address ?? "");
         setIsTechnician(profile.role === "technician");
+        setServiceCategoryId(technicianCategory(profile)?.id ?? "");
         const ids = resolveServiceDistrictIds(profile);
         setDistricts(ids);
         setAreas(retainServiceAreas(ids, readServiceAreas(profile.serviceAreasByDistrict)));
@@ -92,6 +96,7 @@ export default function EditProfileScreen() {
       return;
     }
 
+    if (isTechnician && !serviceCategoryId) { setErrorMessage("Select a service category."); return; }
     try {
       setSaving(true);
       setErrorMessage("");
@@ -100,7 +105,7 @@ export default function EditProfileScreen() {
         fullName,
         phone,
         address,
-        ...(isTechnician ? { serviceDistrictIds: districts, serviceAreasByDistrict: areas } : {}),
+        ...(isTechnician ? { serviceCategoryId, serviceDistrictIds: districts, serviceAreasByDistrict: areas } : {}),
       });
       if (isTechnician) setSuccessMessage("Personal information and service area saved.");
       else router.back();
@@ -211,6 +216,11 @@ export default function EditProfileScreen() {
           </View>
         </View>
 
+        {isTechnician && <View style={styles.formCard}>
+          <Text style={styles.label}>Service category</Text>
+          {!serviceCategoryId && <Text style={{ color: "#CBD5E1" }}>Choose the service you provide.</Text>}
+          <ServiceCategoryPicker value={serviceCategoryId} disabled={saving} onChange={(id) => { setServiceCategoryId(id); setSuccessMessage(""); }} />
+        </View>}
         {isTechnician && <View style={styles.formCard}>
           <Text style={styles.label}>Service Area</Text>
           <DistrictPicker selected={districts} multiple disabled={saving} onChange={(ids) => {
