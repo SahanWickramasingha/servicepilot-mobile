@@ -1,3 +1,4 @@
+import { technicianCategoryLabel } from "../../../functions/src/domain/serviceCategories";
 import { Search, UserCog, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -46,6 +47,7 @@ export default function Technicians() {
           user.fullName,
           user.email,
           user.phone,
+          technicianCategoryLabel(user),
           user.specialization,
           user.serviceDivision,
           user.experience,
@@ -104,7 +106,7 @@ export default function Technicians() {
               <thead>
                 <tr>
                   <th>Technician</th>
-                  <th>Specialization</th>
+                  <th>Service category</th>
                   <th>Division</th>
                   <th>Experience</th>
                   <th>Rating</th>
@@ -124,7 +126,7 @@ export default function Technicians() {
                         <strong>{displayText(technician.fullName)}</strong>
                         <span>{displayText(technician.email)}</span>
                       </td>
-                      <td>{displayText(technician.specialization)}</td>
+                      <td>{technicianCategoryLabel(technician)}</td>
                       <td>
                         {displayText(
                           technician.serviceDivision || technician.serviceAreas
@@ -206,7 +208,7 @@ export default function Technicians() {
             <div className="detail-grid">
               <Detail label="Phone" value={selectedTechnician.phone} />
               <Detail label="Address" value={selectedTechnician.address} />
-              <Detail label="Specialization" value={selectedTechnician.specialization} />
+              <Detail label="Service category" value={technicianCategoryLabel(selectedTechnician)} />
               <Detail label="Experience" value={selectedTechnician.experience} />
               <Detail label="Qualifications" value={selectedTechnician.qualifications} />
               <Detail label="Certifications" value={selectedTechnician.certifications} />
