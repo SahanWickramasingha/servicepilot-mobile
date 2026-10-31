@@ -269,7 +269,11 @@ test("one durable submission ID survives two devices, duplicate calls and a lost
   const details = { ...await input(), attemptId: customer().services.request.createServiceRequestAttemptId() };
   const ids = await Promise.all([customer().services.request.createServiceRequest(details), sessions.get("availability-customer-second-device").services.request.createServiceRequest(details)]);
   assert.equal(ids[0], ids[1]);
-  assert.equal((await admin.collection("notifications").where("requestId", "==", ids[0]).get()).size, 1);
+  const creationNotices = await admin.collection("notifications").where("requestId", "==", ids[0]).get();
+  assert.equal(creationNotices.size, 1);
+  assert.equal(creationNotices.docs[0].data().userId, "availability-tech", "recipient is the selected technician's Auth UID");
+  assert.equal(creationNotices.docs[0].data().type, "new_customer_request");
+  assert.equal((await getAdminAuth(app).getUser(creationNotices.docs[0].data().userId)).uid, "availability-tech");
   assert.equal((await admin.doc(`booking_attempts/availability-customer/requests/${ids[0]}`).get()).data().requestId, ids[0]);
   const second = { ...details, attemptId: customer().services.request.createServiceRequestAttemptId() };
   let loseAck = true;
