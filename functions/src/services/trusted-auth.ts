@@ -1,11 +1,8 @@
 import type { Auth } from "firebase-admin/auth";
 import type { Firestore } from "firebase-admin/firestore";
 
-export class TrustedRequestError extends Error {
-  constructor(public readonly status: number, public readonly code: string, message: string) {
-    super(message);
-  }
-}
+import { TrustedRequestError } from '../domain/trustedRequestError';
+export { TrustedRequestError } from '../domain/trustedRequestError';
 
 export function createSuperAdminAuthorizer(auth: Auth, db: Firestore) {
   return async (authorization: string | undefined) => {
