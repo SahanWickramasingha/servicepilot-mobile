@@ -1,3 +1,4 @@
+import { technicianCategoryLabel } from "@/functions/src/domain/serviceCategories";
 import { useEffect, useState } from "react";
 import { FirebaseError } from "firebase/app";
 import {
@@ -272,7 +273,7 @@ export default function DispatcherDashboard() {
                   <DetailRow
                     label="Specialization"
                     value={
-                      selectedTechnician.specialization
+                      technicianCategoryLabel(selectedTechnician)
                     }
                   />
                   <DetailRow
