@@ -1,7 +1,39 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import { loadService } from '../lib/subscription-reliability-workloads.mjs';
 const tick=()=>new Promise(setImmediate);
+
+test('production indexes cover actual collection queries and timestamp/ID cursor pages for both roles', async () => {
+ const readJson = path => JSON.parse(readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8'));
+ const config = readJson('firebase.json');
+ assert.equal(config.firestore.indexes, 'firestore.indexes.json');
+ const indexes = readJson(config.firestore.indexes).indexes;
+ for (const role of ['customer', 'technician']) {
+  const f = fixture();
+  // fixture uses the real history connector; capture the role passed to array-contains below.
+  for (let i=0;i<21;i++) {
+   f.add(`p${i}`,i);
+   for (const status of ['active','sent']) f.add(`${status}${i}`,i,'system_messages',{status,audienceRoles:[role]});
+  }
+  const c = f.start(role); await tick(); await c.loadMore(); await tick();
+  try {
+   const queries = f.listeners.filter(l => ['notifications','system_messages'].includes(l.query.name)).map(l => l.query);
+   assert.equal(queries.length, 6);
+   for (const q of queries) {
+    const filters = q.parts.filter(p => p.kind === 'where');
+    const fields = [
+     ...filters.map(p => p.op === 'array-contains' ? {fieldPath:p.field,arrayConfig:'CONTAINS'} : {fieldPath:p.field,order:'ASCENDING'}),
+     ...q.parts.filter(p => p.kind === 'order').map(p => ({fieldPath:p.field,order:p.dir === 'desc' ? 'DESCENDING' : 'ASCENDING'})),
+    ];
+    assert.ok(indexes.some(index => index.queryScope === 'COLLECTION' && index.collectionGroup === q.name && JSON.stringify(index.fields) === JSON.stringify(fields)), JSON.stringify(q));
+    assert.deepEqual(q.parts.filter(p => p.kind === 'limit'), [{kind:'limit',n:20}]);
+    if (q.name === 'system_messages') assert.equal(filters.find(p => p.field === 'audienceRoles').value,role);
+   }
+   assert.equal(queries.filter(q => q.parts.some(p => p.kind === 'after')).length,3);
+  } finally { c.stop(); }
+ }
+});
 function fixture(){
  const auth={currentUser:{uid:'viewer'}}, rows=new Map(), listeners=[], outputs=[], errors=[];let failRead=false,hold;
  const stamp=(n)=>({toMillis:()=>n});
@@ -28,7 +60,7 @@ function fixture(){
   writeBatch:()=>{const changes=[];return{update:(ref,data)=>changes.push([ref.path,data]),set:(ref,data)=>changes.push([ref.path,data]),commit:async()=>{if(failRead)throw Error('offline');for(const[path,data]of changes)rows.set(path,{...rows.get(path),...data});notify();}};},
  };
  const service=loadService('src/services/notificationHistory.ts',{'firebase/firestore':sdk,'@/src/firebase/config':{auth,db:{}}});
- const start=()=>service.connectNotificationHistory('viewer','customer',(id,data)=>({id,...data,source:'personal'}),(id,data)=>({id,...data}),
+ const start=(role='customer')=>service.connectNotificationHistory('viewer',role,(id,data)=>({id,...data,source:'personal'}),(id,data)=>({id,...data}),
   (items,status)=>outputs.push({items,status}),error=>errors.push(error));
  const add=(id,n,source='notifications',extra={})=>rows.set(`${source}/${id}`,{createdAt:stamp(n),userId:'viewer',read:false,
   ...(source==='system_messages'?{audienceRoles:['customer'],status:'active'}:{}),...extra});
