@@ -1,3 +1,4 @@
+import { technicianCategoryLabel } from "../../../../functions/src/domain/serviceCategories";
 import { CheckCircle2, Eye, Search, X, XCircle } from "lucide-react";
 import { FirebaseError } from "firebase/app";
 import { useMemo, useState } from "react";
@@ -30,6 +31,7 @@ export default function DispatcherApplications() {
         [
           user.fullName,
           user.email,
+          technicianCategoryLabel(user),
           user.specialization,
           user.serviceDivision,
           user.qualifications,
@@ -125,7 +127,7 @@ export default function DispatcherApplications() {
               <thead>
                 <tr>
                   <th>Applicant</th>
-                  <th>Specialization</th>
+                  <th>Service category</th>
                   <th>Division</th>
                   <th>Experience</th>
                   <th>Status</th>
@@ -140,7 +142,7 @@ export default function DispatcherApplications() {
                       <strong>{displayText(technician.fullName)}</strong>
                       <span>{displayText(technician.email)}</span>
                     </td>
-                    <td>{displayText(technician.specialization)}</td>
+                    <td>{technicianCategoryLabel(technician)}</td>
                     <td>
                       {displayText(
                         technician.serviceDivision || technician.serviceAreas
@@ -195,7 +197,7 @@ export default function DispatcherApplications() {
               <Detail label="Full Name" value={selectedTechnician.fullName} />
               <Detail label="Email" value={selectedTechnician.email} />
               <Detail label="Phone" value={selectedTechnician.phone} />
-              <Detail label="Specialization" value={selectedTechnician.specialization} />
+              <Detail label="Service category" value={technicianCategoryLabel(selectedTechnician)} />
               <Detail label="Experience" value={selectedTechnician.experience} />
               <Detail label="Qualifications" value={selectedTechnician.qualifications} />
               <Detail label="Certifications" value={selectedTechnician.certifications} />
