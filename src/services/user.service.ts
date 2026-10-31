@@ -14,6 +14,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { buildMapProfile } from "@/functions/src/domain/mapProjection";
+import { selectedTechnicianCategory, technicianCategory } from "@/functions/src/domain/serviceCategories";
 import { readTechnicianAvailability, TechnicianAvailability } from "@/functions/src/domain/availability";
 import { ServiceAreasByDistrict, StoredServiceAreasByDistrict, encodeServiceAreas } from "@/functions/src/domain/serviceAreas";
 
@@ -51,6 +52,7 @@ export interface UserProfileData {
   address: string;
   role: PublicRegistrationRole;
   specialization?: string;
+  serviceCategoryId?: string;
   experience?: string;
   qualifications?: string;
   certifications?: string;
@@ -74,6 +76,7 @@ export interface UserProfile {
   reviewedAt?: unknown;
   rejectionReason?: string | null;
   specialization?: string;
+  serviceCategoryId?: string;
   experience?: string;
   qualifications?: string;
   certifications?: string;
@@ -136,8 +139,7 @@ export async function createUserProfile(
       ? {
           technicianApprovalStatus: "pending",
           availability: "offline",
-          specialization:
-            data.specialization?.trim() ?? "",
+          ...selectedTechnicianCategory(data.serviceCategoryId ?? technicianCategory(data)?.id),
           experience:
             data.experience?.trim() ?? "",
           qualifications:
@@ -268,6 +270,7 @@ export async function updateUserProfileSafe(
     address: string;
     serviceDistrictIds?: string[];
     serviceAreasByDistrict?: ServiceAreasByDistrict;
+    serviceCategoryId?: string;
   }
 ): Promise<void> {
   if (auth.currentUser?.uid !== uid) throw new Error("Update your own account only.");
@@ -277,11 +280,13 @@ export async function updateUserProfileSafe(
   await runTransaction(db, async (transaction) => {
     const profile = (await transaction.get(userRef)).data();
     if (!profile) throw new Error("Profile unavailable.");
+    if (data.serviceCategoryId !== undefined && profile.role !== "technician") throw new Error("Service categories are for Technician specialties only.");
     const hasCoverage = data.serviceDistrictIds !== undefined || data.serviceAreasByDistrict !== undefined;
     if (hasCoverage && (profile.role !== "technician" || !data.serviceDistrictIds || !data.serviceAreasByDistrict)) {
       throw new Error("Service areas require a Technician and selected districts.");
     }
     const changes = { fullName: data.fullName.trim(), phone: data.phone.trim(), address: data.address.trim(), updatedAt: serverTimestamp(),
+      ...(data.serviceCategoryId !== undefined ? selectedTechnicianCategory(data.serviceCategoryId) : {}),
       ...(hasCoverage ? { serviceDistrictIds: data.serviceDistrictIds!, serviceAreasByDistrict: encodeServiceAreas(data.serviceDistrictIds!, data.serviceAreasByDistrict!) } : {}) };
     transaction.update(userRef, changes);
     if (profile?.role === "technician") transaction.set(doc(db, "technician_map_profiles", uid), {
@@ -343,8 +348,11 @@ export async function updateTechnicianApprovalStatus({
   const technicianRef = doc(db, "users", technicianUid);
   const profile = (await getDoc(technicianRef)).data();
   if (!profile) throw new Error("Technician profile unavailable.");
+  const category = technicianCategory(profile);
+  const categoryFields = category ? selectedTechnicianCategory(category.id) : {};
   const batch = writeBatch(db);
   batch.update(technicianRef, {
+    ...categoryFields,
     technicianApprovalStatus: status,
     reviewedBy: dispatcherUid,
     reviewedAt: serverTimestamp(),
@@ -356,7 +364,7 @@ export async function updateTechnicianApprovalStatus({
         : deleteField(),
   });
   batch.set(doc(db, "technician_map_profiles", technicianUid), {
-    ...buildMapProfile(technicianUid, { ...profile, technicianApprovalStatus: status }), updatedAt: serverTimestamp(),
+    ...buildMapProfile(technicianUid, { ...profile, ...categoryFields, technicianApprovalStatus: status }), updatedAt: serverTimestamp(),
   });
   await batch.commit();
 }
