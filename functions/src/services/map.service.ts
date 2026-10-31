@@ -1,6 +1,7 @@
 import { Firestore } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
 import { accountSessionDenial } from "../domain/accountSession";
+import { resolveServiceCategory, technicianCategory, technicianCategoryLabel } from "../domain/serviceCategories";
 import { DISTRICTS, locationIsFresh, resolveServiceDistrictIds, validCoordinate } from "../domain/map";
 
 type Caller = { uid: string; token: { email_verified?: unknown; auth_time?: unknown } } | undefined;
@@ -23,16 +24,18 @@ export async function readMapTechnicians(db: Firestore, caller: Caller, input: {
   }
   const snapshot = await db.collection("users").where("role", "==", "technician")
     .where("technicianApprovalStatus", "==", "approved").get();
-  const category = typeof input.category === "string" ? input.category.toLowerCase() : "";
+  const category = input.category ? resolveServiceCategory(input.category) : undefined;
+  if (input.category && !category) throw new HttpsError("invalid-argument", "Select a valid service category.");
   return snapshot.docs.flatMap((document) => {
     const profile = document.data();
     const serviceDistrictIds = resolveServiceDistrictIds(profile);
     if ((profile.accountStatus !== undefined && profile.accountStatus !== "active") ||
         !serviceDistrictIds.includes(input.districtId as string) ||
-        (category && !(typeof profile.specialization === "string" && profile.specialization.toLowerCase().includes(category)))) return [];
+        (category && technicianCategory(profile)?.id !== category.id)) return [];
     // Deliberate allowlist: never return private profile data, addresses, or raw locations.
     return [{ uid: document.id, fullName: typeof profile.fullName === "string" ? profile.fullName : "Service Technician",
-      specialization: typeof profile.specialization === "string" ? profile.specialization : "Not provided",
+      specialization: technicianCategoryLabel(profile),
+      ...(technicianCategory(profile) ? { serviceCategoryId: technicianCategory(profile)!.id } : {}),
       serviceDistrictIds, averageRating: Number(profile.averageRating ?? 0), reviewCount: Number(profile.reviewCount ?? 0) }];
   }).sort((a, b) => b.averageRating - a.averageRating || a.fullName.localeCompare(b.fullName));
 }
