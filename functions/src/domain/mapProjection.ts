@@ -1,9 +1,10 @@
 import { encodeServiceAreas, readServiceAreas } from "./serviceAreas";
 import type { StoredServiceAreasByDistrict } from "./serviceAreas";
 import { readTechnicianAvailability } from "./availability";
+import { resolveServiceCategory, technicianCategory } from "./serviceCategories";
 
 export type MapProfileSource = {
-  role?: unknown; fullName?: unknown; specialization?: unknown; accountStatus?: unknown;
+  role?: unknown; fullName?: unknown; specialization?: unknown; serviceCategoryId?: unknown; serviceCategory?: unknown; accountStatus?: unknown;
   technicianApprovalStatus?: unknown; serviceDistrictIds?: unknown;
   averageRating?: unknown; reviewCount?: unknown; serviceAreasByDistrict?: unknown;
   experience?: unknown; qualifications?: unknown; certifications?: unknown; profilePhotoUrl?: unknown; completedJobs?: unknown;
@@ -15,8 +16,7 @@ export const MAP_MAX_ITEMS = 24;
 
 /** Stable category labels; unknown legacy specializations remain in All services. */
 export function mapServiceCategory(value: string): string {
-  return ["Electrical", "Plumbing", "Air Conditioning", "Appliance Repair", "IT / Computer Support", "General Maintenance", "Other"]
-    .find((label) => value.toLowerCase().includes(label.toLowerCase())) ?? "";
+  return resolveServiceCategory(value)?.label ?? "";
 }
 
 /** Display-only projection. Never spread a private user document into this object. */
@@ -33,7 +33,8 @@ export function buildMapProfile(technicianId: string, profile: MapProfileSource)
     throw new Error("Technician rating fields require validation.");
   }
   return { technicianId, fullName: profile.fullName, specialization,
-    serviceCategory: mapServiceCategory(specialization),
+    serviceCategory: technicianCategory(profile)?.label ?? "",
+    serviceCategoryId: technicianCategory(profile)?.id ?? "",
     serviceDistrictIds: Array.isArray(profile.serviceDistrictIds) ? profile.serviceDistrictIds : [],
     approved: profile.technicianApprovalStatus === "approved" && (profile.accountStatus === undefined || profile.accountStatus === "active"),
     averageRating, reviewCount,
