@@ -115,6 +115,7 @@ service cloud.firestore {
         "accountStatus",
         "emailVerified",
         "specialization",
+        "serviceCategoryId",
         "experience",
         "qualifications",
         "certifications",
@@ -156,6 +157,7 @@ service cloud.firestore {
             hasOnlyTechnicianCreateFields() &&
             hasRequiredTechnicianCreateFields() &&
             request.resource.data.get("availability", "offline") == "offline" &&
+            (!request.resource.data.keys().hasAny(["serviceCategoryId"]) || validSelectedTechnicianCategory(request.resource.data)) &&
             request.resource.data.technicianApprovalStatus == "pending"
           )
         );
@@ -170,6 +172,7 @@ service cloud.firestore {
           "phone",
           "address",
           "specialization",
+          "serviceCategoryId",
           "experience",
           "qualifications",
           "certifications",
@@ -185,6 +188,8 @@ service cloud.firestore {
     function validOwnerUpdate(userId) {
       return isOwner(userId) &&
         ownerMutableFieldsOnly() &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(["specialization", "serviceCategoryId"]) ||
+          validOwnerCategoryUpdate(userId)) &&
         (
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(["serviceDistrictIds", "serviceAreasByDistrict"]) ||
           (resource.data.role == "technician" && validServiceAreas(request.resource.data.get("serviceAreasByDistrict", {}), request.resource.data.get("serviceDistrictIds", [])))
@@ -219,6 +224,13 @@ service cloud.firestore {
           ]);
     }
 
+    function validOwnerCategoryUpdate(userId) {
+      let projection = getAfter(/databases/$(database)/documents/technician_map_profiles/$(userId)).data;
+      return resource.data.role == "technician" && validSelectedTechnicianCategory(request.resource.data) &&
+        projection.serviceCategoryId == request.resource.data.serviceCategoryId &&
+        projection.serviceCategory == request.resource.data.specialization && projection.updatedAt == request.time;
+    }
+
     function validTechnicianAvailabilityUpdate(userId) {
       let projection = getAfter(/databases/$(database)/documents/technician_map_profiles/$(userId)).data;
       return isOwner(userId) && isVerifiedApprovedTechnician() &&
@@ -242,8 +254,13 @@ service cloud.firestore {
             "reviewedBy",
             "reviewedAt",
             "rejectionReason",
+            "serviceCategoryId",
+            "specialization",
             "updatedAt"
           ]) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(["specialization", "serviceCategoryId"]) ||
+          (validSelectedTechnicianCategory(request.resource.data) &&
+            request.resource.data.serviceCategoryId == technicianCategoryId(resource.data))) &&
         request.resource.data.technicianApprovalStatus in [
           "approved",
           "rejected"
@@ -563,8 +580,8 @@ service cloud.firestore {
     }
     function validEvidenceNotes(notes) {
       return notes is map && notes.keys().hasOnly(['diagnosis', 'workCompleted', 'recommendation', 'parts']) &&
-        notes.diagnosis is string && notes.diagnosis.trim().size() > 0 && notes.diagnosis.size() <= 3000 &&
-        notes.workCompleted is string && notes.workCompleted.trim().size() > 0 && notes.workCompleted.size() <= 3000 &&
+        notes.diagnosis is string && notes.diagnosis.trim().size() >= 10 && notes.diagnosis.size() <= 3000 &&
+        notes.workCompleted is string && notes.workCompleted.trim().size() >= 10 && notes.workCompleted.size() <= 3000 &&
         notes.recommendation is string && notes.recommendation.size() <= 3000 && validEvidenceParts(notes.parts);
     }
     function validEvidenceParts(parts) {
@@ -1138,16 +1155,45 @@ service cloud.firestore {
         validDistrictArea(areas, "vavuniya");
     }
 
-    function mapCategory(profile) {
-      let category = profile.get("specialization", "").lower();
-      return category.matches('.*electrical.*') ? "Electrical" :
-        category.matches('.*plumbing.*') ? "Plumbing" :
-        category.matches('.*air conditioning.*') ? "Air Conditioning" :
-        category.matches('.*appliance repair.*') ? "Appliance Repair" :
-        category.matches('.*it / computer support.*') ? "IT / Computer Support" :
-        category.matches('.*general maintenance.*') ? "General Maintenance" :
-        category.matches('.*other.*') ? "Other" : "";
+    // BEGIN GENERATED SERVICE CATEGORIES (scripts/generate-service-category-rules.mjs)
+    function validServiceCategoryId(id) {
+      return id in ["electrical","plumbing","air-conditioning","appliance-repair","it-computer-support","general-maintenance","other"];
     }
+    function serviceCategoryLabel(id) {
+      return id == "electrical" ? "Electrical" :
+        id == "plumbing" ? "Plumbing" :
+        id == "air-conditioning" ? "Air Conditioning" :
+        id == "appliance-repair" ? "Appliance Repair" :
+        id == "it-computer-support" ? "IT / Computer Support" :
+        id == "general-maintenance" ? "General Maintenance" :
+        id == "other" ? "Other" : "";
+    }
+    function serviceCategoryIdForValue(value) {
+      let label = value is string ? value.lower() : "";
+      return label.matches("\\s*(electrical|electrician|electrical\\s+installation)\\s*") ? "electrical" :
+        label.matches("\\s*(plumbing|plumber|plumbing\\s+services)\\s*") ? "plumbing" :
+        label.matches("\\s*(air-conditioning|air\\s+conditioning|ac|a/c|ac\\s+technician|ac\\s+repair|ac\\s+services)\\s*") ? "air-conditioning" :
+        label.matches("\\s*(appliance-repair|appliance\\s+repair|washing\\s+machine\\s+repair|tv\\s+repair|refrigerator\\s+repair)\\s*") ? "appliance-repair" :
+        label.matches("\\s*(it-computer-support|it\\s+/\\s+computer\\s+support|computer\\s+repair|it\\s+support)\\s*") ? "it-computer-support" :
+        label.matches("\\s*(general-maintenance|general\\s+maintenance)\\s*") ? "general-maintenance" :
+        label.matches("\\s*(other)\\s*") ? "other" : "";
+    }
+    function technicianCategoryId(profile) {
+      let id = profile.get("serviceCategoryId", "");
+      let raw = profile.get("specialization", "");
+      let explicit = serviceCategoryIdForValue(profile.get("serviceCategory", ""));
+      let legacy = serviceCategoryIdForValue(raw);
+      let legacyPresent = raw is string ? !raw.matches("\\s*") : true;
+      return id != "" ? (validServiceCategoryId(id) ? id : "") :
+        (legacyPresent && legacy == "" || explicit != "" && legacy != "" && explicit != legacy) ? "" :
+        explicit != "" ? explicit : legacy;
+    }
+    function validSelectedTechnicianCategory(profile) {
+      let id = profile.get("serviceCategoryId", "");
+      return validServiceCategoryId(id) && profile.specialization == serviceCategoryLabel(id);
+    }
+    function mapCategory(profile) { return serviceCategoryLabel(technicianCategoryId(profile)); }
+    // END GENERATED SERVICE CATEGORIES
 
     function validMapProfile(technicianId) {
       let data = request.resource.data;
@@ -1156,11 +1202,13 @@ service cloud.firestore {
           isActiveDispatcher() || isSuperAdmin()) &&
         profile.role == "technician" &&
         data.keys().hasAll(["technicianId", "fullName", "specialization", "serviceCategory", "serviceDistrictIds", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
-        data.keys().hasOnly(["technicianId", "fullName", "specialization", "serviceCategory", "serviceDistrictIds", "serviceAreasByDistrict", "publicDetails", "availability", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
+        data.keys().hasOnly(["technicianId", "fullName", "specialization", "serviceCategory", "serviceCategoryId", "serviceDistrictIds", "serviceAreasByDistrict", "publicDetails", "availability", "approved", "averageRating", "reviewCount", "updatedAt"]) &&
         data.get("availability", null) == (profile.get("availability", null) in ["available", "busy", "offline"] ? profile.availability : null) &&
         data.technicianId == technicianId && data.fullName is string && data.fullName.size() > 0 && data.fullName == profile.fullName &&
         data.specialization is string && data.specialization == profile.get("specialization", "") &&
-        data.serviceCategory == mapCategory(profile) && validServiceDistrictIds(data.serviceDistrictIds) &&
+        data.get("serviceCategoryId", technicianCategoryId(profile)) == technicianCategoryId(profile) &&
+        (data.serviceCategory == mapCategory(profile) || !data.keys().hasAny(["serviceCategoryId"]) && data.serviceCategory == "") &&
+        validServiceDistrictIds(data.serviceDistrictIds) &&
         data.serviceDistrictIds == profile.get("serviceDistrictIds", []) &&
         data.get("serviceAreasByDistrict", {}) == profile.get("serviceAreasByDistrict", {}) &&
         (!data.keys().hasAny(["publicDetails"]) || data.publicDetails == {
