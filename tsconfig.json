@@ -8,7 +8,7 @@
       ]
     }
   },
-  "exclude": ["photo-worker"],
+  "exclude": ["photo-worker", "booking-worker", "admin-web", "servicepilot-otp", "functions"],
   "include": [
     "**/*.ts",
     "**/*.tsx",
