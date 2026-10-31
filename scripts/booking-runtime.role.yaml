@@ -1,0 +1,11 @@
+# REVIEW ONLY. No remote role or binding is created by the local launcher.
+title: ServicePilot Booking Runtime
+description: Booking-only standalone runtime; no Auth user mutation or document deletion.
+stage: GA
+includedPermissions:
+  - datastore.databases.get
+  - datastore.entities.get
+  - datastore.entities.list
+  - datastore.entities.create
+  - datastore.entities.update
+  - firebaseauth.users.get
