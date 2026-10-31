@@ -1,3 +1,4 @@
+import { technicianCategoryLabel } from "../../../../functions/src/domain/serviceCategories";
 import { CheckCircle2, Clock3, UserCog, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -64,7 +65,7 @@ export default function DispatcherDashboard() {
                   <div>
                     <strong>{displayText(technician.fullName)}</strong>
                     <span>
-                      {displayText(technician.specialization)} ·{" "}
+                      {technicianCategoryLabel(technician)} ·{" "}
                       {displayText(technician.serviceDivision || technician.serviceAreas)}
                     </span>
                   </div>
