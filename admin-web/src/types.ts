@@ -43,6 +43,7 @@ export type UserRecord = {
   reviewedAt?: unknown;
   rejectionReason?: string | null;
   specialization?: string;
+  serviceCategoryId?: string;
   experience?: string;
   qualifications?: string;
   certifications?: string;
