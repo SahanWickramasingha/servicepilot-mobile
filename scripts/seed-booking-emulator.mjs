@@ -24,9 +24,12 @@ try {
     }
   }
   const legacy = db.doc("service_requests/booking-legacy-assigned");
-  if (!(await legacy.get()).exists) await legacy.create({ customerId: "booking-customer-a", customerName: "Booking Customer A",
+  // Optional compatibility scenario: an unresolved legacy job deliberately blocks acceptance.
+  // Keep the normal fresh demo runnable, and never delete/rewrite an existing job.
+  if (process.argv.includes('--include-legacy') && !(await legacy.get()).exists) await legacy.create({ customerId: "booking-customer-a", customerName: "Booking Customer A",
     assignedTechnicianId: "booking-tech", assignedTechnicianName: "Booking Technician", status: "assigned", serviceCategory: "Electrical",
     title: "Legacy accepted booking", description: "Local compatibility fixture", address: "Private emulator fixture", serviceArea: "Kandy", division: "Kandy",
     preferredDate: "2020-01-01", preferredTime: "10:00 AM", priority: "normal", imageUrls: [], createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
   console.log("Booking demo accounts ready. Existing accounts, requests and manual availability were preserved.");
+  if ((await legacy.get()).exists) console.log("Existing legacy fixture retained: explicitly review its schedule in the technician app before accepting new requests.");
 } finally { await db.terminate(); await deleteApp(app); }
