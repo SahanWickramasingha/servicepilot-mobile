@@ -1,5 +1,6 @@
 import { colomboStart } from "@/functions/src/domain/scheduling";
 import { router, useLocalSearchParams } from "expo-router";
+import { resolveServiceCategory } from "@/functions/src/domain/serviceCategories";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { AvailabilityBadge } from "@/src/components/technicians/AvailabilityBadge";
@@ -104,18 +105,14 @@ export default function CreateRequestScreen() {
     technicianId?: string;
   }>();
 
-  const initialCategory = SERVICE_CATEGORIES.includes(
-    params.service as ServiceCategory
-  )
-    ? (params.service as ServiceCategory)
-    : "Air Conditioning";
+  const initialCategory = resolveServiceCategory(params.service)?.label ?? "";
 
   const [profile, setProfile] =
     useState<UserProfile | null>(null);
   const [technician, setTechnician] =
     useState<PublicTechnicianProfile | null>(null);
   const [serviceCategory, setServiceCategory] =
-    useState<ServiceCategory>(initialCategory);
+    useState<ServiceCategory | "">(initialCategory);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [address, setAddress] = useState("");
@@ -275,6 +272,7 @@ export default function CreateRequestScreen() {
       setErrorMessage("Please select a future date and time.");
       return;
     }
+    if (!resolveServiceCategory(serviceCategory) && !intent.current) { setErrorMessage("Please select a service category."); return; }
 
     try {
       submissionVersion.current = version;
@@ -292,7 +290,7 @@ export default function CreateRequestScreen() {
       intent.current ??= {
         attemptId: submissionAttempt.current.id,
         profile,
-        serviceCategory,
+        serviceCategory: resolveServiceCategory(serviceCategory)!.label,
         title,
         description,
         address,
