@@ -1,5 +1,8 @@
 export type JobPhotoStage = "before" | "after";
 export type ServiceNotes = { diagnosis: string; workCompleted: string; recommendation: string; parts: { name: string; quantity: number }[] };
+export type ServiceNotesDraft = Omit<ServiceNotes, "parts"> & { parts: { name: string; quantity: number | string }[] };
+export const SERVICE_NOTES_MIN = 10;
+export const SERVICE_NOTES_MAX = 3000;
 export type JobSignature = { customerName: string; path: string; confirmed: true; signedAt?: unknown };
 export type JobEvidence = {
   requestId: string; technicianId: string; customerId: string; revision: number;
@@ -18,13 +21,47 @@ export function validateJobPhotoPaths(paths: unknown, technicianId: string, requ
       !/^[A-Za-z0-9]{20}$/.test(parts[4]) || !/^[0-2]\.jpg$/.test(parts[5])) throw new Error("Invalid job photo ownership or stage.");
   }
 }
-export function validateServiceNotes(notes: ServiceNotes): void {
-  if (!notes || typeof notes.diagnosis !== "string" || !notes.diagnosis.trim() || notes.diagnosis.length > 3000 ||
-    typeof notes.workCompleted !== "string" || !notes.workCompleted.trim() || notes.workCompleted.length > 3000 ||
-    typeof notes.recommendation !== "string" || notes.recommendation.length > 3000 || !Array.isArray(notes.parts) || notes.parts.length > 10 ||
-    notes.parts.some((part) => !part || typeof part.name !== "string" || !part.name.trim() || part.name.length > 100 || !Number.isInteger(part.quantity) || part.quantity < 1 || part.quantity > 999)) {
-    throw new Error("Enter diagnosis and work completed (up to 3000 characters), with at most ten valid parts and quantities.");
+function blankDefaultPart(part: ServiceNotesDraft["parts"][number]): boolean {
+  return !!part && typeof part.name === "string" && !part.name.trim() && [1, "1", ""].includes(part.quantity);
+}
+function notesErrors(notes: ServiceNotesDraft, minimum: number): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const [field, label] of [["diagnosis", "Diagnosis"], ["workCompleted", "Work completed"]] as const) {
+    const text = notes?.[field];
+    if (typeof text !== "string" || text.trim().length < minimum) errors[field] = `${label} must contain at least ${minimum} characters after trimming.`;
+    else if (text.length > SERVICE_NOTES_MAX) errors[field] = `${label} must be no more than ${SERVICE_NOTES_MAX} characters.`;
   }
+  if (notes?.recommendation !== undefined && (typeof notes.recommendation !== "string" || notes.recommendation.length > SERVICE_NOTES_MAX)) errors.recommendation = `Recommendations must be no more than ${SERVICE_NOTES_MAX} characters.`;
+  if (notes?.parts !== undefined && !Array.isArray(notes.parts)) errors.parts = "Parts must be a list.";
+  else if (Array.isArray(notes?.parts)) {
+    if (notes.parts.filter((part) => !blankDefaultPart(part)).length > 10) errors.parts = "Enter at most 10 parts.";
+    notes.parts.forEach((part, index) => {
+      if (blankDefaultPart(part)) return;
+      if (!part || typeof part.name !== "string" || !part.name.trim()) errors[`parts.${index}.name`] = `Part ${index + 1} name is required.`;
+      else if (part.name.length > 100) errors[`parts.${index}.name`] = `Part ${index + 1} name must be no more than 100 characters.`;
+      const quantity = part?.quantity;
+      if ((typeof quantity !== "number" && (typeof quantity !== "string" || !/^[0-9]+$/.test(quantity))) ||
+        !Number.isInteger(Number(quantity)) || Number(quantity) < 1 || Number(quantity) > 999) {
+        errors[`parts.${index}.quantity`] = `Part ${index + 1} quantity must be a whole number from 1 to 999.`;
+      }
+    });
+  }
+  return errors;
+}
+export function serviceNotesErrors(notes: ServiceNotesDraft): Record<string, string> {
+  return notesErrors(notes, SERVICE_NOTES_MIN);
+}
+function throwNotesError(errors: Record<string, string>): void {
+  const first = Object.entries(errors)[0];
+  if (first) throw Object.assign(new Error(first[1]), { field: first[0] });
+}
+export function validateServiceNotes(notes: ServiceNotesDraft): void {
+  throwNotesError(serviceNotesErrors(notes));
+}
+export function normalizeServiceNotes(notes: ServiceNotesDraft): ServiceNotes {
+  validateServiceNotes(notes);
+  return { diagnosis: notes.diagnosis, workCompleted: notes.workCompleted, recommendation: notes.recommendation ?? "",
+    parts: (notes.parts ?? []).filter((part) => !blankDefaultPart(part)).map((part) => ({ name: part.name.trim(), quantity: Number(part.quantity) })) };
 }
 export function validateJobSignature(signature: JobSignature): void {
   if (!signature || typeof signature.customerName !== "string" || !signature.customerName.trim() || signature.customerName.length > 100 ||
@@ -36,5 +73,7 @@ export function requireCompletionEvidence(evidence: JobEvidence | undefined, req
   if (!evidence || evidence.requestId !== requestId || evidence.technicianId !== technicianId || evidence.customerId !== customerId) throw new Error("Save all four service evidence steps before completing this job.");
   validateJobPhotoPaths(evidence.beforePhotos, technicianId, requestId, "before");
   validateJobPhotoPaths(evidence.afterPhotos, technicianId, requestId, "after");
-  validateServiceNotes(evidence.notes!); validateJobSignature(evidence.signature!);
+  // Existing persisted notes were accepted with a nonempty minimum. Keep them
+  // usable for completion; all new/edited notes use the stricter write boundary.
+  throwNotesError(notesErrors(evidence.notes!, 1)); validateJobSignature(evidence.signature!);
 }
