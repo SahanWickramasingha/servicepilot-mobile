@@ -30,7 +30,7 @@ const service = loadTs("src/services/location.service.ts", {
       if (failure) throw failure;
       return { docs: reply.map(([id, data]) => ({ id, ref: firestore.doc(db, "technician_map_profiles", id), data: () => data })), size: reply.length };
     },
-    getDocFromServer: async (ref) => { verifiedReads++; return { id: ref.id, data: () => reply.find(([id]) => id === ref.id)[1] }; },
+    getDocFromServer: async (ref) => { verifiedReads++; return { id: ref.id, data: () => ({ approved: true, ...reply.find(([id]) => id === ref.id)[1] }) }; },
   },
   "@/src/firebase/config": { app, auth: { currentUser: null }, db },
   "@/src/utils/mapServiceError": errors, "@/functions/src/domain/map": domain,
@@ -45,7 +45,7 @@ test("bounded district/category Firestore queries verify approval without Functi
   const page = await service.getMapTechnicianPage("kandy", "Electrical", "earlier-tech");
   assert.equal(page.items[0].uid, "fixture-tech"); assert.equal(verifiedReads, 1);
   assert.equal(querySeen.path.canonicalString(), "technician_map_profiles"); assert.equal(querySeen.limit, 8);
-  assert.deepEqual(querySeen.filters.map((filter) => [filter.field.canonicalString(), filter.op]), [["approved", "=="], ["serviceDistrictIds", "array-contains"], ["serviceCategory", "=="]]);
+  assert.deepEqual(querySeen.filters.map((filter) => [filter.field.canonicalString(), filter.op]), [["approved", "=="], ["serviceDistrictIds", "array-contains"], ["serviceCategory", "in"]]);
   assert.equal(querySeen.startAt.position[0].referenceValue.endsWith("/technician_map_profiles/earlier-tech"), true);
 });
 test("permission/authentication, offline and service errors remain distinct", async () => {
