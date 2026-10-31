@@ -1,4 +1,6 @@
 import { router, useLocalSearchParams } from "expo-router";
+import { ServiceCategoryPicker } from "@/src/components/technicians/ServiceCategoryPicker";
+import { SERVICE_CATEGORY_DEFINITIONS } from "@/functions/src/domain/serviceCategories";
 import {
   Eye,
   EyeOff,
@@ -243,10 +245,10 @@ export default function RegisterScreen() {
     }
 
     if (registrationRole === "technician") {
-      if (!cleanSpecialization) {
+      if (!SERVICE_CATEGORY_DEFINITIONS.some(category => category.id === cleanSpecialization)) {
         Alert.alert(
           "Missing Information",
-          "Please enter your specialization."
+          "Please select your service category."
         );
         return;
       }
@@ -349,8 +351,7 @@ export default function RegisterScreen() {
         role: registrationRole,
         ...(registrationRole === "technician"
           ? {
-              specialization:
-                cleanSpecialization,
+              serviceCategoryId: cleanSpecialization,
               experience: cleanExperience,
               qualifications:
                 cleanQualifications,
@@ -625,24 +626,10 @@ export default function RegisterScreen() {
 
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>
-                Specialization
+                Service category
               </Text>
 
-              <View style={styles.inputContainer}>
-                <BriefcaseBusiness
-                  size={20}
-                  color="#64748B"
-                />
-
-                <TextInput
-                  value={specialization}
-                  onChangeText={setSpecialization}
-                  placeholder="AC, electrical, plumbing..."
-                  placeholderTextColor="#64748B"
-                  style={styles.input}
-                  editable={!loading}
-                />
-              </View>
+              <ServiceCategoryPicker value={specialization} onChange={setSpecialization} disabled={loading} />
             </View>
 
             <View style={styles.fieldGroup}>
