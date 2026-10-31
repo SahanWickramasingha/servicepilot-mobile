@@ -4,11 +4,13 @@ import { auth, db } from "@/src/firebase/config";
 import { createSessionCache } from "./session-subscriptions";
 import { readTechnicianAvailability, TechnicianAvailability } from "@/functions/src/domain/availability";
 import { approximateCoordinate, DISTRICTS, locationIsFresh, resolveServiceDistrictIds, validCoordinate } from "@/functions/src/domain/map";
-import { buildMapProfile, mapServiceCategory, MAP_MAX_ITEMS, MAP_PAGE_SIZE } from "@/functions/src/domain/mapProjection";
+import { buildMapProfile, MAP_MAX_ITEMS, MAP_PAGE_SIZE } from "@/functions/src/domain/mapProjection";
+import { categoryProjectionLabels, resolveServiceCategory, technicianCategory, technicianCategoryLabel, type ServiceCategoryId } from "@/functions/src/domain/serviceCategories";
 import { StoredServiceAreasByDistrict, encodeServiceAreas, readServiceAreas, retainServiceAreas } from "@/functions/src/domain/serviceAreas";
 import { classifyMapServiceError, MapServiceError } from "@/src/utils/mapServiceError";
 export type MapTechnician = {
   uid: string; fullName: string; specialization: string; serviceDistrictIds: string[];
+  serviceCategoryId?: ServiceCategoryId;
   averageRating: number; reviewCount: number;
   serviceAreasByDistrict?: StoredServiceAreasByDistrict;
   availability?: TechnicianAvailability;
@@ -21,7 +23,8 @@ export type JobLocation = { status: "available"; technicianId: string; latitude:
 
 function mapProfile(uid: string, data: Record<string, any> | undefined): MapTechnician {
   if (!data) throw new MapServiceError("service", "failed-precondition");
-  return { uid, fullName: data.fullName, specialization: data.specialization,
+  return { uid, fullName: data.fullName, specialization: technicianCategoryLabel(data),
+    ...(technicianCategory(data) ? { serviceCategoryId: technicianCategory(data)!.id } : {}),
     serviceDistrictIds: data.serviceDistrictIds, averageRating: data.averageRating, reviewCount: data.reviewCount,
     ...(readTechnicianAvailability(data.availability) ? { availability: readTechnicianAvailability(data.availability) } : {}),
     ...(data.serviceAreasByDistrict !== undefined ? { serviceAreasByDistrict: data.serviceAreasByDistrict } : {}) };
@@ -33,7 +36,7 @@ export function subscribeToMapTechnicians(districtId: string, category: string |
   if (!DISTRICTS.some((district) => district.id === districtId)) throw new Error("Select a valid service district.");
   const count = Math.min(MAP_MAX_ITEMS, Math.max(1, pageCount) * MAP_PAGE_SIZE);
   const directory = query(collection(db, "technician_map_profiles"), where("approved", "==", true),
-    where("serviceDistrictIds", "array-contains", districtId), ...(category ? [where("serviceCategory", "==", category)] : []),
+    where("serviceDistrictIds", "array-contains", districtId), ...(category ? [where("serviceCategory", "in", categoryProjectionLabels(category))] : []),
     orderBy(documentId()), limit(count));
   let alive = true, generation = 0;
   const fail = async (cause: unknown, version: number) => {
@@ -46,9 +49,9 @@ export function subscribeToMapTechnicians(districtId: string, category: string |
     // Reads are limited to this page (8/16/24), never private users or GPS documents.
     void Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref))).then((verified) => {
       if (!alive || generation !== version) return;
-      const items = verified.map((item) => mapProfile(item.id, item.data()))
+      const items = verified.filter(item => item.data()?.approved === true).map((item) => mapProfile(item.id, item.data()))
         .filter((item) => item.serviceDistrictIds.includes(districtId) &&
-          (!category || mapServiceCategory(item.specialization) === category));
+          (!category || item.serviceCategoryId === resolveServiceCategory(category)?.id));
       items.sort((a, b) => b.averageRating - a.averageRating || a.fullName.localeCompare(b.fullName));
       onNext({ items, cursor: snapshot.docs.at(-1)?.id, hasMore: snapshot.size === count && count < MAP_MAX_ITEMS });
     }).catch((cause) => { void fail(cause, version); });
@@ -60,12 +63,13 @@ export async function getMapTechnicianPage(districtId: string, category?: string
   if (!DISTRICTS.some((district) => district.id === districtId)) throw new Error("Select a valid service district.");
   try {
     const directory = query(collection(db, "technician_map_profiles"), where("approved", "==", true),
-      where("serviceDistrictIds", "array-contains", districtId), ...(category ? [where("serviceCategory", "==", category)] : []),
+      where("serviceDistrictIds", "array-contains", districtId), ...(category ? [where("serviceCategory", "in", categoryProjectionLabels(category))] : []),
       orderBy(documentId()), ...(cursor ? [startAfter(cursor)] : []), limit(MAP_PAGE_SIZE));
     const snapshot = await getDocsFromServer(directory);
     // Each get independently checks CURRENT authoritative approval. Never swallow denied gets.
     const verified = await Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref)));
-    return { items: verified.map((item) => mapProfile(item.id, item.data())),
+    return { items: verified.filter(item => item.data()?.approved === true).map((item) => mapProfile(item.id, item.data()))
+      .filter(item => item.serviceDistrictIds.includes(districtId) && (!category || item.serviceCategoryId === resolveServiceCategory(category)?.id)),
       cursor: snapshot.docs.at(-1)?.id, hasMore: snapshot.size === MAP_PAGE_SIZE };
   } catch (cause) { throw await classifyMapServiceError(cause); }
 }
