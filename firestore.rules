@@ -18,6 +18,10 @@ service cloud.firestore {
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(["termsVersion", "privacyPolicyVersion", "acceptedAt", "updatedAt"]) &&
         request.resource.data.acceptedAt == request.time && request.resource.data.updatedAt == request.time;
     }
+    function notBlocked(customerId, technicianId) {
+      return !exists(/databases/$(database)/documents/user_blocks/$(customerId)/blocked/$(technicianId)) &&
+        !exists(/databases/$(database)/documents/user_blocks/$(technicianId)/blocked/$(customerId));
+    }
 
     // Keep a private own-profile read available for live account-status denial.
     // All other protected operations also require this authoritative session gate.
@@ -1382,7 +1386,7 @@ service cloud.firestore {
     }
     match /service_requests/{requestId} {
       allow create: if hasActiveSession() && acceptedPolicies() &&
-        validCustomerRequestCreate(requestId);
+        notBlocked(request.auth.uid, request.resource.data.technicianId) && validCustomerRequestCreate(requestId);
       allow read: if hasActiveSession() &&
         (
           isSuperAdmin() ||
@@ -1424,6 +1428,41 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /user_blocks/{uid}/blocked/{target} {
+      allow get, list: if hasActiveSession() && isOwner(uid) && (request.method == 'get' || request.query.limit <= 200);
+      allow create: if hasActiveSession() && isOwner(uid) && uid != target &&
+        request.resource.data.keys().hasOnly(["createdAt"]) && request.resource.data.createdAt == request.time;
+      allow delete: if hasActiveSession() && isOwner(uid);
+      allow update: if false;
+    }
+    match /content_reports/{id} {
+      allow get: if hasActiveSession() && (isSuperAdmin() || resource.data.reporterId == request.auth.uid);
+      allow list: if hasActiveSession() && isSuperAdmin() && request.query.limit <= 50;
+      allow create: if hasActiveSession() && request.resource.data.keys().hasOnly([
+        "reporterId", "targetUserId", "contentKind", "contentId", "reason", "status", "createdAt"]) &&
+        request.resource.data.reporterId == request.auth.uid && request.resource.data.targetUserId is string &&
+        (request.resource.data.targetUserId.size() > 0 || request.resource.data.contentKind == "review") && request.resource.data.targetUserId.size() <= 128 &&
+        request.resource.data.targetUserId != request.auth.uid &&
+        request.resource.data.contentKind in ["profile", "review", "job"] &&
+        request.resource.data.contentId is string && request.resource.data.contentId.size() > 0 && request.resource.data.contentId.size() <= 128 &&
+        request.resource.data.reason is string && request.resource.data.reason.size() >= 10 && request.resource.data.reason.size() <= 2000 &&
+        request.resource.data.status == "open" && request.resource.data.createdAt == request.time;
+      allow update: if hasActiveSession() && isSuperAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        "status", "resolution", "reviewedBy", "reviewedAt"]) && request.resource.data.status in ["reviewing", "resolved"] &&
+        request.resource.data.resolution is string && request.resource.data.resolution.size() >= 10 && request.resource.data.resolution.size() <= 2000 &&
+        request.resource.data.reviewedBy == request.auth.uid && request.resource.data.reviewedAt == request.time;
+      allow delete: if false;
+    }
+    match /content_restrictions/{id} {
+      allow get: if hasActiveSession();
+      allow list, delete: if false;
+      allow create, update: if hasActiveSession() && isSuperAdmin() &&
+        request.resource.data.keys().hasOnly(["kind", "contentId", "hidden", "updatedAt"]) &&
+        request.resource.data.kind in ["review", "profile"] && request.resource.data.contentId is string &&
+        request.resource.data.contentId.size() > 0 && request.resource.data.contentId.size() <= 128 &&
+        id == request.resource.data.kind + '_' + request.resource.data.contentId &&
+        request.resource.data.hidden is bool && request.resource.data.updatedAt == request.time;
+    }
     match /account_lifecycle_locks/{targetUid} {
       allow read, write: if false;
     }
