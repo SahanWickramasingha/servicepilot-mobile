@@ -23,6 +23,7 @@ import { type TechnicianReviewSummary } from "@/src/services/technician.service"
 import { formatTechnicianReviewDate, getTechnicianRatingDisplay } from "@/src/utils/technicianRating";
 import { getReviewDisplayName, getReviewerInitials } from "@/src/utils/reviewAuthor";
 import { ReviewPhotos } from "@/src/components/reviews/ReviewPhotos";
+import { SafetyActions, SafetyContent } from "@/src/components/legal/Safety";
 import {
   getCompletedTechnicianRequests,
   getUpcomingTechnicianRequests,
@@ -177,7 +178,7 @@ export default function TechnicianPerformanceScreen() {
 
 function ReviewCard({ review }: { review: TechnicianReviewSummary }) {
   const name = getReviewDisplayName(review);
-  return <View style={styles.reviewCard}>
+  return <SafetyContent target={review.customerId} kind="review" contentId={review.id}><View style={styles.reviewCard}>
     <View style={styles.reviewHeader}>
       <View style={styles.reviewerAvatar}><Text style={styles.buttonText}>{getReviewerInitials(name)}</Text></View>
       <View style={{ flex: 1 }}><Text style={styles.reviewHint}>Reviewed by</Text>
@@ -190,7 +191,8 @@ function ReviewCard({ review }: { review: TechnicianReviewSummary }) {
     </View>
     {!!review.comment.trim() && <Text style={styles.reviewComment}>{review.comment}</Text>}
     <ReviewPhotos paths={review.photoPaths} customerId={review.customerId} />
-  </View>;
+    <SafetyActions target={review.customerId} kind="review" contentId={review.id} />
+  </View></SafetyContent>;
 }
 
 function StateScreen({
