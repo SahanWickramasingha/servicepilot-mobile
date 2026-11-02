@@ -1,4 +1,5 @@
 import { check, reference, type Data, type Identity, type PhotoRecord, type Purpose, type Store } from "./types";
+import { hasCurrentPolicyAcceptance } from "../../functions/src/domain/legalPolicy";
 
 export function active(profile: Data | null, actor: Identity) {
   check(profile && (profile.accountStatus === undefined || profile.accountStatus === "active") && profile.lifecyclePending !== true &&
@@ -11,6 +12,7 @@ export function technician(job: Data): string {
   return current || legacy;
 }
 export function writable(profile: Data, actor: Identity, request: Data | null, purpose: Purpose) {
+  check(hasCurrentPolicyAcceptance(profile), 403, "policy-acceptance-required");
   check(actor.verified);
   if (purpose === "request") { check(profile.role === "customer" && !request); return; }
   check(profile.role === "technician" && profile.technicianApprovalStatus === "approved" && request && technician(request) === actor.uid &&

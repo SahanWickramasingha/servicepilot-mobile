@@ -48,6 +48,9 @@ function fixture() {
   store.rows.set("users/tech", { role: "technician", accountStatus: "active", technicianApprovalStatus: "approved" });
   store.rows.set("users/foreign-tech", { role: "technician", accountStatus: "active", technicianApprovalStatus: "approved" });
   store.rows.set("users/admin", { role: "super_admin", accountStatus: "active" });
+  for (const [path, profile] of store.rows) if (path.startsWith("users/")) Object.assign(profile, {
+    termsVersion: "2026-11-02.1", privacyPolicyVersion: "2026-11-02.1", acceptedAt: new Date(),
+  });
   const identity = (): Identity => ({ uid: currentUser, authTime: 1000, verified: true, token: "test-only" });
   const env = { PHOTOS: bucket, PHOTO_RATE_LIMITER: { limit: async () => ({ success: rate }) }, FIREBASE_PROJECT_ID: "demo-servicepilot", ALLOWED_ORIGINS: "https://app.example.test" } as unknown as Env;
   const handle = createPhotoHandler({ store: () => store, authenticate: async () => { if (!authAvailable) throw new PhotoError(401, "invalid-session"); return identity(); } });
@@ -212,6 +215,18 @@ test("legacy shared-prefix records preserve references across retry, finalize, v
   assert.equal((await g.call("/" + pending.body.id, "DELETE")).status, 200);
   assert.deepEqual(g.bucket.deletes, [`photos/v1/${pending.body.id}`]);
 });
+test("uploads require actual policy acceptance, including existing accounts and rechecks before confirmation", async () => {
+  const f = fixture();
+  delete f.store.rows.get("users/owner")!.acceptedAt;
+  assert.equal((await f.reserve()).response.status, 403);
+  assert.equal([...f.store.rows.keys()].some(path => path.startsWith("photo_objects/")), false);
+  const g = fixture(), reservation = await g.reserve();
+  const originalPut = g.bucket.put.bind(g.bucket);
+  g.bucket.put = async (...args: any[]) => { const result = await originalPut(args[0], args[1], args[2]); g.store.rows.get("users/owner")!.termsVersion = "outdated"; return result; };
+  assert.equal((await g.upload(reservation.body.id)).status, 403);
+  assert.notEqual(g.store.rows.get(`photo_objects/${reservation.body.id}`)!.state, "confirmed");
+});
+
 test("key layout is server-owned and no reservation is persisted after authorization changes", async () => {
   const f = fixture();
   f.store.beforeAtomic = () => { f.store.rows.get("users/owner")!.accountStatus = "disabled"; };
