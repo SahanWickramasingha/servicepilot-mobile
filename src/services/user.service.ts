@@ -280,6 +280,7 @@ export async function updateUserProfileSafe(
   await runTransaction(db, async (transaction) => {
     const profile = (await transaction.get(userRef)).data();
     if (!profile) throw new Error("Profile unavailable.");
+    if (auth.currentUser?.uid !== uid) throw new Error("Your account changed. Please try again.");
     if (data.serviceCategoryId !== undefined && profile.role !== "technician") throw new Error("Service categories are for Technician specialties only.");
     const hasCoverage = data.serviceDistrictIds !== undefined || data.serviceAreasByDistrict !== undefined;
     if (hasCoverage && (profile.role !== "technician" || !data.serviceDistrictIds || !data.serviceAreasByDistrict)) {
@@ -289,6 +290,8 @@ export async function updateUserProfileSafe(
       ...(data.serviceCategoryId !== undefined ? selectedTechnicianCategory(data.serviceCategoryId) : {}),
       ...(hasCoverage ? { serviceDistrictIds: data.serviceDistrictIds!, serviceAreasByDistrict: encodeServiceAreas(data.serviceDistrictIds!, data.serviceAreasByDistrict!) } : {}) };
     transaction.update(userRef, changes);
+    // Approval, ratings and job totals come from the transaction's authoritative
+    // user snapshot, never form values or a potentially stale public projection.
     if (profile?.role === "technician") transaction.set(doc(db, "technician_map_profiles", uid), {
       ...buildMapProfile(uid, { ...profile, ...changes }), updatedAt: serverTimestamp(),
     });
