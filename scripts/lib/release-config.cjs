@@ -13,6 +13,17 @@ function permanentOrigin(value, name) {
   return url.origin;
 }
 
+// Credentials setup initially evaluates config without build-profile env aliases.
+// Reuse the real static identities; explicit (even blank) overrides still validate.
+function releaseEnvironment(env, config = {}) {
+  return {
+    ...(config.owner ? { EXPO_OWNER: config.owner } : {}),
+    ...(config.extra?.eas?.projectId ? { EXPO_EAS_PROJECT_ID: config.extra.eas.projectId } : {}),
+    ...(config.android?.package ? { EXPO_ANDROID_PACKAGE: config.android.package } : {}),
+    ...env,
+  };
+}
+
 function releaseProblems(env) {
   const issues = [];
   for (const name of ['EXPO_PUBLIC_BOOKING_API_URL', 'EXPO_PUBLIC_PHOTO_API_URL']) {
@@ -44,4 +55,4 @@ function assertReleaseEnvironment(env) {
   if (issues.length) throw Error('Release configuration rejected:\n- ' + issues.join('\n- '));
 }
 
-module.exports = { permanentOrigin, releaseProblems, assertReleaseEnvironment };
+module.exports = { permanentOrigin, releaseEnvironment, releaseProblems, assertReleaseEnvironment };

@@ -30,7 +30,7 @@ for (const pattern of ['.env', '.env.*', 'secrets/', '**/secrets/', 'credentials
   if (!ignored.includes(pattern)) issues.push(`Missing required EAS exclusion: ${pattern}`);
 }
 if (ignored.includes('functions/') || ignored.includes('functions/src/') || ignored.includes('functions/src/domain/')) issues.push('EAS must retain shared functions/src/domain source.');
-if (!staticOnly) issues.push(...release.releaseProblems(environment));
+if (!staticOnly) issues.push(...release.releaseProblems(release.releaseEnvironment(environment, app)));
 for (const issue of issues) console.error(`BLOCKED: ${issue}`);
 if (!issues.length) console.log(staticOnly ? 'Static release profiles/assets/upload exclusions: passed.' : 'Offline release configuration: passed. Signing, hosting, Play compliance and device tests still require verification.');
 else console.error(`${issues.length} release prerequisite(s) missing/invalid. Values and secrets hidden.`);

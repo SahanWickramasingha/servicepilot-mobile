@@ -1,9 +1,10 @@
 import { ConfigContext, ExpoConfig } from "expo/config";
-import { assertReleaseEnvironment } from "./scripts/lib/release-config.cjs";
+import { assertReleaseEnvironment, releaseEnvironment } from "./scripts/lib/release-config.cjs";
 
 export default ({ config }: ConfigContext): ExpoConfig => {
+  const environment = releaseEnvironment(process.env, config);
   if (process.env.SERVICEPILOT_RELEASE === "1" || process.env.NODE_ENV === "production" || process.env.EAS_BUILD === "true" ||
-    ["preview", "production"].includes(process.env.EAS_BUILD_PROFILE ?? "")) assertReleaseEnvironment(process.env);
+    ["preview", "production"].includes(process.env.EAS_BUILD_PROFILE ?? "")) assertReleaseEnvironment(environment);
   return {
   ...config,
   name: config.name ?? "ServicePilot",

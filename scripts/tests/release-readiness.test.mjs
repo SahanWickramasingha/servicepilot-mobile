@@ -30,6 +30,20 @@ test('release rejects local/demo/temporary origins, missing identity/maps and se
   assert.equal(issues.length, 2); assert.ok(!issues.join().includes('DO-NOT-PRINT'));
 });
 
+test('static identities support credentials shells without relaxing release requirements', () => {
+  const config = { owner: valid.EXPO_OWNER, android: { package: valid.EXPO_ANDROID_PACKAGE },
+    extra: { eas: { projectId: valid.EXPO_EAS_PROJECT_ID } } };
+  const env = { ...valid };
+  for (const name of ['EXPO_OWNER', 'EXPO_ANDROID_PACKAGE', 'EXPO_EAS_PROJECT_ID']) delete env[name];
+  assert.deepEqual(release.releaseProblems(release.releaseEnvironment(env, config)), []);
+  for (const name of ['EXPO_OWNER', 'EXPO_ANDROID_PACKAGE', 'EXPO_EAS_PROJECT_ID',
+    'GOOGLE_MAPS_ANDROID_API_KEY', 'EXPO_PUBLIC_BOOKING_API_URL', 'EXPO_PUBLIC_PHOTO_API_URL']) {
+    assert.ok(release.releaseProblems(release.releaseEnvironment({ ...env, [name]: '' }, config))
+      .some(issue => issue.includes(name)));
+  }
+  assert.ok(release.releaseProblems(release.releaseEnvironment({ ...env, EXPO_PUBLIC_USE_FIREBASE_EMULATORS: '1' }, config)).length);
+});
+
 test('readiness is cached and single-flight, fails closed and recovers after the cache expires', async () => {
   let time = 0, calls = 0, finish;
   const check = createBookingReadiness(() => { calls++; return new Promise(resolve => { finish = resolve; }); }, { now: () => time });
