@@ -19,6 +19,7 @@ async function session(suffix, role = 'technician') {
   const uid = prefix + suffix, email = uid + '@example.test', password = randomUUID();
   await adminAuth(app).createUser({ uid, email, password, emailVerified: true });
   const source = { uid, fullName: uid, email, phone: '0812345678', address: 'Private fixture', role, accountStatus: 'active', emailVerified: true,
+    termsVersion: '2026-11-02.1', privacyPolicyVersion: '2026-11-02.1', acceptedAt: Timestamp.now(),
     ...(role === 'technician' ? { specialization: 'Electrical', technicianApprovalStatus: 'approved', availability: 'available', serviceDistrictIds: ['kandy'] } : {}) };
   await db.doc('users/' + uid).set(source);
   if (role === 'technician') await db.doc('technician_map_profiles/' + uid).set({ ...buildMapProfile(uid, source), updatedAt: Timestamp.now() });

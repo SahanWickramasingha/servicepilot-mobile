@@ -1,4 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
+import { TermsAcceptance } from "@/src/components/legal/TermsAcceptance";
 import { ServiceCategoryPicker } from "@/src/components/technicians/ServiceCategoryPicker";
 import { SERVICE_CATEGORY_DEFINITIONS } from "@/functions/src/domain/serviceCategories";
 import {
@@ -193,6 +194,7 @@ export default function RegisterScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [acceptTerms, setAcceptTerms] = useState(false);
+  const [termsError, setTermsError] = useState("");
   const [loading, setLoading] = useState(false);
   const isSubmittingRef = useRef(false);
 
@@ -210,6 +212,7 @@ export default function RegisterScreen() {
     if (isSubmittingRef.current) {
       return;
     }
+    if (!acceptTerms) { setTermsError("Please agree to the Terms and acknowledge the Privacy Policy."); return; }
 
     const cleanFullName = fullName.trim();
     const cleanEmail = email.trim().toLowerCase();
@@ -294,14 +297,6 @@ export default function RegisterScreen() {
       return;
     }
 
-    if (!acceptTerms) {
-      Alert.alert(
-        "Terms Required",
-        "Please accept the Terms & Conditions and Privacy Policy."
-      );
-      return;
-    }
-
     if (
       params.role &&
       !isPublicRegistrationRole(params.role)
@@ -349,6 +344,7 @@ export default function RegisterScreen() {
         phone: cleanPhone,
         address: cleanAddress,
         role: registrationRole,
+        policyAccepted: acceptTerms,
         ...(registrationRole === "technician"
           ? {
               serviceCategoryId: cleanSpecialization,
@@ -794,37 +790,7 @@ export default function RegisterScreen() {
           </View>
         </View>
 
-        {/* Terms */}
-        <TouchableOpacity
-          style={styles.termsRow}
-          onPress={() =>
-            setAcceptTerms((current) => !current)
-          }
-          activeOpacity={0.8}
-          disabled={loading}
-        >
-          <View
-            style={[
-              styles.checkbox,
-              acceptTerms && styles.checkboxActive,
-            ]}
-          >
-            {acceptTerms && (
-              <Text style={styles.checkMark}>✓</Text>
-            )}
-          </View>
-
-          <Text style={styles.termsText}>
-            I agree to the{" "}
-            <Text style={styles.linkText}>
-              Terms & Conditions
-            </Text>{" "}
-            and{" "}
-            <Text style={styles.linkText}>
-              Privacy Policy
-            </Text>
-          </Text>
-        </TouchableOpacity>
+        <TermsAcceptance checked={acceptTerms} onChange={(value) => { setAcceptTerms(value); setTermsError(""); }} error={termsError} disabled={loading} />
 
         {/* Register Button */}
         <TouchableOpacity
@@ -834,7 +800,7 @@ export default function RegisterScreen() {
               styles.registerButtonDisabled,
           ]}
           activeOpacity={0.85}
-          disabled={!acceptTerms || loading}
+          disabled={loading}
           onPress={handleRegister}
         >
           <Text style={styles.registerButtonText}>

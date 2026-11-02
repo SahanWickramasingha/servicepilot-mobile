@@ -153,7 +153,7 @@ test('registration stores a stable specialty separately from role and rejects am
     'firebase/firestore': { doc: (_, collection, id) => ({ path: collection + '/' + id }), serverTimestamp: () => 'server-time',
       getDoc: async () => ({ exists: () => false }), setDoc: async (ref, data) => writes.push({ ref, data }) },
   });
-  const input = { uid: 'tech', fullName: 'Tech', email: 'tech@example.test', phone: '123', address: 'Private', role: 'technician' };
+  const input = { uid: 'tech', fullName: 'Tech', email: 'tech@example.test', phone: '123', address: 'Private', role: 'technician', policyAccepted: true };
   await service.createUserProfile({ ...input, serviceCategoryId: 'electrical' });
   assert.equal(writes[0].data.role, 'technician'); assert.equal(writes[0].data.serviceCategoryId, 'electrical');
   assert.equal(writes[0].data.specialization, 'Electrical'); assert.equal(writes[0].data.technicianApprovalStatus, 'pending');

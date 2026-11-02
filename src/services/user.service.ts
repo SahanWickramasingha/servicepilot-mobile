@@ -1,3 +1,4 @@
+import { requirePolicyAcceptance } from "./policy.service";
 import {
   collection,
   deleteField,
@@ -14,6 +15,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { buildMapProfile } from "@/functions/src/domain/mapProjection";
+import { TERMS_VERSION, PRIVACY_POLICY_VERSION, type PolicyAcceptance } from "@/functions/src/domain/legalPolicy";
 import { selectedTechnicianCategory, technicianCategory } from "@/functions/src/domain/serviceCategories";
 import { readTechnicianAvailability, TechnicianAvailability } from "@/functions/src/domain/availability";
 import { ServiceAreasByDistrict, StoredServiceAreasByDistrict, encodeServiceAreas } from "@/functions/src/domain/serviceAreas";
@@ -45,6 +47,7 @@ export type TechnicianApprovalStatus =
   | "rejected";
 
 export interface UserProfileData {
+  policyAccepted?: boolean;
   uid: string;
   fullName: string;
   email: string;
@@ -60,7 +63,7 @@ export interface UserProfileData {
   serviceDivision?: string;
 }
 
-export interface UserProfile {
+export interface UserProfile extends PolicyAcceptance {
   uid: string;
   fullName: string;
   email: string;
@@ -107,6 +110,7 @@ export function isPublicRegistrationRole(
 export async function createUserProfile(
   data: UserProfileData
 ): Promise<void> {
+  if (data.policyAccepted !== true) throw new Error("Agree to the Terms and acknowledge the Privacy Policy before registering.");
   const userRef = doc(db, "users", data.uid);
   const isTechnician = data.role === "technician";
   const existingProfile = await getDoc(userRef);
@@ -135,6 +139,9 @@ export async function createUserProfile(
     role: data.role,
     accountStatus: "active",
     emailVerified: false,
+    termsVersion: TERMS_VERSION,
+    privacyPolicyVersion: PRIVACY_POLICY_VERSION,
+    acceptedAt: serverTimestamp(),
     ...(isTechnician
       ? {
           technicianApprovalStatus: "pending",
@@ -274,6 +281,7 @@ export async function updateUserProfileSafe(
   }
 ): Promise<void> {
   if (auth.currentUser?.uid !== uid) throw new Error("Update your own account only.");
+  await requirePolicyAcceptance();
   if (!data.fullName.trim() || !data.phone.trim() || !data.address.trim()) throw new Error("Full name, phone, and address are required.");
   const userRef = doc(db, "users", uid);
 

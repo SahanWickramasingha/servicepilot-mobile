@@ -29,6 +29,7 @@ async function session(patch = {}, { verified = true, projectionExists = true } 
   await adminAuth(trusted).createUser({ uid, email, password, emailVerified: verified });
   const source = { uid, email, fullName: 'Technician', phone: '0812345678', address: 'Private address',
     role: 'technician', emailVerified: verified, accountStatus: 'active', technicianApprovalStatus: 'approved',
+    termsVersion: '2026-11-02.1', privacyPolicyVersion: '2026-11-02.1', acceptedAt: Timestamp.now(),
     specialization: 'Electrical', serviceDistrictIds: ['kandy'], ...patch };
   await db.doc('users/' + uid).set(source);
   if (projectionExists) await db.doc('technician_map_profiles/' + uid).set({ ...projection.buildMapProfile(uid, source), updatedAt: Timestamp.now() });
