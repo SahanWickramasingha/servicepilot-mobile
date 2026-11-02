@@ -2,11 +2,14 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve, join, dirname } from 'node:path';
 const require = createRequire(import.meta.url), ts = require('typescript');
+const acceptedSafetyFixture = { blocked: new Set(), ready: true, error: '' };
 export function renderHarness(path, { root = '.', initial = [], dependencies = {}, effects = false, exportName = 'default' } = {}) {
   const slots = [], queue = [], registrations = [], memoComponents = [], modules = new Map();
   let cursor = 0, tree, currentProps;
   const same = (a, b) => a && b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
   const react = {
+    createContext: value => ({ Provider: 'Context.Provider', value }),
+    useContext: context => context.value,
     useState: (value) => {
       const index = cursor++;
       if (!(index in slots)) slots[index] = index in initial ? initial[index] : typeof value === 'function' ? value() : value;
@@ -33,6 +36,9 @@ export function renderHarness(path, { root = '.', initial = [], dependencies = {
     // do not load native image-picker/Storage implementations in Node.
     '@/src/components/jobs/JobEvidenceView': { JobEvidenceView: 'JobEvidenceView' },
     '@/src/components/jobs/RequestAttachments': { RequestAttachments: 'RequestAttachments' },
+    '@/src/components/legal/Safety': { SafetyActions: 'SafetyActions', SafetyContent: 'SafetyContent', useSafety: () => acceptedSafetyFixture, useHiddenProfiles: () => ({ hidden: acceptedSafetyFixture.blocked, ready: true }) },
+    '@/src/components/legal/TermsAcceptance': { TermsAcceptance: 'TermsAcceptance' },
+    '@/src/components/legal/LegalLinks': { LegalLinks: 'LegalLinks' },
     ...dependencies };
   function load(logical) {
     if (modules.has(logical)) return modules.get(logical);

@@ -2,16 +2,23 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 const require = createRequire(import.meta.url), ts = require('typescript');
 function pureModule(path) {
+  const moduleURL = new URL('../../'+path, import.meta.url);
   const exports = {};
-  new Function('exports', '__DEV__', ts.transpileModule(readFileSync(new URL('../../'+path, import.meta.url), 'utf8'),
-    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(exports, false);
+  new Function('exports', '__DEV__', 'require', ts.transpileModule(readFileSync(moduleURL, 'utf8'),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText)(exports, false, createRequire(moduleURL));
   return exports;
 }
 const { createSharedSubscription } = pureModule('src/utils/sharedSubscription.ts');
 const documents = pureModule('src/utils/liveDocuments.ts');
+const safetyFixture = { blocked: new Set(), ready: true, error: '' };
 const { createBoundedSessionCache } = pureModule('src/utils/boundedSessionCache.ts');
 // Run the real pooling/reducer logic in host tests, bound to each fixture's Auth.
 export function performanceTestDependency(id, deps) {
+  if (id === '@/src/components/legal/Safety') return { useSafety: () => safetyFixture, useHiddenProfiles: () => ({ hidden: safetyFixture.blocked, ready: true }), SafetyContent: 'SafetyContent', SafetyActions: 'SafetyActions' };
+  if (id === '@/functions/src/domain/legalPolicy') return pureModule('functions/src/domain/legalPolicy.ts');
+  // Existing transport/category workloads assume accepted users; dedicated legal
+  // tests execute the real acceptance service, including cancellation/retries.
+  if (id === './policy.service') return { requirePolicyAcceptance: async () => {} };
   if (id === '@/functions/src/domain/serviceCategories' || id === './serviceCategories' || id === '../domain/serviceCategories') return pureModule('functions/src/domain/serviceCategories.ts');
   if (id.startsWith('@noble/hashes/')) return require(id);
   if (id === '@/src/utils/photoReferences') return pureModule('src/utils/photoReferences.ts');
