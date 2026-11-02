@@ -90,6 +90,7 @@ export function JobEvidenceScreen({ mode }: { mode: Mode }) {
   if (job.errorMessage || !job.request || state.error) return <View style={styles.screen}><Text style={styles.text}>{job.errorMessage || state.error || "Job unavailable."}</Text><Button label="Retry" onPress={state.retry} /><Button label="Back" onPress={() => router.back()} /></View>;
   return <SafeAreaView style={styles.screen}><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}><ScrollView style={styles.screen} scrollEnabled={!drawing} contentContainerStyle={{ padding: 20, paddingBottom: 50, width: "100%", maxWidth: 560, alignSelf: "center" }} keyboardShouldPersistTaps="handled">
     <Button label="Back" onPress={() => router.back()} /><Text accessibilityRole="header" style={styles.title}>{titles[mode]}</Text>
+    <Text style={styles.text}>Job photos, service notes and drawn signatures are shared with authorized job participants and super administrators as service evidence. Get permission from the customer before photographing personal details or capturing a signature. No biometric identification is performed.</Text>
     {!canEdit && <Text style={styles.text}>Saved service evidence. This job cannot be edited in its current status.</Text>}
     {!state.confirmed && <Text style={styles.error}>Showing saved evidence. Reconnect before saving.</Text>}
     {(mode === "before" || mode === "after") && <>
