@@ -24,6 +24,7 @@ import {
 } from "lucide-react-native";
 
 import { SERVICE_CATEGORY_DEFINITIONS, categoryFilterFromParam, type ServiceCategoryId } from "@/functions/src/domain/serviceCategories";
+import { SafetyContent } from "@/src/components/legal/Safety";
 import { DISTRICTS } from "@/functions/src/domain/map";
 import {
   PublicTechnicianProfile,
@@ -277,6 +278,7 @@ const TechnicianCard = memo(function TechnicianCard({
   technician: PublicTechnicianProfile;
 }) {
   return (
+    <SafetyContent target={technician.uid}>
     <TouchableOpacity
       style={styles.card}
       activeOpacity={0.82}
@@ -313,6 +315,7 @@ const TechnicianCard = memo(function TechnicianCard({
         <TechnicianRating technicianId={technician.uid} valueStyle={styles.ratingText} countStyle={styles.reviewText} />
       </View>
     </TouchableOpacity>
+    </SafetyContent>
   );
 });
 

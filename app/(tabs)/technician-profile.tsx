@@ -1,4 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
+import { SafetyActions, SafetyContent } from "@/src/components/legal/Safety";
 import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import {
@@ -143,6 +144,8 @@ export default function TechnicianProfileScreen() {
           </Text>
         </View>
 
+        <SafetyActions target={technician.uid} kind="profile" contentId={technician.uid} />
+        <SafetyContent target={technician.uid}>
         <View style={styles.profileCard}>
           <View style={styles.avatar}>
             <UserRound size={44} color="#FFFFFF" />
@@ -224,7 +227,7 @@ export default function TechnicianProfileScreen() {
               );
 
               return (
-                <View key={review.id} style={styles.reviewCard}>
+                <SafetyContent key={review.id} target={review.customerId} kind="review" contentId={review.id}><View style={styles.reviewCard}>
                   <View style={styles.reviewerHeader}>
                     <View style={styles.reviewerAvatar}>
                       <Text style={styles.reviewerInitials}>
@@ -277,7 +280,8 @@ export default function TechnicianProfileScreen() {
                     </Text>
                   </View>
                   <ReviewPhotos paths={review.photoPaths} customerId={review.customerId} />
-                </View>
+                  <SafetyActions target={review.customerId} kind="review" contentId={review.id} />
+                </View></SafetyContent>
               );
             })}
           </View>
@@ -291,6 +295,7 @@ export default function TechnicianProfileScreen() {
             </Text>
           </View>
         ) : null}
+        </SafetyContent>
       </ScrollView>
     </View>
   );
