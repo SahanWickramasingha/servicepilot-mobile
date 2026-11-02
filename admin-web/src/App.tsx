@@ -11,6 +11,7 @@ import Dispatchers from "./pages/Dispatchers";
 import Login from "./pages/Login";
 import Reports from "./pages/Reports";
 import Reviews from "./pages/Reviews";
+import Moderation from "./pages/Moderation";
 import ServiceRequests from "./pages/ServiceRequests";
 import Settings from "./pages/Settings";
 import SystemMessages from "./pages/SystemMessages";
@@ -39,6 +40,7 @@ export default function App() {
               <Route path="/admin/customers" element={<Customers />} />
               <Route path="/admin/requests" element={<ServiceRequests />} />
               <Route path="/admin/reviews" element={<Reviews />} />
+              <Route path="/admin/moderation" element={<Moderation />} />
               <Route
                 path="/admin/messages"
                 element={<SystemMessages portal="admin" />}

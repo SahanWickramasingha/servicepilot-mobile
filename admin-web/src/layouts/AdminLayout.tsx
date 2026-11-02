@@ -28,6 +28,7 @@ const adminNavigation = [
   { label: "Customers", path: "/admin/customers", icon: Users },
   { label: "Service Requests", path: "/admin/requests", icon: ClipboardList },
   { label: "Reviews", path: "/admin/reviews", icon: MessageSquareText },
+  { label: "Content Moderation", path: "/admin/moderation", icon: ShieldCheck },
   { label: "System Messages", path: "/admin/messages", icon: Megaphone },
   { label: "Reports", path: "/admin/reports", icon: BarChart3 },
   { label: "Audit Logs", path: "/admin/audit", icon: FileClock },
