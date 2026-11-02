@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "servicepilot-admin",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-30",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "FIREBASE_PROJECT_ID": "servicepilot-756d9",
+    "ADMIN_WEB_ORIGIN": "https://servicepilot-admin-web.pages.dev",
+    "ADMIN_EMAIL_FROM": "",
+    "ADMIN_EMAIL_PROVIDER": "firebase"
+  },
+  "observability": { "enabled": false }
+}

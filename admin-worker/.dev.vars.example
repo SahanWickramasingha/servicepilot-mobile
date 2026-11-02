@@ -1,0 +1,7 @@
+# Local template only. Do not reuse booking/photo identities or put these in Vite.
+ADMIN_SERVICE_ACCOUNT_EMAIL=
+ADMIN_SERVICE_ACCOUNT_PRIVATE_KEY=
+# Required for ADMIN_EMAIL_PROVIDER=firebase; same project's Web API key.
+FIREBASE_WEB_API_KEY=
+# Optional: only required for the preserved resend provider.
+RESEND_API_KEY=

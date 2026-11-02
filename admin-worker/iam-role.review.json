@@ -1,0 +1,17 @@
+{
+  "title": "ServicePilot Admin Worker runtime",
+  "description": "REVIEW ONLY: Admin account operations and point-document transactions; no IAM, billing, indexes or configuration administration.",
+  "stage": "GA",
+  "includedPermissions": [
+    "firebaseauth.users.get",
+    "firebaseauth.users.create",
+    "firebaseauth.users.update",
+    "firebaseauth.users.delete",
+    "firebaseauth.users.sendEmail",
+    "datastore.databases.get",
+    "datastore.entities.get",
+    "datastore.entities.create",
+    "datastore.entities.update",
+    "datastore.entities.delete"
+  ]
+}
