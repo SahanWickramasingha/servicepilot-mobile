@@ -203,7 +203,7 @@ export default function TechniciansScreen() {
               key={item}
               label={item}
               active={division === item}
-              onPress={() => { setPageCount(1); setDivision(item); }}
+              onPress={() => { setPageCount(1); setDivision(item); router.setParams({ division: item }); }}
             />
           ))}
         </ScrollView>
