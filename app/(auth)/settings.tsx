@@ -1,4 +1,5 @@
 import { router } from "expo-router";
+import { logoutUser } from "@/src/services/auth.service";
 import {
     Bell,
     ChevronRight,
@@ -27,8 +28,8 @@ export default function SettingsScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [darkModeEnabled, setDarkModeEnabled] = useState(true);
 
-  const handleLogout = () => {
-    // Firebase logout will be connected later.
+  const handleLogout = async () => {
+    await logoutUser();
     router.replace("/login");
   };
 
