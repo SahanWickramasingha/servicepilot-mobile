@@ -2,6 +2,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import ignore from 'ignore';
+import { parseEnv } from 'node:util';
 const git = args => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
 const split = text => text.split('\0').filter(Boolean);
 const manifest = JSON.parse(readFileSync('scripts/release-review-files.json', 'utf8'));
@@ -9,7 +10,13 @@ const candidate = [...manifest.releaseFiles, ...manifest.bookingRuntimePrerequis
 const tracked = split(git(['ls-files', '-z']));
 const untracked = split(git(['ls-files', '--others', '--exclude-standard', '-z']));
 const problems = [];
-const sensitivePath = path => /(^|\/)(?:secrets|\.aws|\.ssh)(\/|$)|(^|\/)(?:credentials|application_default_credentials)\.json$|\.(?:pem|key|p8|p12|pfx|jks|keystore|log)$|(?:serviceAccount|service-account|service_account|firebase-adminsdk).*\.json$/i.test(path) ||
+const publicExampleSettings = { SERVICEPILOT_RELEASE: '1', EXPO_PUBLIC_USE_FIREBASE_EMULATORS: '0' };
+for (const path of ['.env.booking.example', '.env.release.example', 'booking-worker/.dev.vars.example']) {
+  for (const [name, value] of Object.entries(parseEnv(readFileSync(path, 'utf8')))) {
+    if (value !== '' && value !== publicExampleSettings[name]) problems.push(`${path}: ${name} must use a blank placeholder`);
+  }
+}
+const sensitivePath = path => /(^|\/)(?:secrets|\.aws|\.ssh)(\/|$)|(^|\/)(?:credentials|application_default_credentials)\.json$|\.(?:pem|key|p8|p12|pfx|jks|keystore|apk|aab|log)$|(?:serviceAccount|service-account|service_account|firebase-adminsdk).*\.json$/i.test(path) ||
   /(^|\/)(?:\.env[^/]*|\.dev\.vars(?:\.[^/]*)?)$/.test(path) && !path.endsWith('.example');
 const credentialPatterns = [
   ['private-key-material', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
@@ -33,7 +40,8 @@ const privateProbes = ['.env', '.env.local', '.env.production', 'functions/.env'
   'secrets/serviceAccountKey.json', 'functions/secrets/booking-service-account.json', 'functions/booking-service-account.json',
   'credentials.json', 'functions/credentials.json', 'functions/application_default_credentials.json',
   'functions/private.pem', 'functions/private.pfx', 'functions/release.keystore', 'firebase-debug.log',
-  'booking-worker/.dev.vars', 'booking-worker/.dev.vars.production', 'booking-worker/secrets/booking-service-account.json'];
+  'booking-worker/.dev.vars', 'booking-worker/.dev.vars.production', 'booking-worker/secrets/booking-service-account.json',
+  'preview.apk', 'artifacts/preview.apk', 'artifacts/release.aab'];
 let ignored = [];
 try { ignored = split(execFileSync('git', ['check-ignore', '--no-index', '-z', '--stdin'], { input: privateProbes.join('\0') + '\0', encoding: 'utf8' })); }
 catch (error) { ignored = split(String(error.stdout ?? '')); }
@@ -57,6 +65,19 @@ if (!easIgnored.ignores('booking-worker/src/index.ts')) problems.push('Booking W
 const workerSource = [...new Set([...tracked, ...candidate])].filter(path => path.startsWith('booking-worker/') || path.startsWith('functions/src/domain/'));
 for (const path of workerSource) if (sensitivePath(path)) problems.push(`${path}: private path in reviewed Worker source`);
 const staged = split(git(['diff', '--cached', '--name-only', '-z']));
+// Inspect the actual index blobs, not just their possibly newer working copies.
+for (const path of split(git(['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z']))) {
+  if (sensitivePath(path)) problems.push(`${path}: private file in index`);
+  const text = git(['show', `:${path}`]);
+  for (const [category, pattern] of credentialPatterns) if (pattern.test(text)) problems.push(`${path}: staged ${category}`);
+  if (path.endsWith('.json')) {
+    try { const value = JSON.parse(text); if (value?.type === 'service_account' && value.private_key) problems.push(`${path}: staged service-account JSON payload`); }
+    catch { /* Only JSON payloads apply to this check. */ }
+  }
+  if (path.endsWith('.example')) for (const [name, value] of Object.entries(parseEnv(text))) {
+    if (value !== '' && value !== publicExampleSettings[name]) problems.push(`${path}: staged ${name} must use a blank placeholder`);
+  }
+}
 const outside = staged.filter(path => !candidate.includes(path));
 if (outside.length) problems.push(`Staged paths outside release allowlist: ${outside.length} (not altered by this audit).`);
 console.log(`Reviewed source inventory: ${tracked.length} tracked + ${untracked.length} nonignored untracked files; ${scanned.size} paths scanned.`);
