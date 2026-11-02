@@ -15,7 +15,7 @@ const hosts = [process.env.FIRESTORE_EMULATOR_HOST, process.env.FIREBASE_AUTH_EM
 if (!hosts.every((host) => /^(127\.0\.0\.1|localhost):\d+$/.test(host ?? ""))) throw new Error("Loopback Auth, Firestore and Storage emulators are required. No production access.");
 const require = createRequire(new URL("../../functions/package.json", import.meta.url));
 const { initializeApp: adminApp, deleteApp: deleteAdminApp } = require("firebase-admin/app");
-const { getFirestore: adminFirestore } = require("firebase-admin/firestore");
+const { getFirestore: adminFirestore, FieldValue } = require("firebase-admin/firestore");
 const { getAuth: adminAuth } = require("firebase-admin/auth");
 const trusted = adminApp({ projectId }, "review-storage-tests"), admin = adminFirestore(trusted);
 const clients = new Map(), notifications = [];
@@ -85,6 +85,7 @@ before(async () => {
     const uid = `rs-${short}`, email = `${uid}@example.test`, password = "Local-review-only-123!";
     await adminAuth(trusted).createUser({ uid, email, password, emailVerified: verified });
     await admin.doc(`users/${uid}`).set({ uid, fullName: short === "owner" ? "Nimal Bandara" : short, role,
+      termsVersion: "2026-11-02.1", privacyPolicyVersion: "2026-11-02.1", acceptedAt: FieldValue.serverTimestamp(),
       accountStatus: active ? "active" : "disabled", ...(role === "technician" ? { technicianApprovalStatus: "approved" } : {}) });
     const app = initializeApp({ projectId, apiKey: "emulator-only", storageBucket: bucket }, uid);
     const auth = getAuth(app); connectAuthEmulator(auth, `http://${hosts[1]}`, { disableWarnings: true });
@@ -97,6 +98,13 @@ before(async () => {
 after(async () => {
   await Promise.all([...clients.values()].map(async (client) => { await fsdk.terminate(client.db); await deleteApp(client.app); }));
   await admin.terminate(); await deleteAdminApp(trusted);
+});
+
+test("review uploads require explicit policy acceptance; browsing and stored records do not fabricate it", async () => {
+  await job("policy-required");
+  await admin.doc("users/rs-owner").update({ acceptedAt: FieldValue.delete() });
+  try { await denied(upload("policy-required")); }
+  finally { await admin.doc("users/rs-owner").update({ acceptedAt: FieldValue.serverTimestamp() }); }
 });
 
 test("read-only context creates nothing; explicit low-star review without photos derives the technician and commits once", async () => {

@@ -12,6 +12,10 @@ service firebase.storage {
     function customer() {
       return active() && profile().role == 'customer' && request.auth.token.email_verified == true;
     }
+    function acceptedPolicies() {
+      return profile().get('termsVersion', '') == '2026-11-02.1' &&
+        profile().get('privacyPolicyVersion', '') == '2026-11-02.1' && profile().get('acceptedAt', null) is timestamp;
+    }
     function approved(data) {
       return data.role == 'technician' && data.get('accountStatus', 'active') == 'active' &&
         data.technicianApprovalStatus == 'approved';
@@ -53,7 +57,7 @@ service firebase.storage {
         return saved(reviewId) && path() in review(reviewId).get('photoPaths', []);
       }
       // Every evaluation uses at most two distinct Firestore documents.
-      allow create: if resource == null && owned() && attemptId.matches('^[A-Za-z0-9]{20}$') && filename.matches('^[0-4][.]jpg$') &&
+      allow create: if resource == null && owned() && acceptedPolicies() && attemptId.matches('^[A-Za-z0-9]{20}$') && filename.matches('^[0-4][.]jpg$') &&
         request.resource.size > 0 && request.resource.size <= 5 * 1024 * 1024 &&
         request.resource.contentType == 'image/jpeg' && metadataMatchesJob();
       // One-way publication after the immutable review commits. Hash equality

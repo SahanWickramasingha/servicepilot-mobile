@@ -6,6 +6,19 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function currentPolicy(data) {
+      return data.get("termsVersion", "") == "2026-11-02.1" &&
+        data.get("privacyPolicyVersion", "") == "2026-11-02.1" && data.get("acceptedAt", null) is timestamp;
+    }
+    function acceptedPolicies() {
+      return currentPolicy(get(/databases/$(database)/documents/users/$(request.auth.uid)).data);
+    }
+    function validOwnerPolicyUpdate(uid) {
+      return isOwner(uid) && !currentPolicy(resource.data) && currentPolicy(request.resource.data) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["termsVersion", "privacyPolicyVersion", "acceptedAt", "updatedAt"]) &&
+        request.resource.data.acceptedAt == request.time && request.resource.data.updatedAt == request.time;
+    }
+
     // Keep a private own-profile read available for live account-status denial.
     // All other protected operations also require this authoritative session gate.
     function hasActiveSession() {
@@ -84,6 +97,7 @@ service cloud.firestore {
         "role",
         "accountStatus",
         "emailVerified",
+        "termsVersion", "privacyPolicyVersion", "acceptedAt",
         "createdAt",
         "updatedAt"
       ]);
@@ -99,6 +113,7 @@ service cloud.firestore {
         "role",
         "accountStatus",
         "emailVerified",
+        "termsVersion", "privacyPolicyVersion", "acceptedAt",
         "createdAt",
         "updatedAt"
       ]);
@@ -114,6 +129,7 @@ service cloud.firestore {
         "role",
         "accountStatus",
         "emailVerified",
+        "termsVersion", "privacyPolicyVersion", "acceptedAt",
         "specialization",
         "serviceCategoryId",
         "experience",
@@ -141,6 +157,7 @@ service cloud.firestore {
 
     function validPublicUserCreate(userId) {
       return isOwner(userId) &&
+        currentPolicy(request.resource.data) && request.resource.data.acceptedAt == request.time &&
         hasRequiredUserFields() &&
         request.resource.data.uid == userId &&
         authEmailMatchesProfile() &&
@@ -187,6 +204,7 @@ service cloud.firestore {
 
     function validOwnerUpdate(userId) {
       return isOwner(userId) &&
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(["emailVerified", "updatedAt"]) || acceptedPolicies()) &&
         ownerMutableFieldsOnly() &&
         (!request.resource.data.diff(resource.data).affectedKeys().hasAny(["specialization", "serviceCategoryId"]) ||
           validOwnerCategoryUpdate(userId)) &&
@@ -1330,7 +1348,7 @@ service cloud.firestore {
       allow create: if validPublicUserCreate(userId);
       allow get: if isOwner(userId) || (hasActiveSession() && canGetUserProfile(userId));
       allow list: if hasActiveSession() && canListUserProfiles();
-      allow update: if hasActiveSession() && (validOwnerUpdate(userId) ||
+      allow update: if hasActiveSession() && (validOwnerPolicyUpdate(userId) || validOwnerUpdate(userId) ||
         validTechnicianAvailabilityUpdate(userId) ||
         validDispatcherInvitationAccept(userId) ||
         validDispatcherTechnicianReview()) && mapApprovalFollowsUser(userId);
@@ -1360,10 +1378,11 @@ service cloud.firestore {
         (isVerifiedCustomer() && serviceRequestData(requestId).customerId == request.auth.uid) ||
         (isVerifiedApprovedTechnician() && requestTechnicianMatches(serviceRequestData(requestId), request.auth.uid)));
       allow list, delete: if false;
-      allow create, update: if hasActiveSession() && validJobEvidence(requestId);
+      allow create, update: if hasActiveSession() && acceptedPolicies() && validJobEvidence(requestId);
     }
     match /service_requests/{requestId} {
-      allow create: if hasActiveSession() && validCustomerRequestCreate(requestId);
+      allow create: if hasActiveSession() && acceptedPolicies() &&
+        validCustomerRequestCreate(requestId);
       allow read: if hasActiveSession() &&
         (
           isSuperAdmin() ||
@@ -1400,7 +1419,7 @@ service cloud.firestore {
     }
 
     match /service_reviews/{reviewId} {
-      allow create: if hasActiveSession() && validReviewCreate(reviewId);
+      allow create: if hasActiveSession() && acceptedPolicies() && validReviewCreate(reviewId);
       allow read: if hasActiveSession() && canReadServiceReview();
       allow update, delete: if false;
     }
