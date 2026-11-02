@@ -1,4 +1,5 @@
 import { router } from "expo-router";
+import { LegalLinks } from "@/src/components/legal/LegalLinks";
 import { technicianCategoryLabel } from "@/functions/src/domain/serviceCategories";
 import {
   Award,
@@ -189,6 +190,7 @@ export default function TechnicianProfileScreen() {
           />
         </View>
 
+        <LegalLinks />
         <TouchableOpacity
           style={styles.logoutButton}
           activeOpacity={0.8}

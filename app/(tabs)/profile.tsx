@@ -1,4 +1,5 @@
 import { router } from "expo-router";
+import { LegalLinks } from "@/src/components/legal/LegalLinks";
 import { useEffect, useState } from "react";
 import {
   Bell,
@@ -184,6 +185,7 @@ export default function ProfileScreen() {
           />
         </View>
 
+        <LegalLinks />
         <TouchableOpacity
           style={styles.logoutButton}
           activeOpacity={0.85}
