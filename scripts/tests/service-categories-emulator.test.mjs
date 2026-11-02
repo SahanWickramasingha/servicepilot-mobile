@@ -62,6 +62,24 @@ test('dispatcher approval can normalize a confirmed legacy category but cannot s
   }
   assert.equal((await db.doc('technician_map_profiles/' + tech.uid).get()).data().serviceCategory, 'Air Conditioning');
 });
+
+test('ambiguous legacy category cannot be normalized by a dispatcher; the technician can explicitly correct it', async () => {
+  const tech = await session('-ambiguous'), dispatcher = await session('-reviewer', 'dispatcher');
+  const source = { ...tech.source, specialization: 'Electrical', serviceCategory: 'Electric Item', technicianApprovalStatus: 'pending' };
+  await db.doc('users/' + tech.uid).set(source);
+  const unresolved = buildMapProfile(tech.uid, source);
+  assert.equal(unresolved.serviceCategoryId, '');
+  const batch = firestore.writeBatch(dispatcher.db);
+  batch.update(firestore.doc(dispatcher.db, 'users', tech.uid), { technicianApprovalStatus: 'approved',
+    serviceCategoryId: 'electrical', specialization: 'Electrical', reviewedBy: dispatcher.uid,
+    reviewedAt: firestore.serverTimestamp(), updatedAt: firestore.serverTimestamp() });
+  batch.set(projectionRef(dispatcher, tech.uid), { ...unresolved, approved: true,
+    serviceCategoryId: 'electrical', serviceCategory: 'Electrical', updatedAt: firestore.serverTimestamp() });
+  await assert.rejects(batch.commit(), e => e.code === 'permission-denied');
+  await changeCategory(tech, source, 'electrical', 'Electrical');
+  const saved = (await db.doc('technician_map_profiles/' + tech.uid).get()).data();
+  assert.equal(saved.serviceCategoryId, 'electrical'); assert.equal(saved.approved, false, 'Category correction does not approve an application');
+});
 test('category-compatible directory queries retain customer verification and current disabled-account visibility checks', async () => {
   const tech = await session('-visible'), customer = await session('-customer', 'customer');
   const query = firestore.query(firestore.collection(customer.db, 'technician_map_profiles'), firestore.where('approved', '==', true),

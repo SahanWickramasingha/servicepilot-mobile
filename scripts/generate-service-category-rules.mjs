@@ -19,11 +19,13 @@ const block = `    // BEGIN GENERATED SERVICE CATEGORIES (scripts/generate-servi
     function technicianCategoryId(profile) {
       let id = profile.get("serviceCategoryId", "");
       let raw = profile.get("specialization", "");
-      let explicit = serviceCategoryIdForValue(profile.get("serviceCategory", ""));
+      let category = profile.get("serviceCategory", "");
+      let explicit = serviceCategoryIdForValue(category);
       let legacy = serviceCategoryIdForValue(raw);
       let legacyPresent = raw is string ? !raw.matches("\\\\s*") : true;
+      let categoryPresent = category is string ? !category.matches("\\\\s*") : true;
       return id != "" ? (validServiceCategoryId(id) ? id : "") :
-        (legacyPresent && legacy == "" || explicit != "" && legacy != "" && explicit != legacy) ? "" :
+        (categoryPresent && explicit == "" || legacyPresent && legacy == "" || explicit != "" && legacy != "" && explicit != legacy) ? "" :
         explicit != "" ? explicit : legacy;
     }
     function validSelectedTechnicianCategory(profile) {

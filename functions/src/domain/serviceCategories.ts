@@ -28,6 +28,8 @@ export function technicianCategory(profile: CategoryFields) {
     return SERVICE_CATEGORY_DEFINITIONS.find(category => category.id === profile.serviceCategoryId);
   }
   const explicit = resolveServiceCategory(profile.serviceCategory), legacy = resolveServiceCategory(profile.specialization);
+  if (profile.serviceCategory !== undefined &&
+    (typeof profile.serviceCategory !== "string" || profile.serviceCategory.trim() !== "") && !explicit) return undefined;
   if (profile.specialization !== undefined &&
     (typeof profile.specialization !== "string" || profile.specialization.trim() !== "") && !legacy) return undefined;
   if (explicit && legacy && explicit.id !== legacy.id) return undefined;

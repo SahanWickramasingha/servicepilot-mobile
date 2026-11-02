@@ -227,7 +227,9 @@ service cloud.firestore {
     function validOwnerCategoryUpdate(userId) {
       let projection = getAfter(/databases/$(database)/documents/technician_map_profiles/$(userId)).data;
       return resource.data.role == "technician" && validSelectedTechnicianCategory(request.resource.data) &&
+        request.resource.data.updatedAt == request.time && projection.technicianId == userId &&
         projection.serviceCategoryId == request.resource.data.serviceCategoryId &&
+        projection.specialization == request.resource.data.specialization &&
         projection.serviceCategory == request.resource.data.specialization && projection.updatedAt == request.time;
     }
 
@@ -1181,11 +1183,13 @@ service cloud.firestore {
     function technicianCategoryId(profile) {
       let id = profile.get("serviceCategoryId", "");
       let raw = profile.get("specialization", "");
-      let explicit = serviceCategoryIdForValue(profile.get("serviceCategory", ""));
+      let category = profile.get("serviceCategory", "");
+      let explicit = serviceCategoryIdForValue(category);
       let legacy = serviceCategoryIdForValue(raw);
       let legacyPresent = raw is string ? !raw.matches("\\s*") : true;
+      let categoryPresent = category is string ? !category.matches("\\s*") : true;
       return id != "" ? (validServiceCategoryId(id) ? id : "") :
-        (legacyPresent && legacy == "" || explicit != "" && legacy != "" && explicit != legacy) ? "" :
+        (categoryPresent && explicit == "" || legacyPresent && legacy == "" || explicit != "" && legacy != "" && explicit != legacy) ? "" :
         explicit != "" ? explicit : legacy;
     }
     function validSelectedTechnicianCategory(profile) {

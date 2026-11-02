@@ -25,6 +25,13 @@ test('one catalogue supplies stable IDs/labels; confirmed aliases normalize exac
   assert.equal(categories.technicianCategory({ specialization: 'Electric Item', serviceCategory: 'Electrical' }), undefined, 'A guessed old projection cannot establish a category');
   assert.equal(categories.technicianCategory({ serviceCategoryId: 'invalid', specialization: 'Electrical' }), undefined);
   assert.equal(categories.technicianCategory({ specialization: 'Electrical', serviceCategory: 'Plumbing' }), undefined);
+  for (const serviceCategory of ['Electric Item', 'Electrical / Plumbing', 42, null]) {
+    assert.equal(categories.technicianCategory({ specialization: 'Electrical', serviceCategory }), undefined,
+      'An unrecognized explicit legacy category must not be hidden by a recognized specialization');
+  }
+  assert.equal(categories.technicianCategory({ specialization: 'Electrical', serviceCategory: '  ' })?.id, 'electrical');
+  assert.equal(categories.technicianCategory({ serviceCategoryId: 'electrical', specialization: 'Electric Item' })?.id, 'electrical',
+    'An explicitly selected stable ID is authoritative');
   assert.equal(categories.technicianCategoryLabel({ specialization: 'Electric Item' }), 'Category needs review');
   assert.deepEqual(categories.selectedTechnicianCategory('electrical'), { serviceCategoryId: 'electrical', specialization: 'Electrical' });
   assert.throws(() => categories.selectedTechnicianCategory('technician'));
@@ -107,6 +114,15 @@ test('Home category cards navigate with stable IDs; directory combines navigatio
   render(); assert.equal(filter.category, 'electrical'); assert.equal(filter.division, 'Kandy');
   directory.elements().find(item => item.type === 'TextInput').props.onChangeText('wire'); render();
   assert.deepEqual(directory.elements().find(item => item.type === 'FlatList').props.data.map(item => item.uid), ['a']);
+  const chip = label => directory.elements().find(item => item.props?.label === label && typeof item.props?.onPress === 'function');
+  chip('Colombo').props.onPress(); render();
+  assert.equal(params.division, 'Colombo', 'Division selection must persist into the route before a category change');
+  chip('Plumbing').props.onPress(); render(); render();
+  assert.equal(filter.category, 'plumbing'); assert.equal(filter.division, 'Colombo');
+  assert.equal(directory.elements().find(item => item.type === 'TextInput').props.value, 'wire', 'Changing chips preserves search');
+  params = categories.categoryDirectoryRoute('plumbing').params; render(); render();
+  assert.equal(filter.category, 'plumbing'); assert.equal(filter.division, 'All');
+  assert.equal(directory.elements().find(item => item.type === 'TextInput').props.value, '', 'Home link to the same category clears prior search and division');
   params = { category: 'Air Conditioning', division: 'Colombo' }; render(); render();
   assert.equal(filter.category, 'air-conditioning'); assert.equal(filter.division, 'Colombo');
   assert.equal(directory.elements().find(item => item.type === 'TextInput').props.value, '', 'A new category link clears stale search'); directory.cleanup();
@@ -126,4 +142,45 @@ test('profile save atomically persists canonical specialty and projection while 
   assert.equal(writes[1].data.serviceCategory, 'Electrical'); assert.equal(writes[1].data.serviceCategoryId, 'electrical'); assert.equal(writes[1].data.approved, true);
   assert.equal(writes[1].data.address, undefined);
   await assert.rejects(service.updateUserProfileSafe('tech', { fullName: 'Tech', phone: '123', address: 'Private', serviceCategoryId: 'customer' }));
+});
+
+test('registration stores a stable specialty separately from role and rejects ambiguous legacy input', async () => {
+  const writes = [];
+  const service = loadService('src/services/user.service.ts', {
+    '@/src/firebase/config': { auth: { currentUser: { uid: 'tech' } }, db: {} },
+    '@/functions/src/domain/mapProjection': projection, '@/functions/src/domain/availability': {}, '@/functions/src/domain/serviceAreas': {},
+    '@/src/utils/registrationDebug': { getSafeProfileDebugValues: () => ({}), logRegistrationDebug() {} },
+    'firebase/firestore': { doc: (_, collection, id) => ({ path: collection + '/' + id }), serverTimestamp: () => 'server-time',
+      getDoc: async () => ({ exists: () => false }), setDoc: async (ref, data) => writes.push({ ref, data }) },
+  });
+  const input = { uid: 'tech', fullName: 'Tech', email: 'tech@example.test', phone: '123', address: 'Private', role: 'technician' };
+  await service.createUserProfile({ ...input, serviceCategoryId: 'electrical' });
+  assert.equal(writes[0].data.role, 'technician'); assert.equal(writes[0].data.serviceCategoryId, 'electrical');
+  assert.equal(writes[0].data.specialization, 'Electrical'); assert.equal(writes[0].data.technicianApprovalStatus, 'pending');
+  await assert.rejects(service.createUserProfile({ ...input, specialization: 'Electric Item' }));
+  assert.equal(writes.length, 1, 'An ambiguous specialty must be explicitly selected before writing');
+});
+
+test('both approval services propagate confirmed legacy specialties and preserve unresolved ones without guessing', async () => {
+  for (const admin of [false, true]) for (const specialization of ['AC technician', 'Electric Item']) {
+    const writes = [], source = { role: 'technician', fullName: 'Tech', specialization,
+      technicianApprovalStatus: 'pending', serviceDistrictIds: ['kandy'], averageRating: 4, reviewCount: 2 };
+    let commits = 0;
+    const sdk = { doc: (_, collection, id) => ({ path: collection + '/' + id }), serverTimestamp: () => 'server-time', deleteField: () => 'delete',
+      getDoc: async () => ({ data: () => source }), getDocFromServer: async () => ({ data: () => source }),
+      writeBatch: () => ({ update: (ref, data) => writes.push({ ref, data }), set: (ref, data) => writes.push({ ref, data }),
+        commit: async () => { commits++; } }) };
+    const dependencies = { 'firebase/firestore': sdk, '@/src/firebase/config': { auth: {}, db: {} }, '../firebase/config': { db: {} },
+      '@/functions/src/domain/mapProjection': projection, '../../../functions/src/domain/mapProjection': projection,
+      '../../../functions/src/domain/serviceCategories': categories,
+      '@/functions/src/domain/availability': {}, '@/functions/src/domain/serviceAreas': {}, '@/src/utils/registrationDebug': {} };
+    const service = loadService(admin ? 'admin-web/src/services/technicianApprovalService.ts' : 'src/services/user.service.ts', dependencies);
+    await (admin ? service.reviewTechnicianApplication : service.updateTechnicianApprovalStatus)({ technicianUid: 'tech', dispatcherUid: 'dispatcher', status: 'approved' });
+    assert.equal(commits, 1); assert.equal(writes.length, 2);
+    assert.equal(writes[0].data.technicianApprovalStatus, 'approved'); assert.equal(writes[0].data.role, undefined);
+    assert.equal(writes[0].data.serviceCategoryId, specialization === 'AC technician' ? 'air-conditioning' : undefined);
+    assert.equal(writes[1].data.serviceCategory, specialization === 'AC technician' ? 'Air Conditioning' : '');
+    assert.equal(writes[1].data.approved, true); assert.equal(writes[1].data.averageRating, 4); assert.equal(writes[1].data.reviewCount, 2);
+    assert.equal(writes[1].data.address, undefined);
+  }
 });
