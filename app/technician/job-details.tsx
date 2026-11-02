@@ -1,5 +1,6 @@
 import { BookingSchedulePanel } from "@/src/components/jobs/BookingSchedulePanel";
 import { RequestAttachments } from "@/src/components/jobs/RequestAttachments";
+import { SafetyActions } from "@/src/components/legal/Safety";
 // sahan 
 import { router } from "expo-router";
 import { useRef, useState } from "react";
@@ -403,6 +404,7 @@ export default function TechnicianJobDetailsScreen() {
         <Text style={{ color: "#CBD5E1", marginTop: 16 }}>Customer request photos</Text>
         <RequestAttachments paths={request.imageUrls} />
         <BookingSchedulePanel key={request.id} request={request} technician />
+        <SafetyActions target={request.customerId} kind="job" contentId={request.id} />
       </ScrollView>
 
       <ReasonModal

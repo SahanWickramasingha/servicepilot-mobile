@@ -1,5 +1,6 @@
 import { BookingSchedulePanel } from "@/src/components/jobs/BookingSchedulePanel";
 import { RequestAttachments } from "@/src/components/jobs/RequestAttachments";
+import { SafetyActions } from "@/src/components/legal/Safety";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -555,6 +556,7 @@ export default function RequestDetailsScreen() {
           </TouchableOpacity>
         )}
         <BookingSchedulePanel key={request.id} request={request} />
+        <SafetyActions target={request.technicianId || request.assignedTechnicianId || ""} kind="job" contentId={request.id} />
       </ScrollView>
     </View>
   );
