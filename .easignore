@@ -41,6 +41,8 @@ credentials.json
 **/*.pfx
 **/*.jks
 **/*.keystore
+**/*.apk
+**/*.aab
 **/*.log
 **/*.tsbuildinfo
 admin-web/
