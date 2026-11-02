@@ -12,6 +12,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.sahanwickramasingha.servicepilot",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/servicepilot-logo.png",
         "backgroundColor": "#06101D"
@@ -25,11 +26,14 @@
     },
     "plugins": [
       "expo-router",
-      ["expo-image-picker", {
-        "photosPermission": "Choose photos for your ServicePilot review or assigned service job.",
-        "cameraPermission": "Take service evidence photos for your assigned ServicePilot job.",
-        "microphonePermission": false
-      }],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose photos for your ServicePilot review or assigned service job.",
+          "cameraPermission": "Take service evidence photos for your assigned ServicePilot job.",
+          "microphonePermission": false
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -44,17 +48,27 @@
         }
       ],
       "expo-font",
-      ["expo-location", {
-        "locationWhenInUsePermission": "Share your location while using ServicePilot. Customers see an approximate area; your active job Customer can see your precise location.",
-        "isIosBackgroundLocationEnabled": false,
-        "isAndroidBackgroundLocationEnabled": false,
-        "isAndroidForegroundServiceEnabled": false
-      }],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Share your location while using ServicePilot. Customers see an approximate area; your active job Customer can see your precise location.",
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
+        }
+      ],
       "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b04d5f66-1b75-4626-b6f0-77d3d7ccf529"
+      }
+    },
+    "owner": "sahanwickramasingha2003"
   }
 }

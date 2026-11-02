@@ -5,7 +5,13 @@
       "distribution": "internal",
       "environment": "preview",
       "credentialsSource": "remote",
-      "env": { "SERVICEPILOT_RELEASE": "1", "EXPO_PUBLIC_USE_FIREBASE_EMULATORS": "0" },
+      "env": {
+        "SERVICEPILOT_RELEASE": "1",
+        "EXPO_PUBLIC_USE_FIREBASE_EMULATORS": "0",
+        "EXPO_OWNER": "sahanwickramasingha2003",
+        "EXPO_ANDROID_PACKAGE": "com.sahanwickramasingha.servicepilot",
+        "EXPO_EAS_PROJECT_ID": "b04d5f66-1b75-4626-b6f0-77d3d7ccf529"
+      },
       "android": { "buildType": "apk" }
     },
     "production": {
