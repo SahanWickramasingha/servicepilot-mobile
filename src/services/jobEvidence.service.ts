@@ -1,3 +1,4 @@
+import { requirePolicyAcceptance } from "./policy.service";
 import { collection, doc, getDocFromServer, onSnapshot, runTransaction, serverTimestamp } from "firebase/firestore";
 import * as ImagePicker from "expo-image-picker";
 import { auth, db } from "@/src/firebase/config";
@@ -24,6 +25,7 @@ function canonical(value: unknown): unknown {
   return value;
 }
 export async function saveJobEvidence(requestId: string, expectedRevision: number, change: EvidenceChange): Promise<void> {
+  await requirePolicyAcceptance();
   const uid = auth.currentUser?.uid ?? ""; session(uid);
   if ("beforePhotos" in change) validateJobPhotoPaths(change.beforePhotos, uid, requestId, "before");
   if ("afterPhotos" in change) validateJobPhotoPaths(change.afterPhotos, uid, requestId, "after");

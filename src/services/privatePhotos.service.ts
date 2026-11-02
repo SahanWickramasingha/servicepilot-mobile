@@ -1,3 +1,4 @@
+import { requirePolicyAcceptance } from "./policy.service";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { auth } from "@/src/firebase/config";
@@ -86,6 +87,7 @@ async function sendBlob(id: string, blob: Blob, mime: string, uid: string, progr
 }
 export async function uploadPrivatePhoto(input: { uid: string; requestId: string; purpose: Purpose; attemptId: string; slot: number; blob: Blob; bytes: Uint8Array; contentType: string }, progress: (n: number) => void, signal?: AbortSignal): Promise<string> {
   photoAPIBase(); photoSession(input.uid, signal);
+  await requirePolicyAcceptance();
   const size = input.bytes.length;
   if (!size || size !== input.blob.size || (input.purpose === "request" ? size >= 2_000_000 : size > 5 * 1024 * 1024)) throw new Error("Choose a photo within the allowed file-size limit.");
   const reservation = await api("", input.uid, "POST", { requestId: input.requestId, purpose: input.purpose, attemptId: input.attemptId,

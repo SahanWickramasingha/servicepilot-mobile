@@ -1,3 +1,4 @@
+import { requirePolicyAcceptance } from "./policy.service";
 import {
   collection,
   doc,
@@ -220,6 +221,7 @@ function bookingNotification(transaction: Transaction, requestId: string, data: 
 }
 
 export async function createServiceRequest(input: CreateServiceRequestInput): Promise<string> {
+  await requirePolicyAcceptance();
   const uid = auth.currentUser?.uid;
   if (!uid || uid !== input.profile.uid) throw new BookingError("booking/session", "Unable to create a request for this account. Please sign in again.");
   bookingSession(uid);

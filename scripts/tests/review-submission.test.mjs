@@ -11,6 +11,7 @@ function load(path, dependencies = {}) {
   }).outputText;
   new Function("exports", "require", code)(exports, (id) => {
     if (id in dependencies) return dependencies[id];
+    if (id === './policy.service') return { requirePolicyAcceptance: async () => {} };
     if (id === "@/src/utils/reviewValidation") return validation;
     if (id === "@/src/utils/reviewAuthor") return load("src/utils/reviewAuthor.ts");
     throw new Error(`Unmocked dependency: ${id}`);

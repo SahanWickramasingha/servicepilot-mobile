@@ -1,3 +1,4 @@
+import { requirePolicyAcceptance } from "./policy.service";
 import { collection, doc } from "firebase/firestore";
 import { auth, db } from "@/src/firebase/config";
 import { getCustomerReviewContext, getReviewForRequest, getReviewId, submitServiceReview, type ServiceReview } from "./review.service";
@@ -31,6 +32,7 @@ export function submitReviewWithPhotos(input: { requestId: string; rating: numbe
 }
 
 async function performSubmission(input: Parameters<typeof submitReviewWithPhotos>[0], uid: string): Promise<ReviewSubmissionResult> {
+  await requirePolicyAcceptance();
   const error = validateReview(input.rating, input.comment);
   if (error) throw new Error(error);
   if (input.photos.length > REVIEW_PHOTO_MAX) throw new Error("You can add up to 5 photos.");
