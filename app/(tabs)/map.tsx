@@ -1,4 +1,5 @@
 import { router, useFocusEffect } from "expo-router";
+import { SafetyActions, SafetyContent, useSafety, useHiddenProfiles } from "@/src/components/legal/Safety";
 import { onAuthStateChanged } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Linking, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
@@ -28,10 +29,12 @@ function updateLabel(location: SharedMapLocation | undefined, now: number): stri
 }
 
 export default function CustomerMapScreen() {
+  const safety = useSafety();
   const [districtId, setDistrictId] = useState("colombo");
   const [category, setCategory] = useState("");
   const [mode, setMode] = useState<"map" | "list">("map");
   const [technicians, setTechnicians] = useState<MapTechnician[]>([]);
+  const hiddenProfiles = useHiddenProfiles(technicians.map(item => item.uid));
   const [locations, setLocations] = useState<Record<string, SharedMapLocation>>({});
   const [locationErrors, setLocationErrors] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string>();
@@ -140,10 +143,11 @@ export default function CustomerMapScreen() {
   const markerIdentity = JSON.stringify(technicians.map((item) => [item.uid, item.fullName]));
   const freshnessIdentity = technicians.map((item) => locationIsFresh(locations[item.uid]?.updatedAtMs, now)).join("|");
   const points = useMemo(() => technicians.flatMap((technician) => {
+    if (!safety.ready || safety.blocked.has(technician.uid) || !hiddenProfiles.ready || hiddenProfiles.hidden.has(technician.uid)) return [];
     const point = locations[technician.uid];
     return point ? [{ ...point, id: technician.uid, title: technician.fullName, stale: !locationIsFresh(point.updatedAtMs, now) }] : [];
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Identity keys cover the name/UID and freshness inputs; timestamps still refresh card text.
-  }), [markerIdentity, locations, freshnessIdentity]);
+  }), [markerIdentity, locations, freshnessIdentity, safety.ready, safety.blocked, hiddenProfiles.ready, hiddenProfiles.hidden]);
   const selected = technicians.find((technician) => technician.uid === selectedId);
   const serviceArea = useMemo(() => {
     const technician = technicians.find((item) => item.uid === serviceAreaSelection?.id);
@@ -248,7 +252,7 @@ export default function CustomerMapScreen() {
     </ScrollView>
     <Modal visible={selectionIds.length > 0} transparent animationType="slide" onRequestClose={() => setSelectionIds([])}>
       <View style={styles.overlay}><View style={styles.sheet}><Text accessibilityRole="header" style={styles.cardTitle}>Technicians at overlapping locations</Text>
-        <ScrollView>{technicians.filter((t) => selectionIds.includes(t.uid)).map((technician) =>
+        <ScrollView>{technicians.filter((t) => selectionIds.includes(t.uid) && !safety.blocked.has(t.uid) && !hiddenProfiles.hidden.has(t.uid)).map((technician) =>
           <Pressable accessibilityRole="button" accessibilityLabel={`Select ${technician.fullName}`} key={technician.uid} style={styles.card}
             onPress={() => { setSelectedId(technician.uid); setSelectionIds([]); setDetailsOpen(true); }}>
             <Text style={styles.cardTitle}>{technician.fullName}</Text><Text style={styles.subtitle}>{technician.specialization} • {updateLabel(locations[technician.uid], now)}</Text>
@@ -275,7 +279,7 @@ function TechnicianCard({ technician, location, now, districtId, customerLocatio
   const outside = location && !pointInDistrict(location, district);
   const distance = browsingDistanceKm(customerLocation, location, now);
   const canRequest = availabilityDisplay(technician.availability).canRequest;
-  return <View style={styles.card} accessibilityLiveRegion="polite">
+  return <SafetyContent target={technician.uid}><View style={styles.card} accessibilityLiveRegion="polite">
     <View style={styles.cardHeader}><View style={styles.avatar}><Wrench size={22} color="#60A5FA" /></View><View style={{ flex: 1 }}>
       <Text style={styles.cardTitle}>{technician.fullName}</Text><Text style={styles.subtitle}>{technician.specialization}</Text>
     </View><View style={{ alignItems: "center", maxWidth: 110 }}>
@@ -294,7 +298,8 @@ function TechnicianCard({ technician, location, now, districtId, customerLocatio
     <View style={styles.actions}><Pressable accessibilityRole="button" accessibilityLabel={`View profile for ${technician.fullName}`} style={[styles.button, styles.secondary]} onPress={() => { onNavigate(); router.push({ pathname: "/technician-profile", params: { id: technician.uid } }); }}>
       <Text style={styles.buttonText}>View Profile</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={`Request service from ${technician.fullName}`} accessibilityState={{ disabled: !canRequest }} disabled={!canRequest} style={[styles.button, !canRequest && { opacity: 0.45 }]} onPress={() => { onNavigate(); router.push({ pathname: "/create-request", params: { technicianId: technician.uid, ...(service ? { service } : {}) } }); }}>
       <Text style={styles.buttonText}>Request Service</Text></Pressable></View>
-  </View>;
+    <SafetyActions target={technician.uid} kind="profile" contentId={technician.uid} />
+  </View></SafetyContent>;
 }
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: "#0009", justifyContent: "flex-end" },
