@@ -4,7 +4,7 @@ export type CreateDispatcherInput = { fullName: string; email: string; requestId
 export type CreateDispatcherResult = {
   uid: string;
   dispatcherId: string;
-  emailDelivery: "sent" | "failed" | "pending" | "emulated" | "unknown";
+  emailDelivery: "accepted" | "sent" | "failed" | "pending" | "emulated" | "unknown";
 };
 
 const settings = (import.meta as ImportMeta & { env: { VITE_DISPATCHER_API_URL?: string; DEV?: boolean } }).env;
@@ -52,6 +52,7 @@ async function callBackend(path: string, input: unknown): Promise<CreateDispatch
         "operation-recovery-required": "Provisioning needs trusted administrator recovery. Do not create a duplicate account.",
         "request-conflict": "This request ID has already been used. Close and reopen the form for different details.",
         "failed-precondition": "Only active, pending dispatcher invitations can be resent.",
+        "resource-exhausted": "Wait before resending. Firebase may require a longer wait because of email quotas or abuse protection.",
         "invalid-argument": "Check the dispatcher name and email and try again.",
       };
       const lifecycleMessages: Record<string, string> = {
@@ -76,7 +77,7 @@ async function callBackend(path: string, input: unknown): Promise<CreateDispatch
       return { targetUid: result.targetUid, accountStatus: result.accountStatus, outcome: "complete" };
     }
     if (!result || typeof result.uid !== "string" || typeof result.dispatcherId !== "string" ||
-      !["sent", "failed", "pending", "emulated", "unknown"].includes(result.emailDelivery)) {
+      !["accepted", "sent", "failed", "pending", "emulated", "unknown"].includes(result.emailDelivery)) {
       throw new Error("Provisioning response could not be confirmed. Retry the same request.");
     }
     return { uid: result.uid, dispatcherId: result.dispatcherId, emailDelivery: result.emailDelivery };

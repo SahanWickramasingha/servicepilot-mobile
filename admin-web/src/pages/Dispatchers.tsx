@@ -220,8 +220,9 @@ export default function Dispatchers() {
                           tone={pending ? "yellow" : "green"}
                         />
                         {pending && dispatcher.invitationDeliveryStatus && (
-                          <span>{dispatcher.invitationDeliveryStatus === "sent" ? "Email submitted" :
-                            dispatcher.invitationDeliveryStatus === "failed" ? "Email failed — resend available" :
+                          <span>{dispatcher.invitationDeliveryStatus === "accepted" ? "Email request accepted — delivery unconfirmed" :
+                            dispatcher.invitationDeliveryStatus === "sent" ? "Email submitted — delivery unconfirmed" :
+                            dispatcher.invitationDeliveryStatus === "failed" ? "Email request failed — check provider and retry later" :
                             dispatcher.invitationDeliveryStatus === "emulated" ? "Local test — no email sent" : "Email delivery pending"}</span>
                         )}
                       </td>
@@ -436,9 +437,10 @@ export default function Dispatchers() {
 
 function deliveryMessage(result: CreateDispatcherResult): string {
   switch (result.emailDelivery) {
-    case "sent": return "The password setup email was submitted to the mail provider.";
+    case "accepted": return "Firebase accepted the password setup email request. Inbox delivery is not confirmed. Ask the dispatcher to check their inbox and spam folder.";
+    case "sent": return "The password setup email was submitted to the mail provider. Inbox delivery is not confirmed.";
     case "emulated": return "Local test invitation generated; no real email was sent.";
-    case "failed": return "The setup email failed. Use Resend invitation to retry without creating another account.";
+    case "failed": return "The setup email request failed or was blocked. The account remains created. Check provider configuration and quotas before using Resend invitation.";
     default: return "Email delivery is not confirmed. Use Resend invitation to check or retry; the account already exists.";
   }
 }
