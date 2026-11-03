@@ -1,4 +1,0 @@
-# Copy to ignored .dev.vars for local Worker development.
-# Blank placeholders only: never commit a real service-account identity or key.
-BOOKING_SERVICE_ACCOUNT_EMAIL=
-BOOKING_SERVICE_ACCOUNT_PRIVATE_KEY=
