@@ -8,6 +8,12 @@ Open the release page and download the `.apk` file under **Assets**. Install it 
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
+## Admin Portal
+
+[Open ServicePilot Admin](https://servicepilot-admin-web.pages.dev/login)
+
+Sign in with an authorized Admin or Dispatcher account.
+
 ## Get started
 
 1. Install dependencies
