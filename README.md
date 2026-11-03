@@ -1,5 +1,11 @@
 # Welcome to Sahan service pilot Expo app 👋
 
+## Download Android APK
+
+[**Download ServicePilot Android Preview 2**](https://github.com/SahanWickramasingha/servicepilot-mobile/releases/tag/v1.0.0-preview.2)
+
+Open the release page and download the `.apk` file under **Assets**. Install it on your Android phone, allowing installation from your browser if prompted. Internet access is required. This is a pre-release for testing.
+
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
 ## Get started
