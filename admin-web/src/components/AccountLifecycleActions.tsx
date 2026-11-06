@@ -38,20 +38,22 @@ export function AccountLifecycleActions({
   busy,
   onView,
   onAction,
+  showView = true,
 }: {
   account: UserRecord;
   busy: boolean;
   onView: () => void;
   onAction: (action: AccountLifecycleAction) => void;
+  showView?: boolean;
 }) {
   const status = getEffectiveAccountStatus(account.accountStatus);
 
   return (
     <div className="account-action-row">
-      <button className="row-action view" onClick={onView} disabled={busy}>
+      {showView && <button className="row-action view" onClick={onView} disabled={busy}>
         <Eye size={14} />
         View
-      </button>
+      </button>}
 
       {!account.lifecyclePending && status === "active" && (
         <button

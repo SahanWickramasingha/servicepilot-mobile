@@ -49,6 +49,8 @@ export type UserRecord = {
   certifications?: string;
   serviceAreas?: string;
   serviceDivision?: string;
+  serviceDistrictIds?: string[];
+  serviceAreasByDistrict?: Record<string, string>;
   averageRating?: number;
   reviewCount?: number;
   completedJobs?: number;
