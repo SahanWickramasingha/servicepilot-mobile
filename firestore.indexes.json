@@ -1,6 +1,15 @@
 {
   "indexes": [
     {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "role", "order": "ASCENDING" },
+        { "fieldPath": "technicianApprovalStatus", "order": "ASCENDING" },
+        { "fieldPath": "emailVerified", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "service_reviews",
       "queryScope": "COLLECTION",
       "fields": [

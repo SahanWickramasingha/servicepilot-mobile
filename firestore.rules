@@ -167,7 +167,10 @@ service cloud.firestore {
         authEmailMatchesProfile() &&
         isPublicRegistrationRole() &&
         request.resource.data.accountStatus == "active" &&
-        request.resource.data.emailVerified == false &&
+        // Verification-first setup creates after Auth verification; trust only
+        // the owning token's verified claim, never the submitted profile flag.
+        (request.resource.data.emailVerified == false ||
+          (request.resource.data.emailVerified == true && request.auth.token.email_verified == true)) &&
         (
           (
             request.resource.data.role == "customer" &&
@@ -265,10 +268,23 @@ service cloud.firestore {
         projection.updatedAt == request.time;
     }
 
+    function reviewableTechnicianApplication(data) {
+      // The saved flag is token-attested on create and on its only permitted
+      // false -> true update. Reviewers cannot set it (see allowed keys below).
+      return data.get("emailVerified", false) == true && profileHasActiveAccount(data) &&
+        data.get("lifecyclePending", false) == false &&
+        data.uid is string && data.uid.size() > 0 && data.email is string && data.email.size() > 0 &&
+        data.fullName is string && data.fullName.matches('(?s).*\\S.*') &&
+        data.phone is string && data.phone.matches('(?s).*\\S.*') &&
+        data.address is string && data.address.matches('(?s).*\\S.*') && technicianCategoryId(data) != "";
+    }
+
     function validDispatcherTechnicianReview() {
-      return isActiveDispatcher() &&
+      return (isActiveDispatcher() || isActiveSuperAdmin()) &&
         resource.data.role == "technician" &&
         resource.data.technicianApprovalStatus == "pending" &&
+        reviewableTechnicianApplication(resource.data) &&
+        request.resource.data.reviewedAt == request.time && request.resource.data.updatedAt == request.time &&
         request.resource.data.role == resource.data.role &&
         request.resource.data
           .diff(resource.data)
@@ -294,7 +310,8 @@ service cloud.firestore {
           (
             request.resource.data.technicianApprovalStatus == "rejected" &&
             request.resource.data.rejectionReason is string &&
-            request.resource.data.rejectionReason.size() > 0
+            request.resource.data.rejectionReason.size() <= 2000 &&
+            request.resource.data.rejectionReason.matches('(?s).*\\S.*')
           )
         ) &&
         request.resource.data.reviewedBy == request.auth.uid;
@@ -414,7 +431,7 @@ service cloud.firestore {
     function isApprovedTechnicianId(technicianId) {
       let profile = get(/databases/$(database)/documents/users/$(technicianId)).data;
       return exists(/databases/$(database)/documents/users/$(technicianId)) &&
-        profile.role == "technician" && profile.technicianApprovalStatus == "approved" && profileHasActiveAccount(profile);
+        profile.get("role", "") == "technician" && profile.get("technicianApprovalStatus", "") == "approved" && profileHasActiveAccount(profile);
     }
 
     function validSystemMessageAuditCreate() {
@@ -590,9 +607,6 @@ service cloud.firestore {
         (paths.size() < 2 || validJobPhoto(paths[1], jobId, technicianId, stage)) &&
         (paths.size() < 3 || validJobPhoto(paths[2], jobId, technicianId, stage));
     }
-    function validEvidencePart(parts, index) {
-      return parts.size() <= index ? true : validEvidencePartRecord(parts[index]);
-    }
     function validEvidencePartRecord(part) {
       let name = part.name;
       let quantity = part.quantity;
@@ -609,10 +623,15 @@ service cloud.firestore {
         notes.recommendation is string && notes.recommendation.size() <= 3000 && validEvidenceParts(notes.parts);
     }
     function validEvidenceParts(parts) {
-      return parts is list && parts.size() <= 10 &&
-        validEvidencePart(parts, 0) && validEvidencePart(parts, 1) && validEvidencePart(parts, 2) &&
-        validEvidencePart(parts, 3) && validEvidencePart(parts, 4) && validEvidencePart(parts, 5) &&
-        validEvidencePart(parts, 6) && validEvidencePart(parts, 7) && validEvidencePart(parts, 8) && validEvidencePart(parts, 9);
+      let size = parts.size();
+      // Cache the size and avoid ten wrapper calls. Still validate EVERY record,
+      // including its allowed fields, nonblank name and integer quantity range.
+      return parts is list && size <= 10 &&
+        (size < 1 || validEvidencePartRecord(parts[0])) && (size < 2 || validEvidencePartRecord(parts[1])) &&
+        (size < 3 || validEvidencePartRecord(parts[2])) && (size < 4 || validEvidencePartRecord(parts[3])) &&
+        (size < 5 || validEvidencePartRecord(parts[4])) && (size < 6 || validEvidencePartRecord(parts[5])) &&
+        (size < 7 || validEvidencePartRecord(parts[6])) && (size < 8 || validEvidencePartRecord(parts[7])) &&
+        (size < 9 || validEvidencePartRecord(parts[8])) && (size < 10 || validEvidencePartRecord(parts[9]));
     }
     function validEvidenceSignature(signature) {
       return signature is map && signature.keys().hasOnly(['customerName', 'path', 'confirmed', 'signedAt']) &&
@@ -1154,29 +1173,41 @@ service cloud.firestore {
       return isOwner(technicianId) && userRole(technicianId) == "technician";
     }
 
-    function validDistrictArea(areas, districtId) {
-      let area = areas.get(districtId, "");
-      return !(districtId in areas) ||
-        (area is string && area.matches('other:[^ <>\\x00-\\x1f\\x7f][^<>\\x00-\\x1f\\x7f]{0,78}[^ <>\\x00-\\x1f\\x7f]')) ||
+    function validDistrictArea(area, districtId) {
+      return area is string && (area.matches('other:[^ <>\\x00-\\x1f\\x7f][^<>\\x00-\\x1f\\x7f]{0,78}[^ <>\\x00-\\x1f\\x7f]') ||
         (districtId == "kandy" && area in [
-          "lk-postal-20400-peradeniya", "lk-postal-20800-katugastota", "lk-postal-20168-kundasale", "lk-postal-20500-gampola"]);
+          "lk-postal-20400-peradeniya", "lk-postal-20800-katugastota", "lk-postal-20168-kundasale", "lk-postal-20500-gampola"]));
     }
 
     function validServiceAreas(areas, ids) {
       return areas is map && validServiceDistrictIds(ids) && areas.keys().hasOnly(ids) &&
-        validDistrictArea(areas, "ampara") && validDistrictArea(areas, "anuradhapura") &&
-        validDistrictArea(areas, "badulla") && validDistrictArea(areas, "batticaloa") &&
-        validDistrictArea(areas, "colombo") && validDistrictArea(areas, "galle") &&
-        validDistrictArea(areas, "gampaha") && validDistrictArea(areas, "hambantota") &&
-        validDistrictArea(areas, "jaffna") && validDistrictArea(areas, "kalutara") &&
-        validDistrictArea(areas, "kandy") && validDistrictArea(areas, "kegalle") &&
-        validDistrictArea(areas, "kilinochchi") && validDistrictArea(areas, "kurunegala") &&
-        validDistrictArea(areas, "mannar") && validDistrictArea(areas, "matale") &&
-        validDistrictArea(areas, "matara") && validDistrictArea(areas, "monaragala") &&
-        validDistrictArea(areas, "mullaitivu") && validDistrictArea(areas, "nuwara-eliya") &&
-        validDistrictArea(areas, "polonnaruwa") && validDistrictArea(areas, "puttalam") &&
-        validDistrictArea(areas, "ratnapura") && validDistrictArea(areas, "trincomalee") &&
-        validDistrictArea(areas, "vavuniya");
+        // Check presence before calling the validator, avoiding eager lookups
+        // for absent areas while still validating every present district value.
+        (!("ampara" in areas) || validDistrictArea(areas.ampara, "ampara")) &&
+        (!("anuradhapura" in areas) || validDistrictArea(areas.anuradhapura, "anuradhapura")) &&
+        (!("badulla" in areas) || validDistrictArea(areas.badulla, "badulla")) &&
+        (!("batticaloa" in areas) || validDistrictArea(areas.batticaloa, "batticaloa")) &&
+        (!("colombo" in areas) || validDistrictArea(areas.colombo, "colombo")) &&
+        (!("galle" in areas) || validDistrictArea(areas.galle, "galle")) &&
+        (!("gampaha" in areas) || validDistrictArea(areas.gampaha, "gampaha")) &&
+        (!("hambantota" in areas) || validDistrictArea(areas.hambantota, "hambantota")) &&
+        (!("jaffna" in areas) || validDistrictArea(areas.jaffna, "jaffna")) &&
+        (!("kalutara" in areas) || validDistrictArea(areas.kalutara, "kalutara")) &&
+        (!("kandy" in areas) || validDistrictArea(areas.kandy, "kandy")) &&
+        (!("kegalle" in areas) || validDistrictArea(areas.kegalle, "kegalle")) &&
+        (!("kilinochchi" in areas) || validDistrictArea(areas.kilinochchi, "kilinochchi")) &&
+        (!("kurunegala" in areas) || validDistrictArea(areas.kurunegala, "kurunegala")) &&
+        (!("mannar" in areas) || validDistrictArea(areas.mannar, "mannar")) &&
+        (!("matale" in areas) || validDistrictArea(areas.matale, "matale")) &&
+        (!("matara" in areas) || validDistrictArea(areas.matara, "matara")) &&
+        (!("monaragala" in areas) || validDistrictArea(areas.monaragala, "monaragala")) &&
+        (!("mullaitivu" in areas) || validDistrictArea(areas.mullaitivu, "mullaitivu")) &&
+        (!("nuwara-eliya" in areas) || validDistrictArea(areas["nuwara-eliya"], "nuwara-eliya")) &&
+        (!("polonnaruwa" in areas) || validDistrictArea(areas.polonnaruwa, "polonnaruwa")) &&
+        (!("puttalam" in areas) || validDistrictArea(areas.puttalam, "puttalam")) &&
+        (!("ratnapura" in areas) || validDistrictArea(areas.ratnapura, "ratnapura")) &&
+        (!("trincomalee" in areas) || validDistrictArea(areas.trincomalee, "trincomalee")) &&
+        (!("vavuniya" in areas) || validDistrictArea(areas.vavuniya, "vavuniya"));
     }
 
     // BEGIN GENERATED SERVICE CATEGORIES (scripts/generate-service-category-rules.mjs)
@@ -1224,6 +1255,9 @@ service cloud.firestore {
     function validMapProfile(technicianId) {
       let data = request.resource.data;
       let profile = getAfter(/databases/$(database)/documents/users/$(technicianId)).data;
+      // Map.get defaults are evaluated even when the key exists. Resolve legacy
+      // aliases once, not three times inside this same authoritative comparison.
+      let categoryId = technicianCategoryId(profile);
       return (ownsTechnicianLocation(technicianId) && userHasActiveAccount(technicianId) && request.auth.token.email_verified == true ||
           isActiveDispatcher() || isSuperAdmin()) &&
         profile.role == "technician" &&
@@ -1232,8 +1266,8 @@ service cloud.firestore {
         data.get("availability", null) == (profile.get("availability", null) in ["available", "busy", "offline"] ? profile.availability : null) &&
         data.technicianId == technicianId && data.fullName is string && data.fullName.size() > 0 && data.fullName == profile.fullName &&
         data.specialization is string && data.specialization == profile.get("specialization", "") &&
-        data.get("serviceCategoryId", technicianCategoryId(profile)) == technicianCategoryId(profile) &&
-        (data.serviceCategory == mapCategory(profile) || !data.keys().hasAny(["serviceCategoryId"]) && data.serviceCategory == "") &&
+        data.get("serviceCategoryId", categoryId) == categoryId &&
+        (data.serviceCategory == serviceCategoryLabel(categoryId) || !data.keys().hasAny(["serviceCategoryId"]) && data.serviceCategory == "") &&
         validServiceDistrictIds(data.serviceDistrictIds) &&
         data.serviceDistrictIds == profile.get("serviceDistrictIds", []) &&
         data.get("serviceAreasByDistrict", {}) == profile.get("serviceAreasByDistrict", {}) &&
@@ -1256,6 +1290,19 @@ service cloud.firestore {
         resource.data.approved == true;
       allow create, update: if hasActiveSession() && validMapProfile(technicianId);
       allow delete: if false;
+    }
+
+    // A read-only, NONEXISTENT path is an authoritative negative proof, not a
+    // stored status/projection. A successful server get (exists == false) proves
+    // this technician is currently ineligible using the SAME private authority
+    // as the public profile get. This lets a directory omit stale imported or
+    // orphaned projections without treating arbitrary permission errors as false.
+    // Refuse existing records so this endpoint can never disclose document data.
+    match /technician_directory_exclusions/{technicianId} {
+      allow get: if hasActiveSession() && isVerifiedCustomer() &&
+        !exists(/databases/$(database)/documents/technician_directory_exclusions/$(technicianId)) &&
+        !isApprovedTechnicianId(technicianId);
+      allow list, create, update, delete: if false;
     }
 
     function eligibleLocationRequest(requestId, technicianId, customerId) {
