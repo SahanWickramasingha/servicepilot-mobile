@@ -46,6 +46,7 @@ import {
 import {
   PublicTechnicianProfile,
   subscribeToApprovedTechnicians,
+  retryApprovedTechnicians,
 } from "@/src/services/technician.service";
 
 export default function HomeScreen() {
@@ -62,6 +63,8 @@ export default function HomeScreen() {
   >([]);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [techniciansError, setTechniciansError] = useState("");
+  const [techniciansLoading, setTechniciansLoading] = useState(true);
 
   useEffect(() => {
     let generation = 0;
@@ -74,6 +77,7 @@ export default function HomeScreen() {
       const version = ++generation;
       const isCurrent = () => version === generation && auth.currentUser?.uid === currentUser?.uid;
       setProfile(null); setRequests([]); setNotifications([]); setTechnicians([]); setErrorMessage(""); setLoading(true);
+      setTechniciansError(""); setTechniciansLoading(true);
 
       if (!currentUser) {
         setLoading(false);
@@ -137,10 +141,12 @@ export default function HomeScreen() {
 
           unsubscribeTechnicians =
             subscribeToApprovedTechnicians(
-              (items) => { if (isCurrent()) setTechnicians(items); },
+              (items) => { if (isCurrent()) { setTechnicians(items); setTechniciansError(""); setTechniciansLoading(false); } },
               (error) => {
                 if (!isCurrent()) return;
                 setTechnicians([]);
+                setTechniciansError("Unable to load technicians. Check your connection and account access, then retry.");
+                setTechniciansLoading(false);
                 console.error(
                   "Dashboard technicians subscription error:",
                   error
@@ -317,6 +323,10 @@ export default function HomeScreen() {
           ))}
         </View>
 
+        {techniciansError ? <View style={styles.technicianEmptyCard}>
+          <Text style={styles.technicianEmptyText}>{techniciansError}</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry technicians" onPress={() => { setTechniciansLoading(true); setTechniciansError(""); retryApprovedTechnicians(); }}><Text style={styles.viewAllText}>Retry</Text></TouchableOpacity>
+        </View> : techniciansLoading ? <ActivityIndicator accessibilityLabel="Loading technicians" color="#3B82F6" /> : <>
         <TechnicianSection
           title="Top Rated Technicians"
           technicians={topTechnicians}
@@ -327,6 +337,7 @@ export default function HomeScreen() {
           technicians={sameDivisionTechnicians}
           emptyText="No approved technicians found in your division yet."
         />
+        </>}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>
@@ -546,7 +557,7 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     alignSelf: "center",
     paddingHorizontal: 18,
-    paddingTop: 54,
+    paddingTop: 24,
     paddingBottom: 120,
   },
   headerRow: {
