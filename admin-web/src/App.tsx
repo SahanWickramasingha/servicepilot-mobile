@@ -37,6 +37,7 @@ export default function App() {
               <Route path="/admin/dashboard" element={<Dashboard />} />
               <Route path="/admin/dispatchers" element={<Dispatchers />} />
               <Route path="/admin/technicians" element={<Technicians />} />
+              <Route path="/admin/applications" element={<DispatcherApplications />} />
               <Route path="/admin/customers" element={<Customers />} />
               <Route path="/admin/requests" element={<ServiceRequests />} />
               <Route path="/admin/reviews" element={<Reviews />} />

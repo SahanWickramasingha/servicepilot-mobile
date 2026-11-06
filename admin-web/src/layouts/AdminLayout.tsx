@@ -25,6 +25,7 @@ const adminNavigation = [
   { label: "Dashboard", path: "/admin/dashboard", icon: LayoutDashboard },
   { label: "Dispatchers", path: "/admin/dispatchers", icon: ShieldCheck },
   { label: "Technicians", path: "/admin/technicians", icon: UserCog },
+  { label: "Applications", path: "/admin/applications", icon: ClipboardCheck },
   { label: "Customers", path: "/admin/customers", icon: Users },
   { label: "Service Requests", path: "/admin/requests", icon: ClipboardList },
   { label: "Reviews", path: "/admin/reviews", icon: MessageSquareText },
