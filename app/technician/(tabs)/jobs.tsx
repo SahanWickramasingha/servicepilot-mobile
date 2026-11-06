@@ -1,3 +1,4 @@
+import { AppModal as Modal } from "@/src/components/layout/AppModal";
 import { router } from "expo-router";
 import { useMemo, useRef, useState } from "react";
 import {
@@ -10,7 +11,6 @@ import {
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -714,7 +714,7 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     alignSelf: "center",
     paddingHorizontal: 18,
-    paddingTop: 54,
+    paddingTop: 24,
     paddingBottom: 120,
   },
   header: {
