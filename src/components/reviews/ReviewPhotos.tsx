@@ -1,5 +1,6 @@
+import { AppModal as Modal } from "@/src/components/layout/AppModal";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { auth } from "@/src/firebase/config";
 import { loadReviewPhoto, publishReviewPhotos } from "@/src/services/reviewPhotos.service";
 
@@ -58,6 +59,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   thumb: { width: 72, height: 72, borderRadius: 10, overflow: "hidden", backgroundColor: "#17263A", alignItems: "center", justifyContent: "center" },
   image: { width: "100%", height: "100%" }, error: { color: "#FCA5A5", fontSize: 10, padding: 4, textAlign: "center" },
-  viewer: { flex: 1, backgroundColor: "rgba(0,0,0,0.96)", padding: 20, paddingTop: 60 },
+  viewer: { flex: 1, backgroundColor: "rgba(0,0,0,0.96)", padding: 20, paddingTop: 24 },
   large: { flex: 1, width: "100%" }, close: { minHeight: 48, justifyContent: "center", alignSelf: "flex-end", padding: 12 }, text: { color: "white", fontSize: 16 },
 });

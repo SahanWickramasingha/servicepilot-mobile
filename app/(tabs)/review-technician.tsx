@@ -138,7 +138,7 @@ export default function ReviewTechnicianScreen() {
 }
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#06101D" }, centerScreen: { flex: 1, backgroundColor: "#06101D", alignItems: "center", justifyContent: "center" },
-  content: { width: "100%", maxWidth: 520, alignSelf: "center", paddingHorizontal: 18, paddingTop: 54, paddingBottom: 120 },
+  content: { width: "100%", maxWidth: 520, alignSelf: "center", paddingHorizontal: 18, paddingTop: 24, paddingBottom: 120 },
   header: { flexDirection: "row", alignItems: "center", gap: 14, marginBottom: 28 },
   title: { fontSize: 24, fontWeight: "800", color: "white", flex: 1 },
   backButton: { width: 44, height: 44, borderRadius: 13, backgroundColor: "#0D1B2A", alignItems: "center", justifyContent: "center" },
