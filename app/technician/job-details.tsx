@@ -1,3 +1,4 @@
+import { AppModal as Modal } from "@/src/components/layout/AppModal";
 import { BookingSchedulePanel } from "@/src/components/jobs/BookingSchedulePanel";
 import { RequestAttachments } from "@/src/components/jobs/RequestAttachments";
 import { SafetyActions } from "@/src/components/legal/Safety";
@@ -18,7 +19,6 @@ import {
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -568,7 +568,7 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     alignSelf: "center",
     paddingHorizontal: 18,
-    paddingTop: 54,
+    paddingTop: 24,
     paddingBottom: 70,
   },
   header: { flexDirection: "row", alignItems: "center", marginBottom: 24 },

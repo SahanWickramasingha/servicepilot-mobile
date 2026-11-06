@@ -1,5 +1,6 @@
+import { AppModal as Modal } from "@/src/components/layout/AppModal";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Modal, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Image, Text, TouchableOpacity, View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { auth } from "@/src/firebase/config";
 import { loadPrivatePhoto } from "@/src/services/privatePhotos.service";
@@ -24,7 +25,7 @@ export function JobPhoto({ path, label = "job photo" }: { path: string; label?: 
       {image ? <Image source={{ uri: image }} style={{ width: 82, height: 82 }} /> : error ? <Text style={{ color: "#FCA5A5" }}>Photo unavailable. Retry</Text> : <ActivityIndicator color="#60A5FA" />}
     </TouchableOpacity>
     <Modal visible={opened && !!image && viewer === auth.currentUser?.uid} transparent onRequestClose={() => setOpened(false)}>
-      <View accessibilityViewIsModal style={{ flex: 1, backgroundColor: "#06101D", padding: 24, paddingTop: 60 }}>
+      <View accessibilityViewIsModal style={{ flex: 1, backgroundColor: "#06101D", padding: 24, paddingTop: 24 }}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close job photo" onPress={() => setOpened(false)} style={{ minHeight: 44 }}><Text style={{ color: "white" }}>Close photo</Text></TouchableOpacity>
         {image && <Image source={{ uri: image }} resizeMode="contain" style={{ flex: 1 }} />}
       </View>

@@ -1,7 +1,6 @@
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, type GestureResponderEvent } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { auth } from "@/src/firebase/config";
 import { useTechnicianRequest } from "@/src/hooks/useTechnicianRequest";
 import { useJobEvidence } from "@/src/hooks/useJobEvidence";
@@ -88,7 +87,7 @@ export function JobEvidenceScreen({ mode }: { mode: Mode }) {
   };
   if (owner !== viewer || job.loading || state.loading) return <View style={styles.screen}><ActivityIndicator color="#60A5FA" /><Text style={styles.text}>Loading service evidence…</Text></View>;
   if (job.errorMessage || !job.request || state.error) return <View style={styles.screen}><Text style={styles.text}>{job.errorMessage || state.error || "Job unavailable."}</Text><Button label="Retry" onPress={state.retry} /><Button label="Back" onPress={() => router.back()} /></View>;
-  return <SafeAreaView style={styles.screen}><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}><ScrollView style={styles.screen} scrollEnabled={!drawing} contentContainerStyle={{ padding: 20, paddingBottom: 50, width: "100%", maxWidth: 560, alignSelf: "center" }} keyboardShouldPersistTaps="handled">
+  return <View style={styles.screen}><KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}><ScrollView style={styles.screen} scrollEnabled={!drawing} contentContainerStyle={{ padding: 20, paddingBottom: 24, width: "100%", maxWidth: 560, alignSelf: "center" }} keyboardShouldPersistTaps="handled">
     <Button label="Back" onPress={() => router.back()} /><Text accessibilityRole="header" style={styles.title}>{titles[mode]}</Text>
     <Text style={styles.text}>Job photos, service notes and drawn signatures are shared with authorized job participants and super administrators as service evidence. Get permission from the customer before photographing personal details or capturing a signature. No biometric identification is performed.</Text>
     {!canEdit && <Text style={styles.text}>Saved service evidence. This job cannot be edited in its current status.</Text>}
@@ -132,7 +131,7 @@ export function JobEvidenceScreen({ mode }: { mode: Mode }) {
     {busy && mode !== "notes" && <View style={styles.row}><ActivityIndicator color="#60A5FA" /><Text style={styles.text}>{progress > 0 ? `Uploading ${Math.round(progress * 100)}%` : "Saving…"}</Text></View>}
     {!!message && <Text accessibilityRole="alert" style={styles.error}>{message}</Text>}
     {canEdit && <Button label={mode === "notes" && busy ? "Saving…" : message ? "Retry save" : "Save"} primary={mode === "notes"} loading={mode === "notes" && busy} disabled={busy || !state.confirmed} onPress={() => void save()} />}
-  </ScrollView></KeyboardAvoidingView></SafeAreaView>;
+  </ScrollView></KeyboardAvoidingView></View>;
 }
 /** Short display copy only; the shared validator still decides every error. */
 function shortNotesError(error: string): string {
