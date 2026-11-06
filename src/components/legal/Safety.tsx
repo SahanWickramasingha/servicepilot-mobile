@@ -1,7 +1,8 @@
+import { AppModal as Modal } from "@/src/components/layout/AppModal";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { collection, deleteDoc, doc, getDocFromServer, limit, onSnapshot, query, runTransaction, serverTimestamp, setDoc } from "firebase/firestore";
-import { Modal, Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 import { auth, db } from "@/src/firebase/config";
 type SafetyState = { blocked: Set<string>; ready: boolean; error: string };
 const SafetyContext = createContext<SafetyState>({ blocked: new Set(), ready: false, error: "" });
@@ -104,7 +105,7 @@ export function SafetyActions({ target, kind, contentId }: { target: string; kin
     </View>
     {!!message && <Text accessibilityRole="alert" style={{ color: "#CBD5E1" }}>{message}</Text>}
     <Modal visible={reporting} animationType="slide" onRequestClose={() => { if (!busy) setReporting(false); }}>
-      <View style={{ flex: 1, padding: 24, paddingTop: 60, backgroundColor: "#06101D", gap: 20 }}>
+      <View style={{ flex: 1, padding: 24, paddingTop: 24, backgroundColor: "#06101D", gap: 20 }}>
         <Text accessibilityRole="header" style={{ color: "white", fontSize: 24 }}>Report objectionable content or user</Text>
         <Text style={{ color: "#CBD5E1" }}>Describe the issue. Avoid passwords, private keys and unnecessary personal data. Reports are private to you and authorized super administrators.</Text>
         <TextInput accessibilityLabel="Report reason" multiline maxLength={2000} editable={!busy} value={reason} onChangeText={value => { setReason(value); setReportId(""); }} style={{ color: "white", backgroundColor: "#17263A", minHeight: 130, padding: 14 }} />

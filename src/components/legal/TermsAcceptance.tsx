@@ -1,5 +1,6 @@
+import { AppModal as Modal } from "@/src/components/layout/AppModal";
 import { useState } from "react";
-import { Modal, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { PolicyDocument, type PolicyPage } from "./PolicyDocument";
 export function TermsAcceptance({ checked, onChange, error, disabled = false }: {
   checked: boolean; onChange: (value: boolean) => void; error?: string; disabled?: boolean;

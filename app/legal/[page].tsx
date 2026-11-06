@@ -15,7 +15,7 @@ export default function LegalScreen() {
   const open = async (url: string) => setMessage(await openContactLink(url, Linking.openURL) ?
     (url.startsWith("mailto:") ? "Mail composer opened. Review and send your email; opening it does not submit a request." : "") : "Unable to open this link. Use the contact details below or copy the email address.");
   const button = (label: string, action: () => void) => <Pressable key={label} accessibilityRole="button" style={{ minHeight: 48, paddingVertical: 12 }} onPress={action}><Text style={{ color: "#60A5FA", fontSize: 16 }}>{label}</Text></Pressable>;
-  return <View style={{ flex: 1, backgroundColor: "#06101D", paddingTop: 45 }}>
+  return <View style={{ flex: 1, backgroundColor: "#06101D", paddingTop: 24 }}>
     <Pressable accessibilityRole="button" style={{ padding: 18 }} onPress={() => router.canGoBack() ? router.back() : router.replace("/login")}><Text style={{ color: "#60A5FA" }}>Back</Text></Pressable>
     <ScrollView contentContainerStyle={{ paddingBottom: 35, maxWidth: 720, width: "100%", alignSelf: "center" }}>
       {page === "about" && <Image source={require("@/assets/images/servicepilot-logo.png")} accessibilityLabel="ServicePilot logo" style={{ height: 90, width: 90, alignSelf: "center" }} />}

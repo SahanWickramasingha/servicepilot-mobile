@@ -1,6 +1,7 @@
+import { AppModal as Modal } from "@/src/components/layout/AppModal";
 import { useEffect, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
-import { Modal, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { auth } from "@/src/firebase/config";
 import { acceptCurrentPolicies, subscribePolicyPrompt } from "@/src/services/policy.service";
 import { TermsAcceptance } from "./TermsAcceptance";
@@ -18,7 +19,7 @@ export function PolicyAcceptancePrompt() {
   }, []);
   const cancel = () => { if (!busy) { prompt?.reject(); setPrompt(undefined); } };
   return <Modal visible={!!prompt} animationType="slide" onRequestClose={cancel}>
-    <View style={{ flex: 1, backgroundColor: "#06101D", padding: 24, paddingTop: 65, justifyContent: "center", gap: 18 }}>
+    <View style={{ flex: 1, backgroundColor: "#06101D", padding: 24, paddingTop: 24, justifyContent: "center", gap: 18 }}>
       <Text accessibilityRole="header" style={{ color: "white", fontSize: 24 }}>Before sharing content</Text>
       <Text style={{ color: "#CBD5E1", lineHeight: 23 }}>Read the current Terms and Privacy Policy. Optional device permissions remain separate. You can cancel and continue browsing.</Text>
       <TermsAcceptance checked={checked} onChange={setChecked} error={error} disabled={busy} />
