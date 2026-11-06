@@ -4,18 +4,22 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
+  limit,
   onSnapshot,
   query,
   serverTimestamp,
-  setDoc,
   updateDoc,
   where,
   runTransaction,
-  writeBatch,
+  type DocumentSnapshot,
 } from "firebase/firestore";
+import type { User } from "firebase/auth";
+import { accountSessionDenial } from "@/functions/src/domain/accountSession";
 import { buildMapProfile } from "@/functions/src/domain/mapProjection";
-import { TERMS_VERSION, PRIVACY_POLICY_VERSION, type PolicyAcceptance } from "@/functions/src/domain/legalPolicy";
+import { isReviewableTechnicianApplication } from "@/functions/src/domain/technicianApplication";
+import { TERMS_VERSION, PRIVACY_POLICY_VERSION, hasCurrentPolicyAcceptance, type PolicyAcceptance } from "@/functions/src/domain/legalPolicy";
 import { selectedTechnicianCategory, technicianCategory } from "@/functions/src/domain/serviceCategories";
 import { readTechnicianAvailability, TechnicianAvailability } from "@/functions/src/domain/availability";
 import { ServiceAreasByDistrict, StoredServiceAreasByDistrict, encodeServiceAreas } from "@/functions/src/domain/serviceAreas";
@@ -107,15 +111,138 @@ export function isPublicRegistrationRole(
   return role === "customer" || role === "technician";
 }
 
+/** Mirrors required registration form input before creating a partial Auth user. */
+export function validateRegistrationProfile(data: Omit<UserProfileData, "uid">): void {
+  const invalid = (message: string): never => { throw Object.assign(new Error(message), {
+    code: "registration/invalid-profile", registrationStep: "profile-payload-validation",
+  }); };
+  if (data.policyAccepted !== true) invalid("Agree to the Terms and acknowledge the Privacy Policy before registering.");
+  if (!isPublicRegistrationRole(data.role)) invalid("Only Customer and Technician accounts can be registered.");
+  for (const field of ["fullName", "email", "phone", "address"] as const) {
+    if (typeof data[field] !== "string" || !data[field].trim()) invalid(`Enter your ${field === "fullName" ? "full name" : field}.`);
+  }
+  if (data.role === "technician") {
+    try { selectedTechnicianCategory(data.serviceCategoryId ?? technicianCategory(data)?.id); }
+    catch { invalid("Select a valid service category."); }
+    for (const field of ["experience", "qualifications", "serviceAreas"] as const) {
+      if (typeof data[field] !== "string" || !data[field].trim()) invalid(`Enter your ${field === "serviceAreas" ? "service area" : field}.`);
+    }
+    for (const field of ["certifications", "serviceDivision"] as const) {
+      if (data[field] !== undefined && typeof data[field] !== "string") invalid(`Enter valid ${field}.`);
+    }
+  }
+}
+
+async function profileStage<T>(registrationStep: string, action: () => T | Promise<T>): Promise<T> {
+  try { return await action(); }
+  catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    const fallback = registrationStep === "profile-create-transaction" ? "firestore/profile-write-failed" :
+      registrationStep === "profile-existence-read" ? "firestore/profile-read-failed" : "firestore/profile-confirmation-failed";
+    // Firebase-like objects can cross boundaries without instanceof Error.
+    // Preserve their code, but never copy their message/payload into diagnostics.
+    throw Object.assign(error instanceof Error ? error : new Error("Unable to confirm account setup. Retry recovery when connected."), {
+      code: typeof code === "string" && code ? code : fallback, registrationStep,
+    });
+  }
+}
+
+export type RegistrationProfileConfirmation = {
+  role: PublicRegistrationRole;
+  technicianApprovalStatus?: TechnicianApprovalStatus;
+  policyCurrent: boolean;
+  created: boolean;
+  emailVerified: boolean;
+};
+
+function registrationProfileError(code: string, message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
+}
+
+function requireRegistrationAccount(user: User): void {
+  if (auth.currentUser !== user) throw registrationProfileError("auth/registration-account-changed", "Your account session changed. Sign in again to recover the saved profile.");
+}
+
+function requireServerProfileSnapshot(snapshot: DocumentSnapshot): void {
+  if (snapshot.metadata?.fromCache !== false || snapshot.metadata?.hasPendingWrites !== false) {
+    throw registrationProfileError("firestore/profile-confirmation-pending", "The server profile is not confirmed yet. Reconnect and retry recovery; your account has been kept.");
+  }
+}
+
+function resolvedProfileTimestamp(value: unknown): boolean {
+  const time = value instanceof Date ? value.getTime() : value && typeof value === "object" &&
+    "toMillis" in value && typeof value.toMillis === "function" ? value.toMillis() : undefined;
+  return typeof time === "number" && Number.isFinite(time);
+}
+
+async function confirmRegistrationProfile(snapshot: DocumentSnapshot, user: User, expectedRole: PublicRegistrationRole, created: boolean): Promise<RegistrationProfileConfirmation> {
+  requireRegistrationAccount(user);
+  requireServerProfileSnapshot(snapshot);
+  if (!snapshot.exists()) throw registrationProfileError("firestore/profile-confirmation-missing", "The saved profile could not be found on the server. Retry authenticated recovery; do not create another account.");
+  const profile = snapshot.data();
+  if (profile.uid !== user.uid || typeof profile.email !== "string" || profile.email !== user.email?.trim().toLowerCase()) {
+    throw registrationProfileError("firestore/profile-identity-mismatch", "The saved profile identity could not be confirmed. Contact support; it has not been changed.");
+  }
+  if (profile.role !== expectedRole || !isPublicRegistrationRole(profile.role)) {
+    throw registrationProfileError("firestore/profile-role-mismatch", "This account already has a different role. Sign in using its existing role; recovery cannot change it.");
+  }
+  // Use the same revocation policy as login/live access: a new authenticated
+  // session may be newer than sessionRevokedAt. Presence alone is not denial.
+  const token = profile.sessionRevokedAt === undefined ? null : await user.getIdTokenResult();
+  requireRegistrationAccount(user);
+  const denial = accountSessionDenial(profile, token?.claims.auth_time as number | undefined);
+  if (denial) throw registrationProfileError(profile.sessionRevokedAt !== undefined && profile.accountStatus === "active" && profile.lifecyclePending !== true ?
+    "firestore/profile-session-revoked" : "firestore/profile-account-inactive", denial);
+  const invalid = () => { throw registrationProfileError("firestore/profile-schema-invalid", "The saved profile needs support review. Recovery has not changed it. Sign in or contact support."); };
+  for (const field of ["fullName", "phone", "address"]) if (typeof profile[field] !== "string" || !profile[field].trim()) invalid();
+  if (typeof profile.emailVerified !== "boolean" || (profile.lifecyclePending !== undefined && typeof profile.lifecyclePending !== "boolean")) invalid();
+  for (const field of ["createdAt", "updatedAt", "acceptedAt"]) {
+    // No equality against serverTimestamp() sentinels, object identity or device
+    // clock. Existing legacy missing dates/policy go through normal login gates.
+    if ((created || profile[field] !== undefined) && !resolvedProfileTimestamp(profile[field])) invalid();
+  }
+  if (profile.role === "technician") {
+    if (!["pending", "approved", "rejected"].includes(profile.technicianApprovalStatus) || !technicianCategory(profile)) invalid();
+    for (const field of ["experience", "qualifications", "certifications", "serviceAreas", "serviceDivision"]) {
+      if ((created || profile[field] !== undefined) && typeof profile[field] !== "string") invalid();
+    }
+  }
+  const policyCurrent = hasCurrentPolicyAcceptance(profile);
+  if (created && !policyCurrent) invalid();
+  return { role: profile.role, ...(profile.role === "technician" ? { technicianApprovalStatus: profile.technicianApprovalStatus } : {}), policyCurrent, created, emailVerified: profile.emailVerified };
+}
+
+/** Server-only reconciliation for verification-first setup and legacy recovery.
+ * A cached missing snapshot is never permission to create another profile. */
+export async function inspectRegistrationProfile(user: User, role?: PublicRegistrationRole) {
+  return profileStage("profile-existence-read", async () => {
+    const snapshot = await getDocFromServer(doc(db, "users", user.uid));
+    requireRegistrationAccount(user);
+    requireServerProfileSnapshot(snapshot);
+    if (!snapshot.exists()) return null;
+    const expected = role ?? snapshot.data().role;
+    return confirmRegistrationProfile(snapshot, user, expected, false);
+  });
+}
+
 export async function createUserProfile(
-  data: UserProfileData
-): Promise<void> {
-  if (data.policyAccepted !== true) throw new Error("Agree to the Terms and acknowledge the Privacy Policy before registering.");
+  data: UserProfileData,
+  options: { recoverExisting?: boolean } = {},
+): Promise<RegistrationProfileConfirmation> {
+  validateRegistrationProfile(data);
+  const registeringUser = auth.currentUser;
+  if (registeringUser?.uid !== data.uid || !isPublicRegistrationRole(data.role)) throw registrationProfileError("auth/registration-account-changed", "Register your own Customer or Technician profile only.");
   const userRef = doc(db, "users", data.uid);
   const isTechnician = data.role === "technician";
-  const existingProfile = await getDoc(userRef);
+  const existingProfile = await profileStage("profile-existence-read", async () => {
+    const snapshot = await getDocFromServer(userRef);
+    requireRegistrationAccount(registeringUser);
+    requireServerProfileSnapshot(snapshot);
+    return snapshot;
+  });
 
   if (existingProfile.exists()) {
+    if (options.recoverExisting) return profileStage("profile-existing-validation", () => confirmRegistrationProfile(existingProfile, registeringUser, data.role, false));
     throw Object.assign(
       new Error(
         "A profile already exists for this authenticated user."
@@ -138,7 +265,7 @@ export async function createUserProfile(
     address: data.address.trim(),
     role: data.role,
     accountStatus: "active",
-    emailVerified: false,
+    emailVerified: registeringUser.emailVerified === true,
     termsVersion: TERMS_VERSION,
     privacyPolicyVersion: PRIVACY_POLICY_VERSION,
     acceptedAt: serverTimestamp(),
@@ -182,7 +309,40 @@ export async function createUserProfile(
   });
 
   try {
-    await setDoc(userRef, profilePayload);
+    const created = await profileStage("profile-create-transaction", () => runTransaction(db, async (transaction) => {
+      requireRegistrationAccount(registeringUser);
+      const existing = await transaction.get(userRef);
+      requireRegistrationAccount(registeringUser);
+      if (existing.exists()) {
+        if (options.recoverExisting) return false;
+        throw Object.assign(new Error("A profile already exists. Sign in instead; contact support if access is blocked."), { code: "firestore/profile-already-exists" });
+      }
+      transaction.set(userRef, profilePayload);
+      return true;
+    }));
+    try {
+      return await profileStage("profile-server-confirmation", async () => {
+        let snapshot = await getDocFromServer(userRef);
+        requireRegistrationAccount(registeringUser);
+        requireServerProfileSnapshot(snapshot);
+        if (!snapshot.exists()) {
+          // getDocFromServer uses a snapshot listener. Resolve an unexpected
+          // post-commit absence with one direct, read-only transaction, never
+          // a second write, a cached profile or a timer-based access grant.
+          snapshot = await runTransaction(db, async transaction => {
+            requireRegistrationAccount(registeringUser);
+            const current = await transaction.get(userRef);
+            requireRegistrationAccount(registeringUser);
+            return current;
+          }, { maxAttempts: 1 });
+        }
+        return confirmRegistrationProfile(snapshot, registeringUser, data.role, created);
+      });
+    } catch (error) {
+      // Transaction acknowledgement is separate from a later read/validation.
+      // Never tell recovery to overwrite or delete a committed profile.
+      throw Object.assign(error as Error, { profileWriteCommitted: created });
+    }
   } catch (error: any) {
     logRegistrationError({
       step: "setDoc-users-uid:error",
@@ -193,22 +353,9 @@ export async function createUserProfile(
       ...safeProfileDebugValues,
     });
 
-    error.code =
-      error?.code || "firestore/profile-write-failed";
-    error.registrationStep =
-      error?.registrationStep ||
-      "setDoc-users-uid";
     throw error;
   }
 
-  logRegistrationDebug({
-    step: "setDoc-users-uid:success",
-    uid: data.uid,
-    firebaseErrorCode: null,
-    firebaseErrorMessage: null,
-    path: `users/${data.uid}`,
-    ...safeProfileDebugValues,
-  });
 }
 
 export function getTechnicianDivision(
@@ -333,13 +480,15 @@ export async function getPendingTechnicians(): Promise<
   const pendingTechniciansQuery = query(
     usersRef,
     where("role", "==", "technician"),
-    where("technicianApprovalStatus", "==", "pending")
+    where("technicianApprovalStatus", "==", "pending"),
+    where("emailVerified", "==", true),
+    limit(50)
   );
   const snapshot = await getDocs(pendingTechniciansQuery);
 
   return snapshot.docs.map(
     (item) => item.data() as UserProfile
-  );
+  ).filter(isReviewableTechnicianApplication);
 }
 
 export async function updateTechnicianApprovalStatus({
@@ -357,27 +506,27 @@ export async function updateTechnicianApprovalStatus({
   rejectionReason?: string;
 }): Promise<void> {
   const technicianRef = doc(db, "users", technicianUid);
-  const profile = (await getDoc(technicianRef)).data();
-  if (!profile) throw new Error("Technician profile unavailable.");
-  const category = technicianCategory(profile);
-  const categoryFields = category ? selectedTechnicianCategory(category.id) : {};
-  const batch = writeBatch(db);
-  batch.update(technicianRef, {
-    ...categoryFields,
-    technicianApprovalStatus: status,
-    reviewedBy: dispatcherUid,
-    reviewedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    rejectionReason:
-      status === "rejected"
-        ? rejectionReason?.trim() ||
-          "Application was not approved."
-        : deleteField(),
+  if (!technicianUid || !dispatcherUid || status === "rejected" && (!rejectionReason?.trim() || rejectionReason.trim().length > 2000)) throw new Error("A rejection reason of up to 2,000 characters is required.");
+  await runTransaction(db, async (transaction) => {
+    const profile = (await transaction.get(technicianRef)).data();
+    if (!profile || profile.uid !== technicianUid || !isReviewableTechnicianApplication(profile)) throw new Error("Application already reviewed, unverified or incomplete. Refresh the applications list.");
+    const category = technicianCategory(profile);
+    const categoryFields = category ? selectedTechnicianCategory(category.id) : {};
+    transaction.update(technicianRef, {
+      ...categoryFields,
+      technicianApprovalStatus: status,
+      reviewedBy: dispatcherUid,
+      reviewedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      rejectionReason:
+        status === "rejected"
+          ? rejectionReason!.trim()
+          : deleteField(),
+    });
+    transaction.set(doc(db, "technician_map_profiles", technicianUid), {
+      ...buildMapProfile(technicianUid, { ...profile, ...categoryFields, technicianApprovalStatus: status }), updatedAt: serverTimestamp(),
+    });
   });
-  batch.set(doc(db, "technician_map_profiles", technicianUid), {
-    ...buildMapProfile(technicianUid, { ...profile, ...categoryFields, technicianApprovalStatus: status }), updatedAt: serverTimestamp(),
-  });
-  await batch.commit();
 }
 
 export function getDashboardRouteForRole(
