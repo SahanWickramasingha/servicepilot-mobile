@@ -25,10 +25,35 @@ type VerificationEmailResponse = {
   message: string;
 };
 
+async function authDeadline<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(Object.assign(new Error("The authentication request could not be confirmed. Retry to continue."),
+        { code: "auth/operation-timeout" })), 20_000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
 export async function registerUser(
   email: string,
-  password: string
+  password: string,
+  recover = false
 ): Promise<UserCredential> {
+  // Explicit registration recovery proves ownership; never used by loginUser.
+  if (recover) {
+    try { return await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password); }
+    catch (error) {
+      const code = getFirebaseErrorCode(error) ?? "auth/recovery-failed";
+      let message = "Unable to authenticate this account for recovery. Try again, or contact support.";
+      if (["auth/invalid-credential", "auth/invalid-login-credentials", "auth/wrong-password", "auth/user-not-found"].includes(code)) {
+        message = "We could not authenticate this email and password. Use the password from your original registration. Check your email address; if you forgot the password, use Forgot Password on the sign-in screen, then return to recover registration. Your existing account has been kept.";
+      } else if (code === "auth/user-disabled") message = "This account is disabled. Contact support; registration recovery cannot reactivate it.";
+      else if (code === "auth/network-request-failed") message = "Unable to reach authentication. Check your connection and retry recovery.";
+      else if (code === "auth/too-many-requests") message = "Too many recovery attempts. Wait a while before retrying, or reset your password from the sign-in screen.";
+      throw Object.assign(new Error(message), { code, registrationStep: "recovery-authentication" });
+    }
+  }
   logRegistrationDebug({
     step: "createUserWithEmailAndPassword:start",
     uid: null,
@@ -69,12 +94,14 @@ export async function loginUser(
   rememberMe: boolean = false
 ): Promise<UserCredential> {
   const { applyLoginPersistence } = await import("@/src/firebase/authPersistence");
-  await applyLoginPersistence(auth, rememberMe);
-  return await signInWithEmailAndPassword(
+  const previousUser = auth.currentUser;
+  await authDeadline(applyLoginPersistence(auth, rememberMe));
+  if (auth.currentUser !== previousUser) throw Object.assign(new Error("Your account changed. Retry sign-in."), { code: "auth/user-mismatch" });
+  return await authDeadline(signInWithEmailAndPassword(
     auth,
     email.trim(),
     password
-  );
+  ));
 }
 
 export async function resetPassword(email: string): Promise<void> {
@@ -85,7 +112,7 @@ export async function resetPassword(email: string): Promise<void> {
   try {
     // The Console email template selects the action handler. A continue URL
     // would only select a destination AFTER handling the action.
-    await sendPasswordResetEmail(auth, normalized);
+    await authDeadline(sendPasswordResetEmail(auth, normalized));
   } catch (error) {
     switch (getFirebaseErrorCode(error)) {
       // Preserve the same neutral outcome with or without enumeration protection.
@@ -160,12 +187,12 @@ export async function changePassword(
 
   try {
     const credential = EmailAuthProvider.credential(user.email, currentPassword);
-    await reauthenticateWithCredential(user, credential);
+    await authDeadline(reauthenticateWithCredential(user, credential));
     // Never update a captured user's password after logout or an account switch.
     if (auth.currentUser !== user) {
       throw Object.assign(new Error("Session changed."), { code: "auth/user-mismatch" });
     }
-    await updatePassword(user, newPassword);
+    await authDeadline(updatePassword(user, newPassword));
     if (auth.currentUser !== user) {
       throw Object.assign(new Error("Session changed."), { code: "auth/user-mismatch" });
     }
@@ -178,6 +205,10 @@ export async function changePassword(
 export async function sendVerificationEmail(
   user: User
 ): Promise<VerificationEmailResponse> {
+  const requireCurrentUser = () => {
+    if (auth.currentUser !== user) throw Object.assign(new Error("Your account changed. Sign in again to verify your email."), { code: "auth/user-mismatch" });
+  };
+  requireCurrentUser();
   logRegistrationDebug({
     step: "sendEmailVerification:reload-user:start",
     uid: user.uid,
@@ -186,7 +217,8 @@ export async function sendVerificationEmail(
   });
 
   try {
-    await user.reload();
+    await authDeadline(user.reload());
+    requireCurrentUser();
   } catch (error) {
     logRegistrationError({
       step: "sendEmailVerification:reload-user:error",
@@ -195,7 +227,9 @@ export async function sendVerificationEmail(
       firebaseErrorMessage: getFirebaseErrorMessage(error),
     });
 
-    throw error;
+    throw Object.assign(error instanceof Error ? error : new Error("Unable to refresh verification state."), {
+      code: getFirebaseErrorCode(error) ?? "auth/verification-refresh-failed", registrationStep: "verification-refresh",
+    });
   }
 
   if (user.emailVerified) {
@@ -221,7 +255,8 @@ export async function sendVerificationEmail(
   });
 
   try {
-    await sendEmailVerification(user);
+    await authDeadline(sendEmailVerification(user));
+    requireCurrentUser();
   } catch (error) {
     logRegistrationError({
       step: "sendEmailVerification:error",
@@ -230,7 +265,9 @@ export async function sendVerificationEmail(
       firebaseErrorMessage: getFirebaseErrorMessage(error),
     });
 
-    throw error;
+    throw Object.assign(error instanceof Error ? error : new Error("Unable to request verification email."), {
+      code: getFirebaseErrorCode(error) ?? "auth/verification-request-failed", registrationStep: "send-verification",
+    });
   }
 
   logRegistrationDebug({
@@ -243,7 +280,7 @@ export async function sendVerificationEmail(
   return {
     success: true,
     alreadyVerified: false,
-    message: "Verification email sent.",
+    message: "Verification email request accepted. Inbox delivery is not confirmed.",
   };
 }
 
