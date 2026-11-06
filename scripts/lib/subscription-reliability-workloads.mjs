@@ -9,11 +9,11 @@ const tick = () => new Promise(setImmediate);
 const require = createRequire(import.meta.url);
 
 export function sessionFixture() {
-  const callbacks = new Set(), auth = { currentUser: { uid: 'customer-a' } };
+  const callbacks = new Set(), auth = { currentUser: { uid: 'customer-a', getIdToken: async () => 'fixture-token' } };
   const watch = (next) => { callbacks.add(next); return () => callbacks.delete(next); };
   auth.onAuthStateChanged = watch;
   return { auth, watch, sdk: { onAuthStateChanged: (_, next) => watch(next) },
-    emit(uid) { auth.currentUser = uid ? { uid } : null; for (const next of [...callbacks]) next(auth.currentUser); },
+    emit(uid) { auth.currentUser = uid ? { uid, getIdToken: async () => 'fixture-token' } : null; for (const next of [...callbacks]) next(auth.currentUser); },
     observers: () => callbacks.size };
 }
 
@@ -84,7 +84,7 @@ export function directoryFixture(root = '.') {
     '@/functions/src/domain/mapProjection': { MAP_MAX_ITEMS: 24, MAP_PAGE_SIZE: 8 },
     '@/src/utils/technicianRating': {} };
   const service = loadService('src/services/technician.service.ts', deps, root);
-  return { session, service, connections, reads: () => reads, hold: (pending) => { holdRead = pending; },
+  return { session, service, sdk, connections, reads: () => reads, hold: (pending) => { holdRead = pending; },
     snapshot: () => ({ docs: [{ id: 'tech-a', ref: 'technician_map_profiles/tech-a' }], size: 1,
       metadata: { fromCache: false, hasPendingWrites: false } }) };
 }
@@ -92,6 +92,7 @@ export function directoryFixture(root = '.') {
 export async function directoryWorkload(root = '.') {
   const f = directoryFixture(root), values = [], stops = [];
   for (let i = 0; i < 2; i++) stops.push(f.service.subscribeToApprovedTechnicians((rows) => values.push(rows), (error) => { throw error; }));
+  await tick();
   const registrations = f.connections.length;
   for (const connection of f.connections) connection.next(f.snapshot());
   await tick();

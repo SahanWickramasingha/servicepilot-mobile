@@ -14,8 +14,12 @@ const safetyFixture = { blocked: new Set(), ready: true, error: '' };
 const { createBoundedSessionCache } = pureModule('src/utils/boundedSessionCache.ts');
 // Run the real pooling/reducer logic in host tests, bound to each fixture's Auth.
 export function performanceTestDependency(id, deps) {
+  if (id === '@/functions/src/domain/technicianApplication') return require('../../functions/lib/domain/technicianApplication.js');
+  if (id === '@/src/components/layout/AppModal') return { AppModal: 'Modal' };
+  if (id === './onboarding-draft.service') return { clearOnboardingDraftUnless() {} };
   if (id === '@/src/components/legal/Safety') return { useSafety: () => safetyFixture, useHiddenProfiles: () => ({ hidden: safetyFixture.blocked, ready: true }), SafetyContent: 'SafetyContent', SafetyActions: 'SafetyActions' };
   if (id === '@/functions/src/domain/legalPolicy') return pureModule('functions/src/domain/legalPolicy.ts');
+  if (id === '@/functions/src/domain/accountSession') return pureModule('functions/src/domain/accountSession.ts');
   // Existing transport/category workloads assume accepted users; dedicated legal
   // tests execute the real acceptance service, including cancellation/retries.
   if (id === './policy.service') return { requirePolicyAcceptance: async () => {} };

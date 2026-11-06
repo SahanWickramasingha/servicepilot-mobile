@@ -57,7 +57,7 @@ test('public directory filter/page scopes stay separate; account switches reject
   for (const filters of [undefined, { category: 'Electrical' }, { division: 'Kandy' }, { pageCount: 2 }]) {
     stops.push(f.service.subscribeToApprovedTechnicians((rows) => values.push(rows), (error) => errors.push(error), filters));
   }
-  assert.equal(f.connections.length, 4);
+  await tick(); assert.equal(f.connections.length, 4);
   let finish; f.hold(new Promise((done) => { finish = done; }));
   f.connections[0].next(f.snapshot()); f.session.emit('customer-b');
   assert.ok(f.connections.every((c) => c.stopped)); const count = values.length;
@@ -65,12 +65,66 @@ test('public directory filter/page scopes stay separate; account switches reject
   stops.forEach((stop) => stop()); assert.equal(f.session.observers(), 0);
 });
 
+test('account changes cancel a pending negative eligibility proof for every pooled directory consumer', async () => {
+  const f = directoryFixture(), values = [], errors = [], reads = [];
+  let finish;
+  f.sdk.doc = (_, collection, id) => ({ path: collection + '/' + id, id });
+  f.sdk.getDocFromServer = async ref => {
+    reads.push(ref.path);
+    if (ref.path.startsWith('technician_map_profiles/')) throw Object.assign(Error('denied'), { code: 'permission-denied' });
+    await new Promise(resolve => { finish = resolve; });
+    return { exists: () => false };
+  };
+  const stops = [0, 1].map(() => f.service.subscribeToApprovedTechnicians(v => values.push(v), e => errors.push(e)));
+  await tick();
+  const snapshot = f.snapshot(); snapshot.docs[0].ref = { path: 'technician_map_profiles/tech-a', id: 'tech-a' };
+  f.connections[0].next(snapshot); await tick();
+  assert.deepEqual(reads, ['technician_map_profiles/tech-a', 'technician_directory_exclusions/tech-a']);
+  f.session.emit('customer-b');
+  assert.equal(f.connections[0].stopped, true);
+  assert.deepEqual(values, [[], []]);
+  finish(); await tick();
+  assert.deepEqual(values, [[], []], 'old proof must never emit into the replacement session');
+  assert.deepEqual(errors, []);
+  f.connections[0].next(snapshot); await tick(); assert.equal(reads.length, 2);
+  stops.forEach(stop => stop()); assert.equal(f.session.observers(), 0);
+});
+
 test('public directory errors supersede pending verification instead of republishing its obsolete rows', async () => {
   const f = directoryFixture(), values = [], errors = [];
   const stop = f.service.subscribeToApprovedTechnicians((rows) => values.push(rows), (error) => errors.push(error));
+  await tick();
   let finish; f.hold(new Promise((done) => { finish = done; }));
   f.connections[0].next(f.snapshot()); f.connections[0].error(new Error('Denied'));
   finish(); await tick(); assert.deepEqual(values, [[]]); assert.equal(errors.length, 1); stop();
+});
+
+test('Retry reconnects a failed pooled directory once for both mounted screens and cancels old listeners', async () => {
+  const f = directoryFixture(), rows = [], errors = [];
+  const stops = [0, 1].map(() => f.service.subscribeToApprovedTechnicians(value => rows.push(value), error => errors.push(error)));
+  await tick(); assert.equal(f.connections.length, 1);
+  f.connections[0].error(Object.assign(new Error('Denied'), { code: 'permission-denied' }));
+  assert.equal(errors.length, 2); assert.match(errors[0].message, /directory query failed/);
+  f.service.retryApprovedTechnicians(); await tick();
+  assert.equal(f.connections[0].stopped, true); assert.equal(f.connections.length, 2);
+  f.connections[0].next(f.snapshot()); await tick(); assert.equal(rows.filter(value => value.length).length, 0);
+  f.connections[1].next(f.snapshot()); await tick(); assert.equal(rows.filter(value => value.length).length, 2);
+  stops.forEach(stop => stop()); assert.ok(f.connections.every(c => c.stopped));
+  f.service.retryApprovedTechnicians(); await tick(); assert.equal(f.connections.length, 2);
+});
+
+test('cached emptiness cannot confirm the directory and an offline deadline offers an error without polling', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = directoryFixture(), values = [], errors = [];
+  const stop = f.service.subscribeToApprovedTechnicians(value => values.push(value), error => errors.push(error));
+  await tick();
+  f.connections[0].next({ docs: [], size: 0, metadata: { fromCache: true } });
+  assert.deepEqual(values, []);
+  t.mock.timers.tick(15000);
+  assert.equal(errors.length, 1); assert.equal(errors[0].code, 'unavailable');
+  assert.match(errors[0].message, /confirmation/);
+  t.mock.timers.tick(15000); assert.equal(errors.length, 1); assert.equal(f.connections.length, 1);
+  stop(); assert.equal(f.connections[0].stopped, true);
 });
 
 test('public profile consumers share one server approval check and cached availability stays unconfirmed', async () => {
