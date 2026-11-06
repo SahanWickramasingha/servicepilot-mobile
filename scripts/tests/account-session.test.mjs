@@ -32,14 +32,16 @@ function mobileHarness() {
   const streams = [], events = [], auth = { currentUser: null };
   const { observeAccountSession } = load("src/services/account-session.service.ts", {
     "firebase/auth": { onAuthStateChanged: (_, next) => { authListener = next; return () => { stoppedAuth++; }; } },
-    "firebase/firestore": { doc: (_, collection, uid) => ({ collection, uid }), onSnapshot: (ref, next, error) => {
+    "firebase/firestore": { doc: (_, collection, uid) => ({ collection, uid }), onSnapshot: (ref, _, next, error) => {
       const stream = { ref, next, error, stopped: false }; streams.push(stream); return () => { stream.stopped = true; };
     } },
     "@/src/firebase/config": { auth, db: {} }, "@/functions/src/domain/accountSession": domain,
+    "./onboarding-draft.service": { clearOnboardingDraftUnless() {} },
+    "./profile-initialization.service": load("src/services/profile-initialization.service.ts", {}),
   });
   const stop = observeAccountSession({ denied: (message) => events.push(["denied", message]), error: (message) => events.push(["error", message]), allowed: () => events.push(["allowed"]) });
   return { auth, streams, events, stop, stoppedAuth: () => stoppedAuth, emit(user) { auth.currentUser = user; authListener(user); },
-    profile(value, index = streams.length - 1) { return streams[index].next({ exists: () => value !== null, data: () => value }); } };
+    profile(value, index = streams.length - 1) { return streams[index].next({ metadata: { fromCache: false, hasPendingWrites: false }, exists: () => value !== null, data: () => value }); } };
 }
 
 test("mobile live profile changes deny active clients; listener errors block UI without silently discarding the session", async () => {
@@ -87,7 +89,8 @@ function hooks(dependencies) {
         previous?.cleanup?.(); slots[index] = { deps, cleanup: effect() };
       }); },
   };
-  return { load: (path) => load(path, { react, "react/jsx-runtime": { jsx, jsxs: jsx }, ...dependencies }),
+  return { load: (path) => load(path, { react, "react/jsx-runtime": { jsx, jsxs: jsx }, "@/src/services/registration.service": {},
+    "@/src/components/auth/AccountSessionContext": { useAccountSession: () => ({ retry() {} }) }, ...dependencies }),
     render(fn) { cursor = 0; const value = fn(); while (effects.length) effects.shift()(); return value; },
     unmount() { mounted = false; slots.forEach((slot) => slot?.cleanup?.()); }, late: () => late };
 }
@@ -193,6 +196,7 @@ test("existing callable map API rejects stale and pending sessions before queryi
   const api = load("functions/src/services/map.service.ts", {
     "firebase-functions/v2/https": { HttpsError }, "../domain/accountSession": domain,
     "../domain/map": { DISTRICTS: [{ id: "kandy" }] },
+    "../domain/serviceCategories": load("functions/src/domain/serviceCategories.ts", {}),
   });
   for (const [profile, authTime, allowed] of [
     [{ role: "customer", accountStatus: "disabled" }, 200, false],
@@ -211,8 +215,8 @@ test("existing callable map API rejects stale and pending sessions before queryi
   }
 });
 
-test("mobile login keeps Remember Me selection and shows clear revoked/disabled denial before routing", async () => {
-  for (const scenario of ["active", "disabled-profile", "old-session", "disabled-auth"]) {
+test("mobile login preserves persistence selection and delegates profile/role enforcement to the root gate", async () => {
+  for (const scenario of ["active", "disabled-auth"]) {
     const calls = [], routes = [];
     const user = { uid: "fixture", emailVerified: true, reload: async () => { calls.push("reload"); },
       getIdTokenResult: async () => ({ claims: { auth_time: 100 } }) };
@@ -239,7 +243,7 @@ test("mobile login keeps Remember Me selection and shows clear revoked/disabled 
     const button = flatten(tree).find((node) => node.type === "TouchableOpacity" &&
       flatten(node).some((child) => child.type === "Text" && child.props.children === "Login"));
     await button.props.onPress();
-    if (scenario === "active") { assert.deepEqual(routes, ["/(tabs)"]); assert.deepEqual(calls, ["reload"]); }
+    if (scenario === "active") { assert.deepEqual(routes, ["/"]); assert.deepEqual(calls, []); }
     else {
       assert.deepEqual(routes, []);
       assert.ok(flatten(h.render(screen)).some((node) => node.type === "Text" &&

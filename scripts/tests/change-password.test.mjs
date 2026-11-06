@@ -12,7 +12,7 @@ function load(path, dependencies, timers = {}) {
   new Function("exports", "require", "setTimeout", "clearTimeout", output)(exports, (id) => {
     assert.ok(id in dependencies, `Unexpected dependency: ${id}`);
     return dependencies[id];
-  }, timers.setTimeout, timers.clearTimeout);
+  }, timers.setTimeout ?? setTimeout, timers.clearTimeout ?? clearTimeout);
   return exports;
 }
 
