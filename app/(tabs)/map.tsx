@@ -1,8 +1,9 @@
+import { AppModal as Modal } from "@/src/components/layout/AppModal";
 import { router, useFocusEffect } from "expo-router";
 import { SafetyActions, SafetyContent, useSafety, useHiddenProfiles } from "@/src/components/legal/Safety";
 import { onAuthStateChanged } from "firebase/auth";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, Linking, Modal, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, Linking, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from "react-native";
 import { MapPinned, Wrench } from "lucide-react-native";
 import { browsingDistanceKm, Coordinate, DISTRICTS, locationIsFresh, pointInDistrict } from "@/functions/src/domain/map";
 import { declaredServiceAreaLabel } from "@/functions/src/domain/serviceAreas";
@@ -304,7 +305,7 @@ function TechnicianCard({ technician, location, now, districtId, customerLocatio
 const styles = StyleSheet.create({
   overlay: { flex: 1, backgroundColor: "#0009", justifyContent: "flex-end" },
   sheet: { backgroundColor: "#0D1B2A", maxHeight: "75%", padding: 20, gap: 12, borderTopLeftRadius: 24, borderTopRightRadius: 24 },
-  container: { flex: 1, backgroundColor: "#06101D" }, content: { padding: 18, paddingTop: 55, paddingBottom: 120, maxWidth: 640, width: "100%", alignSelf: "center", gap: 14 },
+  container: { flex: 1, backgroundColor: "#06101D" }, content: { padding: 18, paddingTop: 24, paddingBottom: 120, maxWidth: 640, width: "100%", alignSelf: "center", gap: 14 },
   header: { flexDirection: "row", alignItems: "center", gap: 14 }, title: { color: "#FFFFFF", fontSize: 26, fontWeight: "800" },
   subtitle: { color: "#94A3B8", fontSize: 12, lineHeight: 19 }, filters: { gap: 8 }, chip: { padding: 12, borderRadius: 12, backgroundColor: "#0D1B2A" },
   chipText: { color: "#E2E8F0", fontSize: 12, fontWeight: "700" }, active: { backgroundColor: "#2563EB" }, switcher: { flexDirection: "row", backgroundColor: "#0D1B2A", padding: 4, borderRadius: 14 },

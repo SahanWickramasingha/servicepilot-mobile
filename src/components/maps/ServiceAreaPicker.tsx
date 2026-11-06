@@ -1,5 +1,6 @@
+import { AppModal as Modal } from "@/src/components/layout/AppModal";
 import { useState } from "react";
-import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { DISTRICTS } from "@/functions/src/domain/map";
 import { SERVICE_AREA_CATALOGUE, ServiceArea, ServiceAreasByDistrict } from "@/functions/src/domain/serviceAreas";
 

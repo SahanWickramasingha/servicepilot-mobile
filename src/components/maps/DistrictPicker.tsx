@@ -1,5 +1,6 @@
+import { AppModal as Modal } from "@/src/components/layout/AppModal";
 import { useState } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { DISTRICTS } from "@/functions/src/domain/map";
 
 export function DistrictPicker({ selected, onChange, multiple = false, disabled = false }: {
