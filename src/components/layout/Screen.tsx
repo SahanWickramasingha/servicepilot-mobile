@@ -1,6 +1,5 @@
 import React, { ReactNode } from "react";
 import {
-  SafeAreaView,
   StyleSheet,
   View,
 } from "react-native";
@@ -18,7 +17,7 @@ export default function Screen({
   backgroundColor = Colors.background,
 }: ScreenProps) {
   return (
-    <SafeAreaView
+    <View
       style={[
         styles.safeArea,
         {
@@ -28,7 +27,7 @@ export default function Screen({
     >
 
       <View style={styles.container}>{children}</View>
-    </SafeAreaView>
+    </View>
   );
 }
 // Styles for the Screen component
