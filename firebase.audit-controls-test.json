@@ -1,0 +1,15 @@
+{
+  "storage": { "rules": "storage.rules" },
+  "hosting": { "public": ".expo/password-reset-emulator", "cleanUrls": true,
+    "headers": [{ "regex": "^[/\\\\]auth[/\\\\].*", "headers": [
+      { "key": "Referrer-Policy", "value": "no-referrer" }, { "key": "Cache-Control", "value": "no-store" }
+    ] }] },
+  "emulators": {
+    "auth": { "host": "127.0.0.1", "port": 35497 },
+    "storage": { "host": "127.0.0.1", "port": 35997 },
+    "hosting": { "host": "127.0.0.1", "port": 5008 },
+    "hub": { "host": "127.0.0.1", "port": 35440 },
+    "logging": { "host": "127.0.0.1", "port": 35445 },
+    "ui": { "enabled": false }, "singleProjectMode": true
+  }
+}
