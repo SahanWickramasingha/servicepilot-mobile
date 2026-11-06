@@ -79,7 +79,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#06101D",
     paddingHorizontal: 24,
-    paddingTop: 90,
+    paddingTop: 24,
     paddingBottom: 40,
   },
 

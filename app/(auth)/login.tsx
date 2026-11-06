@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -19,20 +19,13 @@ import { Apple, Eye, EyeOff, LockKeyhole, Mail } from "lucide-react-native";
 
 import {
   loginUser,
-  logoutUser,
-  logoutRevokedUser,
-  sendVerificationEmail,
 } from "@/src/services/auth.service";
+import { requestOnboardingVerification } from "@/src/services/registration.service";
+import { useAccountSession } from "@/src/components/auth/AccountSessionContext";
 import { auth } from "@/src/firebase/config";
-import { accountSessionDenial } from "@/functions/src/domain/accountSession";
-import {
-  getDashboardRouteForRole,
-  getMobileAccessDecision,
-  getUserProfile,
-  markUserEmailVerified,
-} from "@/src/services/user.service";
 
 export default function LoginScreen() {
+  const { retry } = useAccountSession();
   const params = useLocalSearchParams<{
     email?: string;
     needsVerification?: string;
@@ -45,6 +38,8 @@ export default function LoginScreen() {
   const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const submitting = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [sendingVerification, setSendingVerification] =
     useState(false);
   const [errorMessage, setErrorMessage] = useState(
@@ -80,71 +75,14 @@ export default function LoginScreen() {
         rememberMe
       );
 
-      let profile = await getUserProfile(
-        credential.user.uid
-      );
-
-      if (!profile) {
-        setErrorMessage(
-          "User profile not found. Please contact support."
-        );
-        return;
-      }
-
-      const token = profile.sessionRevokedAt === undefined ? null : await credential.user.getIdTokenResult();
-      if (auth.currentUser !== credential.user) return;
-      const sessionDenial = accountSessionDenial(profile, token?.claims.auth_time as number | undefined);
-      if (sessionDenial) {
-        setErrorMessage(sessionDenial);
-        setShowVerifyRecovery(false);
-        await logoutRevokedUser();
-        return;
-      }
-
-      await credential.user.reload();
-
-      if (
-        credential.user.emailVerified &&
-        profile.emailVerified !== true
-      ) {
-        await credential.user.getIdToken(true);
-
-        await markUserEmailVerified(
-          credential.user.uid
-        );
-        profile = {
-          ...profile,
-          emailVerified: true,
-        };
-      }
-
-      const accessDecision =
-        getMobileAccessDecision(profile);
-
-      if (!accessDecision.allowed) {
-        const accountIsInactive =
-          profile.accountStatus === "disabled" ||
-          profile.accountStatus === "deleted";
-
-        setErrorMessage(
-          accessDecision.message ||
-            "This account cannot access the mobile app."
-        );
-        setShowVerifyRecovery(
-          !accountIsInactive && profile.emailVerified !== true
-        );
-
-        if (profile.emailVerified === true || accountIsInactive) {
-          await logoutUser();
-        }
-
-        return;
-      }
-
-      router.replace(
-        getDashboardRouteForRole(profile.role) as never
-      );
+      if (!mounted.current || auth.currentUser !== credential.user) return;
+      setPassword("");
+      retry();
+      // The root account observer owns profile, verification and role decisions.
+      // Startup consumes that same state; login never races it with another read.
+      router.replace("/");
     } catch (error: any) {
+      if (!mounted.current) return;
       switch (error?.code) {
         case "auth/user-disabled":
           setErrorMessage("Your ServicePilot account has been disabled or deleted. Please contact support.");
@@ -174,17 +112,17 @@ export default function LoginScreen() {
 
         default:
           setErrorMessage(
-            error?.message ||
-              "Unable to sign in. Please try again."
+            "Unable to confirm sign-in. Retry, or continue setup with your existing account."
           );
       }
     } finally {
       submitting.current = false;
-      setLoading(false);
+      if (mounted.current) setLoading(false);
     }
   };
 
   const handleVerifyRecovery = async () => {
+    if (submitting.current) return;
     const cleanEmail = email.trim().toLowerCase();
 
     if (!cleanEmail) {
@@ -195,6 +133,7 @@ export default function LoginScreen() {
     }
 
     try {
+      submitting.current = true;
       setSendingVerification(true);
       setErrorMessage("");
 
@@ -207,7 +146,8 @@ export default function LoginScreen() {
       }
 
       const result =
-        await sendVerificationEmail(currentUser);
+        await requestOnboardingVerification();
+      if (!mounted.current || auth.currentUser !== currentUser) return;
 
       if (result.alreadyVerified) {
         setErrorMessage(
@@ -223,19 +163,15 @@ export default function LoginScreen() {
           email: cleanEmail,
         },
       });
-    } catch (error: any) {
-      console.error(
-        "Verification recovery error:",
-        error
-      );
-
+    } catch {
+      if (!mounted.current) return;
       Alert.alert(
         "Unable to Send Code",
-        error?.message ||
-          "Unable to send verification email."
+        "Unable to request verification right now. Retry in a moment."
       );
     } finally {
-      setSendingVerification(false);
+      submitting.current = false;
+      if (mounted.current) setSendingVerification(false);
     }
   };
 
@@ -422,15 +358,15 @@ export default function LoginScreen() {
 
         {/* Social Login */}
         <View style={styles.socialRow}>
-          <TouchableOpacity style={styles.socialButton} activeOpacity={0.8}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Google sign-in unavailable" style={styles.socialButton} activeOpacity={0.8} onPress={() => Alert.alert("Use Email Sign-In", "Google sign-in is not available. Use your email and password.")}>
             <Text style={styles.googleText}>G</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.socialButton} activeOpacity={0.8}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Apple sign-in unavailable" style={styles.socialButton} activeOpacity={0.8} onPress={() => Alert.alert("Use Email Sign-In", "Apple sign-in is not available. Use your email and password.")}>
             <Apple size={22} color="#FFFFFF" fill="#FFFFFF" />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.socialButton} activeOpacity={0.8}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Microsoft sign-in unavailable" style={styles.socialButton} activeOpacity={0.8} onPress={() => Alert.alert("Use Email Sign-In", "Microsoft sign-in is not available. Use your email and password.")}>
             <View style={styles.microsoftLogo}>
               <View style={styles.microsoftSquare} />
               <View style={styles.microsoftSquare} />

@@ -1,9 +1,10 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -19,21 +20,18 @@ import {
 } from "lucide-react-native";
 
 import { auth } from "@/src/firebase/config";
-import { sendVerificationEmail } from "@/src/services/auth.service";
-import {
-  getUserProfile,
-  markUserEmailVerified,
-} from "@/src/services/user.service";
-
-const RESEND_SECONDS = 60;
+import { logoutUser } from "@/src/services/auth.service";
+import { completeVerifiedRegistration, requestOnboardingVerification, verificationResendSeconds } from "@/src/services/registration.service";
+import { useAccountSession } from "@/src/components/auth/AccountSessionContext";
+import { onboardingFailureFeedback } from "@/src/utils/onboardingFeedback";
 
 export default function VerifyEmailScreen() {
   const params = useLocalSearchParams<{
     email?: string;
+    verificationRequested?: string;
   }>();
 
   const email =
-    params.email ||
     auth.currentUser?.email ||
     "your email address";
 
@@ -41,8 +39,14 @@ export default function VerifyEmailScreen() {
   const [isResending, setIsResending] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [verificationConfirmed, setVerificationConfirmed] = useState(false);
   const [resendTimer, setResendTimer] =
-    useState(RESEND_SECONDS);
+    useState(verificationResendSeconds);
+  const mounted = useRef(true);
+  const pending = useRef(false);
+  const owner = useRef(auth.currentUser);
+  const { retry } = useAccountSession();
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   useEffect(() => {
     if (resendTimer <= 0) {
@@ -50,13 +54,14 @@ export default function VerifyEmailScreen() {
     }
 
     const timer = setInterval(() => {
-      setResendTimer((current) => current - 1);
+      setResendTimer(verificationResendSeconds());
     }, 1000);
 
     return () => clearInterval(timer);
   }, [resendTimer]);
 
   const handleCheckVerification = async () => {
+    if (pending.current) return;
     setErrorMessage("");
     setSuccessMessage("");
 
@@ -70,53 +75,25 @@ export default function VerifyEmailScreen() {
     }
 
     try {
+      pending.current = true;
       setIsChecking(true);
-
-      await currentUser.reload();
-      await currentUser.getIdToken(true);
-
-      if (!auth.currentUser?.emailVerified) {
-        setErrorMessage(
-          "Email is not verified yet. Please open the verification link we sent to your email, then try again."
-        );
-        return;
-      }
-
-      await markUserEmailVerified(currentUser.uid);
-
-      const profile = await getUserProfile(
-        currentUser.uid
-      );
-
-      setSuccessMessage(
-        "Email verified successfully."
-      );
-
-      setTimeout(() => {
-        if (profile?.role === "technician") {
-          router.replace("/technician-pending");
-          return;
-        }
-
-        router.replace("/login");
-      }, 1000);
+      const result = await completeVerifiedRegistration();
+      if (!mounted.current || auth.currentUser !== currentUser) return;
+      retry();
+      router.replace({ pathname: `/${result.next}` as never, params: result.accessMessage ? { accessMessage: result.accessMessage } : {} });
     } catch (error: any) {
-      console.error(
-        "Email verification check error:",
-        error
-      );
-
-      setErrorMessage(
-        error?.message ||
-          "Unable to check email verification."
-      );
+      if (!mounted.current || auth.currentUser !== currentUser) return;
+      const feedback = onboardingFailureFeedback(error);
+      if (feedback.emailVerified) setVerificationConfirmed(true);
+      setErrorMessage(feedback.message);
     } finally {
-      setIsChecking(false);
+      pending.current = false;
+      if (mounted.current && auth.currentUser === currentUser) setIsChecking(false);
     }
   };
 
   const handleResend = async () => {
-    if (resendTimer > 0 || isResending) {
+    if (resendTimer > 0 || pending.current) {
       return;
     }
 
@@ -130,33 +107,37 @@ export default function VerifyEmailScreen() {
     }
 
     try {
+      pending.current = true;
       setIsResending(true);
       setErrorMessage("");
       setSuccessMessage("");
 
       const result =
-        await sendVerificationEmail(currentUser);
+        await requestOnboardingVerification();
+      if (!mounted.current || auth.currentUser !== currentUser) return;
 
-      setResendTimer(RESEND_SECONDS);
+      setVerificationConfirmed(result.alreadyVerified);
+      setResendTimer(verificationResendSeconds());
       setSuccessMessage(
         result.alreadyVerified
-          ? "Your email is already verified."
-          : "A new verification link has been sent."
+          ? "Your email is already verified. Continue profile setup with your existing account."
+          : "Verification email request accepted. Inbox delivery is not confirmed."
       );
-    } catch (error: any) {
-      console.error(
-        "Verification email resend error:",
-        error
-      );
-
-      setErrorMessage(
-        error?.message ||
-          "Unable to resend the verification email."
-      );
+    } catch (error) {
+      if (mounted.current && auth.currentUser === currentUser) {
+        setErrorMessage(onboardingFailureFeedback(error as { code?: string; registrationStep?: string }, true).message);
+        setResendTimer(verificationResendSeconds());
+      }
     } finally {
-      setIsResending(false);
+      pending.current = false;
+      if (mounted.current && auth.currentUser === currentUser) setIsResending(false);
     }
   };
+
+  if (auth.currentUser !== owner.current) return <View style={[styles.container, { padding: 24, justifyContent: "center", gap: 20 }]}>
+    <Text style={{ color: "white" }}>Your account changed. Continue with your current sign-in.</Text>
+    <TouchableOpacity accessibilityRole="button" onPress={() => router.replace("/")}><Text style={{ color: "#60A5FA", padding: 16 }}>Continue</Text></TouchableOpacity>
+  </View>;
 
   return (
     <KeyboardAvoidingView
@@ -173,10 +154,11 @@ export default function VerifyEmailScreen() {
       <View style={styles.glowTop} />
       <View style={styles.glowBottom} />
 
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content}>
         <TouchableOpacity
           style={styles.backButton}
-          onPress={() => router.back()}
+          disabled={isChecking || isResending}
+          onPress={async () => { try { await logoutUser(); router.replace("/login"); } catch { setErrorMessage("Unable to sign out. Retry."); } }}
           activeOpacity={0.8}
         >
           <ArrowLeft size={20} color="#FFFFFF" />
@@ -211,23 +193,23 @@ export default function VerifyEmailScreen() {
           </View>
 
           <Text style={styles.title}>
-            Verify Your Email
+            {verificationConfirmed ? "Email Verified" : "Verify Your Email"}
           </Text>
 
           <Text style={styles.description}>
-            We sent a verification link to
+            {verificationConfirmed ? "Email verification confirmed for" : params.verificationRequested === "false" ? "Request a verification link for" : "Check the verification email requested for"}
           </Text>
 
           <Text style={styles.emailText}>{email}</Text>
 
           <Text style={styles.instructions}>
-            Open the link in your inbox, then return to
-            ServicePilot and tap the button below.
+            {verificationConfirmed ? "Continue profile setup below. Your existing account and any saved profile are kept." :
+              "Open the link in your inbox, then return to ServicePilot and tap the button below."}
           </Text>
 
           {!!errorMessage && (
             <View style={styles.errorMessage}>
-              <Text style={styles.errorText}>
+              <Text accessibilityRole="alert" style={styles.errorText}>
                 {errorMessage}
               </Text>
             </View>
@@ -240,7 +222,7 @@ export default function VerifyEmailScreen() {
                 color="#22C55E"
               />
 
-              <Text style={styles.successText}>
+              <Text accessibilityLiveRegion="polite" style={styles.successText}>
                 {successMessage}
               </Text>
             </View>
@@ -253,7 +235,7 @@ export default function VerifyEmailScreen() {
             ]}
             activeOpacity={0.85}
             onPress={handleCheckVerification}
-            disabled={isChecking}
+            disabled={isChecking || isResending}
           >
             {isChecking ? (
               <ActivityIndicator
@@ -268,26 +250,26 @@ export default function VerifyEmailScreen() {
                 />
 
                 <Text style={styles.verifyButtonText}>
-                  I&apos;ve Verified Email
+                  {verificationConfirmed ? "Continue profile setup" : "I've Verified Email"}
                 </Text>
               </>
             )}
           </TouchableOpacity>
 
-          <View style={styles.resendArea}>
+          {!verificationConfirmed && <View style={styles.resendArea}>
             <Text style={styles.resendQuestion}>
               Didn&apos;t receive the email?
             </Text>
 
             {resendTimer > 0 ? (
               <Text style={styles.timerText}>
-                Resend in {resendTimer}s
+                Try again in {resendTimer}s
               </Text>
             ) : (
               <TouchableOpacity
                 style={styles.resendButton}
                 activeOpacity={0.8}
-                disabled={isResending}
+                disabled={isResending || isChecking}
                 onPress={handleResend}
               >
                 {isResending ? (
@@ -309,7 +291,7 @@ export default function VerifyEmailScreen() {
                 </Text>
               </TouchableOpacity>
             )}
-          </View>
+          </View>}
         </View>
 
         <View style={styles.loginRow}>
@@ -318,14 +300,15 @@ export default function VerifyEmailScreen() {
           </Text>
 
           <TouchableOpacity
-            onPress={() => router.replace("/login")}
+            disabled={isChecking || isResending}
+            onPress={async () => { try { await logoutUser(); router.replace("/login"); } catch { setErrorMessage("Unable to sign out. Retry."); } }}
           >
             <Text style={styles.loginText}>
               Back to Login
             </Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -357,7 +340,7 @@ const styles = StyleSheet.create({
   },
 
   content: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: "center",
     paddingHorizontal: 24,
     paddingVertical: 50,
@@ -514,10 +497,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     marginBottom: 16,
   },
 
   successText: {
+    flex: 1,
     color: "#86EFAC",
     fontSize: 12,
     fontWeight: "600",

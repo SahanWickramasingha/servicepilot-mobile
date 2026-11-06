@@ -12,7 +12,7 @@ import {
   Phone,
   UserRound,
 } from "lucide-react-native";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -25,13 +25,12 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import type { UserCredential } from "firebase/auth";
+import { completeVerifiedRegistration, registerAccount } from "@/src/services/registration.service";
+import { getOnboardingDraft } from "@/src/services/onboarding-draft.service";
+import { auth } from "@/src/firebase/config";
+import { useAccountSession } from "@/src/components/auth/AccountSessionContext";
+import { onboardingFailureFeedback } from "@/src/utils/onboardingFeedback";
 import {
-  registerUser,
-  sendVerificationEmail,
-} from "@/src/services/auth.service";
-import {
-  createUserProfile,
   isPublicRegistrationRole,
 } from "@/src/services/user.service";
 import type {
@@ -41,8 +40,6 @@ import type {
 import {
   getFirebaseErrorCode,
   getFirebaseErrorMessage,
-  getSafeProfileDebugValues,
-  logRegistrationDebug,
   logRegistrationError,
 } from "@/src/utils/registrationDebug";
 
@@ -78,11 +75,23 @@ function isProfileCreationFailure(error: any): boolean {
 }
 
 function getRegistrationAlert(error: any): RegistrationAlert {
+  if (error?.registrationStep === "recovery-authentication") {
+    return { title: "Recovery Sign-In Failed", message: error.message };
+  }
+  if (["firestore/profile-role-mismatch", "firestore/profile-identity-mismatch", "firestore/profile-schema-invalid", "firestore/profile-account-inactive", "firestore/profile-session-revoked"].includes(error?.code)) {
+    return { title: "Saved Profile Requires Attention", message: error.message };
+  }
+  if (error?.profileWriteCommitted === true) {
+    return {
+      title: "Profile Saved, Confirmation Interrupted",
+      message: "The server acknowledged your profile save, but setup could not finish. Your profile has been kept. Reconnect and recover registration with the original account. Recovery checks the saved profile without overwriting it.",
+    };
+  }
   if (error?.code === "auth/email-already-in-use") {
     return {
       title: "Account Already Exists",
       message:
-        "This email address already has a Firebase account. If registration previously failed during profile setup, do not create another account. Sign in, reset your password if needed, or contact support with this email address.",
+        "This email already has an account. Sign in to continue setup, or recover registration with your original password. Use Forgot Password if needed.",
     };
   }
 
@@ -116,9 +125,9 @@ function getRegistrationAlert(error: any): RegistrationAlert {
     isNetworkOrOfflineError(error)
   ) {
     return {
-      title: "Account Created, Profile Not Saved",
+      title: "Profile Save Not Confirmed",
       message:
-        "Your Firebase account was created, but the app could not reach Firestore to save your profile. Do not create another account. Reconnect and sign in again; if access is blocked, contact support with this email address.",
+        "Your account exists, but the profile save could not be confirmed. It may already be saved. Reconnect and choose Recover incomplete registration with the original email and password; recovery checks the server before creating anything.",
     };
   }
 
@@ -129,7 +138,7 @@ function getRegistrationAlert(error: any): RegistrationAlert {
     return {
       title: "Profile Permission Denied",
       message:
-        "Your Firebase account was created, but Firestore rules blocked profile setup. Do not create another account. Please contact support with this email address.",
+        "Profile setup could not be authorized. Your account has been kept. Contact support for help.",
     };
   }
 
@@ -145,7 +154,7 @@ function getRegistrationAlert(error: any): RegistrationAlert {
     return {
       title: "Profile Setup Failed",
       message:
-        "Your Firebase account was created, but your Firestore profile could not be saved. Do not create another account. Sign-in may be blocked until this partial account is fixed. Please contact support with this email address.",
+        "Your account setup could not be confirmed. Keep the original account and choose Recover incomplete registration with the same email and password. Recovery validates any saved profile without overwriting it.",
     };
   }
 
@@ -160,32 +169,34 @@ function getRegistrationAlert(error: any): RegistrationAlert {
   return {
     title: "Registration Failed",
     message:
-      error?.message ??
-      "Unable to create your account. Please try again.",
+      error?.code === "registration/invalid-profile" ? error.message :
+      "Unable to finish registration. Retry, or sign in to continue with your existing account.",
   };
 }
 
-export default function RegisterScreen() {
+export default function RegisterScreen({ setup = false, initialRole }: { setup?: boolean; initialRole?: PublicRegistrationRole } = {}) {
+  const { retry } = useAccountSession();
   const params = useLocalSearchParams<{ role?: string }>();
-  const selectedRole = isPublicRegistrationRole(params.role)
+  const draft = setup ? getOnboardingDraft() : undefined;
+  const selectedRole = initialRole ?? draft?.role ?? (isPublicRegistrationRole(params.role)
     ? params.role
-    : undefined;
+    : undefined);
   const registrationRole: PublicRegistrationRole =
     selectedRole ?? "customer";
 
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
+  const [fullName, setFullName] = useState(draft?.fullName ?? "");
+  const [email, setEmail] = useState(setup ? auth.currentUser?.email ?? "" : "");
+  const [phone, setPhone] = useState(draft?.phone ?? "");
+  const [address, setAddress] = useState(draft?.address ?? "");
   const [specialization, setSpecialization] =
-    useState("");
-  const [experience, setExperience] = useState("");
+    useState(draft?.serviceCategoryId ?? "");
+  const [experience, setExperience] = useState(draft?.experience ?? "");
   const [qualifications, setQualifications] =
-    useState("");
+    useState(draft?.qualifications ?? "");
   const [certifications, setCertifications] =
-    useState("");
+    useState(draft?.certifications ?? "");
   const [serviceAreas, setServiceAreas] =
-    useState("");
+    useState(draft?.serviceAreas ?? "");
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -193,10 +204,14 @@ export default function RegisterScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(draft?.policyAccepted === true);
   const [termsError, setTermsError] = useState("");
   const [loading, setLoading] = useState(false);
   const isSubmittingRef = useRef(false);
+  const mounted = useRef(true);
+  const setupOwner = useRef(setup ? auth.currentUser : null);
+  if (!setupOwner.current && auth.currentUser) setupOwner.current = auth.currentUser;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   const getRoleLabel = () => {
     switch (registrationRole) {
@@ -208,7 +223,7 @@ export default function RegisterScreen() {
     }
   };
 
-  const handleRegister = async () => {
+  const handleRegister = async (recover = false) => {
     if (isSubmittingRef.current) {
       return;
     }
@@ -281,15 +296,15 @@ export default function RegisterScreen() {
       }
     }
 
-    if (password.length < 6) {
+    if (!setup && password.length < 8) {
       Alert.alert(
         "Weak Password",
-        "Your password must contain at least 6 characters."
+        "Your password must contain at least 8 characters."
       );
       return;
     }
 
-    if (password !== confirmPassword) {
+    if (!setup && password !== confirmPassword) {
       Alert.alert(
         "Password Mismatch",
         "Password and confirm password do not match."
@@ -312,33 +327,7 @@ export default function RegisterScreen() {
       isSubmittingRef.current = true;
       setLoading(true);
 
-      // 1. Create Firebase Authentication account
-      let credential: UserCredential;
-
-      try {
-        credential = await registerUser(cleanEmail, password);
-      } catch (authError: any) {
-        authError.registrationStep =
-          authError?.registrationStep ||
-          "createUserWithEmailAndPassword";
-
-        logRegistrationError({
-          step: "register-screen:auth-create:error",
-          uid: null,
-          firebaseErrorCode:
-            getFirebaseErrorCode(authError),
-          firebaseErrorMessage:
-            getFirebaseErrorMessage(authError),
-          registrationStep:
-            authError.registrationStep,
-        });
-
-        throw authError;
-      }
-
-      // 2. Save additional user profile data in Firestore
-      const profilePayload: UserProfileData = {
-        uid: credential.user.uid,
+      const profilePayload: Omit<UserProfileData, "uid"> = {
         fullName: cleanFullName,
         email: cleanEmail,
         phone: cleanPhone,
@@ -361,93 +350,30 @@ export default function RegisterScreen() {
           : {}),
       };
 
-      logRegistrationDebug({
-        step: "register-screen:profile-payload:created",
-        uid: credential.user.uid,
-        firebaseErrorCode: null,
-        firebaseErrorMessage: null,
-        ...getSafeProfileDebugValues(
-          profilePayload as unknown as Record<
-            string,
-            unknown
-          >
-        ),
-      });
+      const result = setup ? await completeVerifiedRegistration(profilePayload) : await registerAccount(cleanEmail, password, profilePayload, recover);
+      if (!mounted.current) return;
+      setPassword(""); setConfirmPassword("");
+      if (setup) retry();
 
-      try {
-        await createUserProfile(profilePayload);
-      } catch (profileError: any) {
-        profileError.code =
-          profileError?.code ||
-          "firestore/profile-create-failed";
-        profileError.registrationStep =
-          profileError?.registrationStep ||
-          "createUserProfile";
-        profileError.uid = credential.user.uid;
-        profileError.partialAuthAccount = true;
-
-        logRegistrationError({
-          step: "register-screen:profile-write:error",
-          uid: credential.user.uid,
-          firebaseErrorCode:
-            getFirebaseErrorCode(profileError),
-          firebaseErrorMessage:
-            getFirebaseErrorMessage(profileError),
-          registrationStep:
-            profileError.registrationStep,
-          ...getSafeProfileDebugValues(
-            profilePayload as unknown as Record<
-              string,
-              unknown
-            >
-          ),
-        });
-
-        throw profileError;
-      }
-
-      try {
-        await sendVerificationEmail(
-          credential.user
-        );
-      } catch (verificationError: any) {
-        const originalCode =
-          getFirebaseErrorCode(verificationError);
-        const originalMessage =
-          getFirebaseErrorMessage(
-            verificationError
-          );
-
-        verificationError.code =
-          "auth/verification-email-failed";
-        verificationError.registrationStep =
-          verificationError?.registrationStep ||
-          "sendEmailVerification";
-        verificationError.uid = credential.user.uid;
-
-        logRegistrationError({
-          step: "register-screen:email-verification:error",
-          uid: credential.user.uid,
-          firebaseErrorCode: originalCode,
-          firebaseErrorMessage: originalMessage,
-          displayedErrorCode:
-            verificationError.code,
-          registrationStep:
-            verificationError.registrationStep,
-        });
-
-        throw verificationError;
-      }
-
-      // 3. Continue to email verification screen
+      // Authenticated recovery resumes the authoritative saved profile's flow.
       router.replace({
-        pathname: "/verify-email" as never,
+        pathname: `/${result.next}` as never,
         params: {
           email: cleanEmail,
-          role: registrationRole,
+          role: result.role,
+          ...(result.accessMessage ? { accessMessage: result.accessMessage } : {}),
+          ...(result.verificationRequested === false ? { verificationRequested: "false" } : {}),
         },
       });
     } catch (error: any) {
+      if (!mounted.current) return;
+      if (auth.currentUser) {
+        Alert.alert("Continue Account Setup", setup ? onboardingFailureFeedback(error).message : "Your account has been kept. Continue verification or retry setup with your signed-in account.", [
+          { text: "Keep editing", style: "cancel" },
+          { text: "Continue setup", onPress: () => router.push(auth.currentUser?.emailVerified ? "/profile-setup" as never : "/verify-email") },
+        ]);
+        return;
+      }
       logRegistrationError({
         step: "register-screen:registration:error",
         uid:
@@ -462,12 +388,26 @@ export default function RegisterScreen() {
       });
 
       const alert = getRegistrationAlert(error);
-      Alert.alert(alert.title, alert.message);
+      const blockedRecovery = ["firestore/profile-already-exists", "firestore/profile-role-mismatch", "firestore/profile-identity-mismatch", "firestore/profile-schema-invalid", "firestore/profile-account-inactive", "firestore/profile-session-revoked"].includes(error?.code);
+      Alert.alert(alert.title, alert.message, error?.code === "auth/email-already-in-use" || (isProfileCreationFailure(error) && !blockedRecovery) ? [
+        { text: "Cancel", style: "cancel" },
+        { text: "Recover incomplete registration", onPress: () => { void handleRegister(true); } },
+      ] : undefined);
     } finally {
       isSubmittingRef.current = false;
-      setLoading(false);
+      if (mounted.current) setLoading(false);
     }
   };
+
+  if (setupOwner.current && auth.currentUser !== setupOwner.current || !setup && auth.currentUser || setup && !auth.currentUser) {
+    return <View style={{ flex: 1, backgroundColor: "#06101D", padding: 24, justifyContent: "center", gap: 20 }}>
+      <Text style={{ color: "white", fontSize: 20 }}>{auth.currentUser ? "Continue with your signed-in account" : "Sign in to continue setup"}</Text>
+      <Text style={{ color: "#CBD5E1" }}>Your account has been kept. Continue verification or setup without creating another account.</Text>
+      <TouchableOpacity accessibilityRole="button" onPress={() => router.replace(!auth.currentUser || setup ? "/" : auth.currentUser.emailVerified ? "/profile-setup" as never : "/verify-email")}>
+        <Text style={{ color: "#60A5FA", padding: 16 }}>Continue setup</Text>
+      </TouchableOpacity>
+    </View>;
+  }
 
   return (
     <KeyboardAvoidingView
@@ -506,7 +446,7 @@ export default function RegisterScreen() {
         </View>
 
         {/* Selected Role */}
-        {selectedRole && (
+        {selectedRole && !setup && (
           <TouchableOpacity
             style={styles.roleBadge}
             onPress={() => router.push("/role-selection")}
@@ -524,10 +464,10 @@ export default function RegisterScreen() {
 
         {/* Heading */}
         <View style={styles.header}>
-          <Text style={styles.title}>Create Account</Text>
+          <Text style={styles.title}>{setup ? "Complete Profile Setup" : "Create Account"}</Text>
 
           <Text style={styles.subtitle}>
-            Enter your details to get started
+            {setup ? "Finish your saved account. Your street address stays private." : "Verify your email, then we will save your profile."}
           </Text>
         </View>
 
@@ -565,7 +505,7 @@ export default function RegisterScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               style={styles.input}
-              editable={!loading}
+              editable={!loading && !setup}
             />
           </View>
         </View>
@@ -607,7 +547,6 @@ export default function RegisterScreen() {
           </View>
         </View>
 
-        {/* Password */}
         {registrationRole === "technician" && (
           <>
             <View style={styles.technicianSection}>
@@ -722,6 +661,7 @@ export default function RegisterScreen() {
           </>
         )}
 
+        {!setup && <>
         {/* Password */}
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Password</Text>
@@ -790,6 +730,7 @@ export default function RegisterScreen() {
           </View>
         </View>
 
+        </>}
         <TermsAcceptance checked={acceptTerms} onChange={(value) => { setAcceptTerms(value); setTermsError(""); }} error={termsError} disabled={loading} />
 
         {/* Register Button */}
@@ -801,12 +742,12 @@ export default function RegisterScreen() {
           ]}
           activeOpacity={0.85}
           disabled={loading}
-          onPress={handleRegister}
+          onPress={() => { void handleRegister(); }}
         >
           <Text style={styles.registerButtonText}>
             {loading
-              ? "Creating Account..."
-              : "Create Account"}
+              ? "Please wait..."
+              : setup ? "Save Profile" : "Create Account"}
           </Text>
         </TouchableOpacity>
 
@@ -846,7 +787,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 48,
+    paddingTop: 24,
     paddingBottom: 50,
     width: "100%",
     maxWidth: 520,

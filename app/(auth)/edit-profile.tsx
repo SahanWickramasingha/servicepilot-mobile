@@ -168,7 +168,6 @@ export default function EditProfileScreen() {
             </Text>
           </View>
         )}
-        {!!successMessage && <Text accessibilityRole="alert" style={{ color: "#86EFAC", marginBottom: 14 }}>{successMessage}</Text>}
 
         <View style={styles.formCard}>
           <Field
@@ -250,6 +249,10 @@ export default function EditProfileScreen() {
             </>
           )}
         </TouchableOpacity>
+        {!!(errorMessage || successMessage) && <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
+          style={{ color: errorMessage ? "#FCA5A5" : "#86EFAC", marginTop: 14, lineHeight: 22 }}>
+          {errorMessage || successMessage}
+        </Text>}
       </ScrollView>
     </KeyboardAvoidingView>
     </ProtectedRoute>
@@ -310,7 +313,7 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     alignSelf: "center",
     paddingHorizontal: 20,
-    paddingTop: 55,
+    paddingTop: 24,
     paddingBottom: 80,
   },
   header: {
