@@ -1,5 +1,5 @@
 import { technicianCategoryLabel } from "@/functions/src/domain/serviceCategories";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FirebaseError } from "firebase/app";
 import {
   ActivityIndicator,
@@ -37,10 +37,13 @@ export default function DispatcherDashboard() {
     useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [loadError, setLoadError] = useState("");
 
   const loadPendingTechnicians = async () => {
     try {
       setLoading(true);
+      setLoadError("");
       const pendingTechnicians =
         await getPendingTechnicians();
       setTechnicians(pendingTechnicians);
@@ -53,6 +56,7 @@ export default function DispatcherDashboard() {
           : pendingTechnicians[0] ?? null
       );
     } catch (error) {
+      setLoadError("Pending technicians could not be loaded. Retry to check applications.");
       if (__DEV__) {
         const code =
           error instanceof FirebaseError
@@ -79,11 +83,19 @@ export default function DispatcherDashboard() {
   }, []);
 
   const handleApproval = async (
-    status: "approved" | "rejected"
+    status: "approved" | "rejected", confirmed = false
   ) => {
     const dispatcherUid = auth.currentUser?.uid;
 
-    if (!dispatcherUid || !selectedTechnician) {
+    if (!dispatcherUid || !selectedTechnician || savingRef.current) {
+      return;
+    }
+
+    if (status === "approved" && !confirmed) {
+      Alert.alert("Approve Technician", `Approve ${selectedTechnician.fullName}? Availability and location sharing stay unchanged.`, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Approve", onPress: () => { void handleApproval(status, true); } },
+      ]);
       return;
     }
 
@@ -99,6 +111,7 @@ export default function DispatcherDashboard() {
     }
 
     try {
+      savingRef.current = true;
       setSaving(true);
 
       await updateTechnicianApprovalStatus({
@@ -117,7 +130,7 @@ export default function DispatcherDashboard() {
           : "Technician Rejected",
         status === "approved"
           ? "The technician can now sign in."
-          : "The technician has been notified through their login status."
+          : "The saved application status is now rejected."
       );
     } catch (error) {
       if (__DEV__) {
@@ -137,6 +150,7 @@ export default function DispatcherDashboard() {
         "Unable to update this technician review."
       );
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -197,7 +211,10 @@ export default function DispatcherDashboard() {
           <View style={styles.loadingArea}>
             <ActivityIndicator color="#3B82F6" />
           </View>
-        ) : technicians.length === 0 ? (
+        ) : loadError ? <View style={styles.emptyCard}>
+          <Text style={styles.emptyText}>{loadError}</Text>
+          <TouchableOpacity accessibilityRole="button" onPress={loadPendingTechnicians}><Text style={styles.emptyText}>Retry</Text></TouchableOpacity>
+        </View> : technicians.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>
               No Pending Reviews
@@ -409,7 +426,7 @@ const styles = StyleSheet.create({
     maxWidth: 560,
     alignSelf: "center",
     paddingHorizontal: 20,
-    paddingTop: 58,
+    paddingTop: 24,
     paddingBottom: 44,
   },
 
