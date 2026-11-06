@@ -16,6 +16,7 @@ import {
   getCountFromServer,
   count,
   average,
+  type DocumentReference,
 } from "firebase/firestore";
 
 import { ServiceCategory } from "@/src/constants/serviceRequests";
@@ -112,7 +113,47 @@ function matchesDivision(
   return technician.serviceDivision === division || !!id && technician.serviceDistrictIds.includes(id);
 }
 
+/** A denied public get is ambiguous: NEVER interpret it as "not approved".
+ * Only a successful server read of the Rules-only negative-proof path permits
+ * exclusion. That path has no stored documents and checks the current private
+ * account using the same predicate as the public get. No users read is exposed.
+ */
+async function readDirectoryProjection(ref: DocumentReference, current: () => boolean): Promise<PublicProjection | null> {
+  try {
+    const snapshot = await getDocFromServer(ref);
+    const data = snapshot.data();
+    return data?.approved === true ? data as PublicProjection : null;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code !== "permission-denied" || !current()) {
+      throw Object.assign(new Error(`Public approval read denied or unavailable at ${ref.path}.`), { code, cause: error, documentPath: ref.path });
+    }
+    const proof = doc(db, "technician_directory_exclusions", ref.id);
+    try {
+      const exclusion = await getDocFromServer(proof);
+      if (exclusion.exists()) throw new Error("Expected an empty Rules-only exclusion proof.");
+      return null;
+    } catch (confirmationError) {
+      // Includes a valid technician's unexplained denial, a revoked customer,
+      // missing Rules deployment, and network failure. None may become empty.
+      throw Object.assign(new Error(`Cannot confirm eligibility after denied ${ref.path}; exclusion check failed at ${proof.path}.`), {
+        code: (confirmationError as { code?: string }).code, cause: confirmationError,
+        documentPath: ref.path, exclusionPath: proof.path,
+      });
+    }
+  }
+}
+
 const directoryStream = createSessionStream<[PublicTechnicianProfile[], boolean]>(() => [[], false]);
+const directoryControls = new Map<string, { viewer: string | null; retry: () => void }>();
+function directoryKey(filters?: { category?: string; division?: string; pageCount?: number }) {
+  const count = Math.min(MAP_MAX_ITEMS, Math.max(1, filters?.pageCount ?? 1) * MAP_PAGE_SIZE);
+  return JSON.stringify([filters?.category || "All", filters?.division || "All", count]);
+}
+export function retryApprovedTechnicians(filters?: { category?: string; division?: string; pageCount?: number }): void {
+  const control = directoryControls.get(directoryKey(filters));
+  if (control?.viewer === (auth.currentUser?.uid ?? null)) control?.retry();
+}
 export function subscribeToApprovedTechnicians(
   onNext: (technicians: PublicTechnicianProfile[]) => void,
   onError: (error: Error) => void,
@@ -131,39 +172,73 @@ export function subscribeToApprovedTechnicians(
     ...(category ? [where("serviceCategory", "in", category)] : []),
     orderBy(documentId()), limit(count));
   // Include client-side filters as well as the bounded query in the stream identity.
-  const key = JSON.stringify([filters?.category || "All", filters?.division || "All", count]);
+  const key = directoryKey(filters);
   return directoryStream(key, (emit, fail) => {
-    let alive = true, generation = 0;
-    const unsubscribe = onSnapshot(
-      techniciansQuery,
-      (snapshot) => {
-        const version = ++generation;
-        // Follow-up server gets recheck CURRENT approval; no private profile read.
-        void Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref))).then((verified) => {
-          if (!alive || version !== generation) return;
-          const technicians = verified
-          .filter((item) => item.data()?.approved === true)
-          .map((item) => mapTechnician(item.data() as PublicProjection))
-          .filter((technician) =>
-            matchesCategory(technician, filters?.category)
-          )
-          .filter((technician) =>
-            matchesDivision(technician, filters?.division)
-          )
-          .sort((first, second) => {
-            if (second.averageRating !== first.averageRating) {
-              return second.averageRating - first.averageRating;
-            }
+    let alive = true, generation = 0, connection = 0;
+    let unsubscribe = () => {};
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const viewer = auth.currentUser;
+    const connect = () => {
+      clearTimeout(deadline);
+      unsubscribe();
+      const attempt = ++connection;
+      generation++;
+      const current = () => alive && attempt === connection && auth.currentUser?.uid === viewer?.uid;
+      const failure = (stage: string, error: Error & { code?: string }) => {
+        if (!current()) return;
+        clearTimeout(deadline);
+        const failure = Object.assign(new Error(`Technician directory ${stage} failed: ${error.message}`), { code: error.code, cause: error });
+        fail(failure);
+      };
+      deadline = setTimeout(() => {
+        generation++;
+        failure("confirmation", Object.assign(new Error("Unable to confirm technicians online. Please retry."), { code: "unavailable" }));
+      }, 15000);
+      // Verification can finish in a browser while this SDK still has an older
+      // unverified token. Refresh once per pooled connection, never per snapshot.
+      void (async () => {
+        if (!viewer) throw new Error("Please sign in to browse technicians.");
+        await viewer.getIdToken(true);
+        if (!current()) return;
+        unsubscribe = onSnapshot(
+        techniciansQuery,
+        { includeMetadataChanges: true },
+        (snapshot) => {
+          if (!current()) return;
+          if (snapshot.metadata.fromCache) return;
+          const version = ++generation;
+          // Follow-up server gets recheck CURRENT approval; no private profile read.
+          void Promise.all(snapshot.docs.map((item) => readDirectoryProjection(item.ref, () => current() && version === generation))).then((verified) => {
+            if (!current() || version !== generation) return;
+            const technicians = verified
+            .filter((item): item is PublicProjection => item !== null)
+            .map(mapTechnician)
+            .filter((technician) =>
+              matchesCategory(technician, filters?.category)
+            )
+            .filter((technician) =>
+              matchesDivision(technician, filters?.division)
+            )
+            .sort((first, second) => {
+              if (second.averageRating !== first.averageRating) {
+                return second.averageRating - first.averageRating;
+              }
 
-            return first.fullName.localeCompare(second.fullName);
-          });
+              return first.fullName.localeCompare(second.fullName);
+            });
 
-          emit(technicians, snapshot.size === count && count < MAP_MAX_ITEMS);
-        }).catch((error) => { if (alive && version === generation) fail(error); });
-      },
-      (error) => { generation++; if (alive) fail(error); }
-    );
-    return () => { alive = false; unsubscribe(); };
+            clearTimeout(deadline);
+            emit(technicians, snapshot.size === count && count < MAP_MAX_ITEMS);
+          }).catch((error) => { if (version === generation) failure("approval check", error); });
+        },
+        (error) => { generation++; failure("query", error); }
+        );
+      })().catch(error => failure("connection", error));
+    };
+    const control = { viewer: viewer?.uid ?? null, retry: connect };
+    directoryControls.set(key, control);
+    connect();
+    return () => { alive = false; clearTimeout(deadline); unsubscribe(); if (directoryControls.get(key) === control) directoryControls.delete(key); };
   }, (items, hasMore) => { onNext(items); filters?.onHasMore?.(hasMore); }, onError);
 }
 
