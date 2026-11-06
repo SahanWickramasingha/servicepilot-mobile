@@ -29,6 +29,7 @@ import { DISTRICTS } from "@/functions/src/domain/map";
 import {
   PublicTechnicianProfile,
   subscribeToApprovedTechnicians,
+  retryApprovedTechnicians,
 } from "@/src/services/technician.service";
 
 type CategoryFilter = ServiceCategoryId | "All";
@@ -161,6 +162,9 @@ export default function TechniciansScreen() {
             <Text style={styles.errorText}>
               {errorMessage}
             </Text>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry technicians" onPress={() => { setLoading(true); setErrorMessage(""); retryApprovedTechnicians({ category, division, pageCount }); }}>
+              <Text style={styles.emptyText}>Retry</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -222,7 +226,7 @@ export default function TechniciansScreen() {
         </View>
 
         </>}
-        ListEmptyComponent={
+        ListEmptyComponent={!errorMessage ?
           <View style={styles.emptyCard}>
             <UserRound size={38} color="#64748B" />
             <Text style={styles.emptyTitle}>
@@ -231,7 +235,7 @@ export default function TechniciansScreen() {
             <Text style={styles.emptyText}>
               Try another category or division.
             </Text>
-          </View>
+          </View> : null
         }
         ListFooterComponent={<>
         {hasMore && <TouchableOpacity accessibilityRole="button" style={styles.emptyCard} onPress={() => setPageCount((count) => count + 1)}>
@@ -332,7 +336,7 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     alignSelf: "center",
     paddingHorizontal: 18,
-    paddingTop: 56,
+    paddingTop: 24,
     paddingBottom: 120,
   },
   header: { marginBottom: 18 },
