@@ -113,7 +113,10 @@ test("real Firestore query: district/category filtering returns only approved sa
   const directory = await customer().service.getMapTechnicians("colombo", "Electrical");
   assert.deepEqual(directory.map((t) => t.uid).sort(), ["map-legacy", "map-tech"]);
   assert.equal(directory.find((t) => t.uid === "map-tech").averageRating, 4);
-  for (const profile of directory) assert.deepEqual(Object.keys(profile).sort(), ["uid", "fullName", "specialization", "serviceDistrictIds", "averageRating", "reviewCount"].sort());
+  for (const profile of directory) {
+    assert.deepEqual(Object.keys(profile).sort(), ["uid", "fullName", "specialization", "serviceCategoryId", "serviceDistrictIds", "averageRating", "reviewCount"].sort());
+    assert.equal(profile.serviceCategoryId, "electrical");
+  }
   assert.deepEqual((await customer().service.getMapTechnicians("gampaha")).map((t) => t.uid), ["map-tech"]);
   assert.deepEqual(await customer().service.getMapTechnicians("jaffna"), []);
   for (const uid of ["map-dispatcher", "map-tech", "map-unverified", "map-disabled-customer"]) await denied(accounts.get(uid).service.getMapTechnicians("colombo"));
@@ -271,7 +274,8 @@ test("actual Admin Web Dispatcher service publishes approval/rejection snapshots
   await denied(firestore.updateDoc(firestore.doc(dispatcher.db, "users", "map-pending"), changes));
   const output = ts.transpileModule(readFileSync(new URL("../../admin-web/src/services/technicianApprovalService.ts", import.meta.url), "utf8"),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
-  const exports = {}, deps = { "firebase/firestore": firestore, "../firebase/config": { db: dispatcher.db }, "../../../functions/src/domain/mapProjection": projection };
+  const exports = {}, deps = { "firebase/firestore": firestore, "../firebase/config": { db: dispatcher.db }, "../../../functions/src/domain/mapProjection": projection,
+    "../../../functions/src/domain/serviceCategories": requireFunctions("./lib/domain/serviceCategories.js") };
   new Function("exports", "require", output)(exports, (id) => deps[id] ?? requireRoot(id));
   await exports.reviewTechnicianApplication({ technicianUid: "map-pending", dispatcherUid: "map-dispatcher", status: "approved" });
   assert.equal((await firestore.getDocFromServer(firestore.doc(customer().db, "technician_map_profiles", "map-pending"))).data().approved, true);
@@ -366,8 +370,9 @@ test("rules reject area spoofing, mismatched districts, extra fields and non-Tec
 
 test("existing customer profile/list actions read only public projections and cannot inject private detail fields", async () => {
   const categories = {};
-  new Function("exports", ts.transpileModule(readFileSync(new URL("../../src/constants/serviceRequests.ts", import.meta.url), "utf8"),
-    { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText)(categories);
+  new Function("exports", "require", ts.transpileModule(readFileSync(new URL("../../src/constants/serviceRequests.ts", import.meta.url), "utf8"),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText)(categories,
+      (id) => id === "@/functions/src/domain/serviceCategories" ? requireFunctions("./lib/domain/serviceCategories.js") : requireRoot(id));
   const code = ts.transpileModule(readFileSync(new URL("../../src/services/technician.service.ts", import.meta.url), "utf8"),
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
   const exports = {}, deps = { "firebase/firestore": firestore, "@/src/firebase/config": customer(),

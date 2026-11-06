@@ -55,7 +55,7 @@ test('registration is unchecked, blocks Auth creation, and checked submission ca
   let authCalls = 0, payload;
   const h = renderHarness('app/(auth)/register.tsx', { dependencies: {
     'expo-router': { useLocalSearchParams: () => ({ role: 'customer' }), router: { replace() {} } },
-    '@/src/services/auth.service': { registerUser: async () => { authCalls++; return { user: { uid: 'new', delete: async () => {} } }; }, sendVerificationEmail: async () => {} },
+    '@/src/services/registration.service': { registerAccount: async (_, __, data) => { authCalls++; payload = data; return { next: 'verify-email', role: data.role }; } },
     '@/src/services/user.service': { isPublicRegistrationRole: role => ['customer', 'technician'].includes(role), createUserProfile: async data => { payload = data; } },
   } });
   const render = () => h.render(); render();
@@ -92,16 +92,45 @@ test('policy links open in a modal without toggling acceptance or navigating awa
 test('profile creation records current versions and server timestamp, never acceptance for unchecked input', async () => {
   const writes = [];
   const service = loadService('src/services/user.service.ts', {
-    '@/src/firebase/config': { auth: { currentUser: { uid: 'new' } }, db: {} },
+    '@/src/firebase/config': { auth: { currentUser: { uid: 'new', email: 'fixture@example.test' } }, db: {} },
     '@/functions/src/domain/mapProjection': {}, '@/functions/src/domain/availability': {}, '@/functions/src/domain/serviceAreas': {},
     '@/src/utils/registrationDebug': { getSafeProfileDebugValues: () => ({}), logRegistrationDebug() {} },
-    'firebase/firestore': { doc: () => ({}), getDoc: async () => ({ exists: () => false }), serverTimestamp: () => 'SERVER_TIMESTAMP', setDoc: async (_, data) => writes.push(data) },
+    'firebase/firestore': { doc: () => ({}), getDoc: async () => ({ exists: () => false }), serverTimestamp: () => 'SERVER_TIMESTAMP',
+      runTransaction: async (_, action) => action({ get: async () => ({ exists: () => false }), set: (_, data) => writes.push(data) }),
+      getDocFromServer: async () => ({ metadata: { fromCache: false, hasPendingWrites: false }, exists: () => writes.length > 0,
+        data: () => ({ ...writes.at(-1), acceptedAt: new Date(0), createdAt: new Date(0), updatedAt: new Date(0) }) }) },
   });
   const input = { uid: 'new', fullName: 'Fixture', email: 'fixture@example.test', phone: '123', address: 'Private', role: 'customer' };
   await assert.rejects(service.createUserProfile(input)); assert.equal(writes.length, 0);
   await service.createUserProfile({ ...input, policyAccepted: true });
   assert.equal(writes[0].termsVersion, policy.TERMS_VERSION); assert.equal(writes[0].privacyPolicyVersion, policy.PRIVACY_POLICY_VERSION);
   assert.equal(writes[0].acceptedAt, 'SERVER_TIMESTAMP'); assert.equal(writes[0].policyAccepted, undefined);
+});
+
+test('registration never overwrites a concurrent profile and requires server confirmation before success', async () => {
+  for (const scenario of ['concurrent-profile', 'missing-confirmation', 'read-failure', 'disabled-confirmation', 'switched-account']) {
+    const writes = [], auth = { currentUser: { uid: 'new', email: 'fixture@example.test' } };
+    const service = loadService('src/services/user.service.ts', {
+      '@/src/firebase/config': { auth, db: {} },
+      '@/functions/src/domain/mapProjection': {}, '@/functions/src/domain/availability': {}, '@/functions/src/domain/serviceAreas': {},
+      '@/src/utils/registrationDebug': { getSafeProfileDebugValues: () => ({}), logRegistrationDebug() {}, logRegistrationError() {}, getFirebaseErrorCode: () => null, getFirebaseErrorMessage: () => null },
+      'firebase/firestore': {
+        doc: () => ({}), serverTimestamp: () => 'SERVER_TIME', getDoc: async () => ({ exists: () => false }),
+        runTransaction: async (_, action) => action({
+          get: async () => { if (scenario === 'switched-account') auth.currentUser = { uid: 'other' }; return { exists: () => scenario === 'concurrent-profile' }; },
+          set: (_, data) => writes.push(data),
+        }),
+        getDocFromServer: async () => {
+          if (writes.length === 0) return { metadata: { fromCache: false, hasPendingWrites: false }, exists: () => false };
+          if (scenario === 'read-failure') throw new Error('Offline');
+          return { metadata: { fromCache: false, hasPendingWrites: false }, exists: () => scenario !== 'missing-confirmation',
+            data: () => ({ ...writes.at(-1), acceptedAt: new Date(0), createdAt: new Date(0), updatedAt: new Date(0), ...(scenario === 'disabled-confirmation' ? { accountStatus: 'disabled' } : {}) }) };
+        },
+      },
+    });
+    await assert.rejects(service.createUserProfile({ uid: 'new', fullName: 'Fixture', email: 'fixture@example.test', phone: '123', address: 'Private', role: 'customer', policyAccepted: true }));
+    assert.equal(writes.length, ['concurrent-profile', 'switched-account'].includes(scenario) ? 0 : 1);
+  }
 });
 
 test('existing accounts have no fabricated acceptance; cancel stops the operation and acceptance retries use authoritative state', async () => {

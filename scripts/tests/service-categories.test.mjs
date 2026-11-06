@@ -59,18 +59,23 @@ function directoryFixture() {
     '@/functions/src/domain/serviceAreas': require('../../functions/lib/domain/serviceAreas.js'),
     '@/functions/src/domain/mapProjection': projection,
     '@/src/utils/technicianRating': {},
-    'firebase/firestore': { collection: (_, path) => path, where: (...args) => ({ where: args }), documentId: () => '__name__', orderBy: (...args) => ({ order: args }),
+    'firebase/firestore': { collection: (_, path) => path, doc: (_, path, id) => ({ id, path: path + '/' + id }), where: (...args) => ({ where: args }), documentId: () => '__name__', orderBy: (...args) => ({ order: args }),
       limit: value => ({ limit: value }), query: (...args) => { constraints = args; return args; },
-      onSnapshot: (_, success, fail) => { next = success; error = fail; return () => {}; },
-      getDocFromServer: async ref => { const value = docs.find(item => item.id === ref.id); if (value.denied) throw Object.assign(Error('denied'), { code: 'permission-denied' }); return value; } },
+      onSnapshot: (_, options, success, fail) => { next = success; error = fail; return () => {}; },
+      getDocFromServer: async ref => {
+        const value = docs.find(item => item.id === ref.id);
+        if (value.denied || ref.path?.startsWith('technician_directory_exclusions/')) throw Object.assign(Error('denied'), { code: 'permission-denied' });
+        return value;
+      } },
   });
   const row = (id, specialization, district, extra = {}) => ({ id, ref: { id }, data: () => ({ technicianId: id, fullName: id, specialization, serviceCategory: '', approved: true, serviceDistrictIds: [district], averageRating: 0, reviewCount: 0, ...extra }) });
   return { row, subscribe: filter => service.subscribeToApprovedTechnicians(value => { emitted = value; }, cause => { rejected = cause; }, filter),
-    emit: async value => { docs = value; next({ docs, size: docs.length }); await tick(); },
+    emit: async value => { docs = value; next({ docs, size: docs.length, metadata: { fromCache: false } }); await tick(); },
     constraints: () => constraints, items: () => emitted, failure: () => rejected, error: value => error(value) };
 }
 test('directory combines category and district, includes normalized legacy candidates, excludes unresolved/hidden records and remains bounded', async () => {
   const f = directoryFixture(); const stop = f.subscribe({ category: 'air-conditioning', division: 'Kandy' });
+  await tick();
   assert.ok(f.constraints().some(item => item?.limit === 8));
   assert.ok(f.constraints().some(item => JSON.stringify(item?.where) === JSON.stringify(['serviceCategory', 'in', ['Air Conditioning', '']])));
   await f.emit([f.row('legacy', 'AC technician', 'kandy'), f.row('unknown', 'Electric Item', 'kandy'), f.row('outside', 'AC technician', 'colombo'),
@@ -80,6 +85,7 @@ test('directory combines category and district, includes normalized legacy candi
   assert.equal(f.items()[0].serviceCategoryId, 'air-conditioning');
   stop();
   const stopElectrical = f.subscribe({ category: 'Electrical' });
+  await tick();
   await f.emit([f.row('wire', 'Electrical', 'kandy'), f.row('ambiguous', 'Electric Item', 'kandy')]);
   assert.deepEqual(f.items().map(item => item.uid), ['wire']);
   await f.emit([{ ...f.row('revoked', 'Electrical', 'kandy'), denied: true }]);
@@ -147,13 +153,17 @@ test('profile save atomically persists canonical specialty and projection while 
 test('registration stores a stable specialty separately from role and rejects ambiguous legacy input', async () => {
   const writes = [];
   const service = loadService('src/services/user.service.ts', {
-    '@/src/firebase/config': { auth: { currentUser: { uid: 'tech' } }, db: {} },
+    '@/src/firebase/config': { auth: { currentUser: { uid: 'tech', email: 'tech@example.test' } }, db: {} },
     '@/functions/src/domain/mapProjection': projection, '@/functions/src/domain/availability': {}, '@/functions/src/domain/serviceAreas': {},
     '@/src/utils/registrationDebug': { getSafeProfileDebugValues: () => ({}), logRegistrationDebug() {} },
     'firebase/firestore': { doc: (_, collection, id) => ({ path: collection + '/' + id }), serverTimestamp: () => 'server-time',
-      getDoc: async () => ({ exists: () => false }), setDoc: async (ref, data) => writes.push({ ref, data }) },
+      getDoc: async () => ({ exists: () => false }),
+      runTransaction: async (_, action) => action({ get: async () => ({ exists: () => false }), set: (ref, data) => writes.push({ ref, data }) }),
+      getDocFromServer: async () => ({ metadata: { fromCache: false, hasPendingWrites: false }, exists: () => writes.length > 0,
+        data: () => ({ ...writes.at(-1)?.data, acceptedAt: new Date(0), createdAt: new Date(0), updatedAt: new Date(0) }) }) },
   });
-  const input = { uid: 'tech', fullName: 'Tech', email: 'tech@example.test', phone: '123', address: 'Private', role: 'technician', policyAccepted: true };
+  const input = { uid: 'tech', fullName: 'Tech', email: 'tech@example.test', phone: '123', address: 'Private', role: 'technician', policyAccepted: true,
+    experience: '2 years', qualifications: 'Training', serviceAreas: 'Kandy' };
   await service.createUserProfile({ ...input, serviceCategoryId: 'electrical' });
   assert.equal(writes[0].data.role, 'technician'); assert.equal(writes[0].data.serviceCategoryId, 'electrical');
   assert.equal(writes[0].data.specialization, 'Electrical'); assert.equal(writes[0].data.technicianApprovalStatus, 'pending');
@@ -161,21 +171,23 @@ test('registration stores a stable specialty separately from role and rejects am
   assert.equal(writes.length, 1, 'An ambiguous specialty must be explicitly selected before writing');
 });
 
-test('both approval services propagate confirmed legacy specialties and preserve unresolved ones without guessing', async () => {
+test('both approval services propagate confirmed legacy specialties and reject incomplete unresolved specialties', async () => {
   for (const admin of [false, true]) for (const specialization of ['AC technician', 'Electric Item']) {
-    const writes = [], source = { role: 'technician', fullName: 'Tech', specialization,
+    const writes = [], source = { uid: 'tech', email: 'tech@example.test', phone: '123', address: 'private', emailVerified: true, role: 'technician', fullName: 'Tech', specialization,
       technicianApprovalStatus: 'pending', serviceDistrictIds: ['kandy'], averageRating: 4, reviewCount: 2 };
     let commits = 0;
     const sdk = { doc: (_, collection, id) => ({ path: collection + '/' + id }), serverTimestamp: () => 'server-time', deleteField: () => 'delete',
       getDoc: async () => ({ data: () => source }), getDocFromServer: async () => ({ data: () => source }),
-      writeBatch: () => ({ update: (ref, data) => writes.push({ ref, data }), set: (ref, data) => writes.push({ ref, data }),
-        commit: async () => { commits++; } }) };
+      runTransaction: async (_, work) => { await work({ get: async () => ({ data: () => source }), update: (ref, data) => writes.push({ ref, data }), set: (ref, data) => writes.push({ ref, data }) }); commits++; } };
     const dependencies = { 'firebase/firestore': sdk, '@/src/firebase/config': { auth: {}, db: {} }, '../firebase/config': { db: {} },
       '@/functions/src/domain/mapProjection': projection, '../../../functions/src/domain/mapProjection': projection,
       '../../../functions/src/domain/serviceCategories': categories,
+      '../../../functions/src/domain/technicianApplication': require('../../functions/lib/domain/technicianApplication.js'),
       '@/functions/src/domain/availability': {}, '@/functions/src/domain/serviceAreas': {}, '@/src/utils/registrationDebug': {} };
     const service = loadService(admin ? 'admin-web/src/services/technicianApprovalService.ts' : 'src/services/user.service.ts', dependencies);
-    await (admin ? service.reviewTechnicianApplication : service.updateTechnicianApprovalStatus)({ technicianUid: 'tech', dispatcherUid: 'dispatcher', status: 'approved' });
+    const decide = () => (admin ? service.reviewTechnicianApplication : service.updateTechnicianApprovalStatus)({ technicianUid: 'tech', dispatcherUid: 'dispatcher', status: 'approved' });
+    if (specialization === 'Electric Item') { await assert.rejects(decide(), /incomplete/); assert.equal(writes.length, 0); continue; }
+    await decide();
     assert.equal(commits, 1); assert.equal(writes.length, 2);
     assert.equal(writes[0].data.technicianApprovalStatus, 'approved'); assert.equal(writes[0].data.role, undefined);
     assert.equal(writes[0].data.serviceCategoryId, specialization === 'AC technician' ? 'air-conditioning' : undefined);
