@@ -47,7 +47,7 @@ type Transaction = {
 };
 const allowed = new Set(['users', 'dispatcher_provisioning_operations', 'dispatcher_provisioning_emails',
   'dispatcher_invitation_deliveries', 'audit_logs', 'account_lifecycle_locks', 'account_lifecycle_requests',
-  'technician_map_profiles', 'technician_locations', 'technician_map_locations']);
+  'technician_map_profiles', 'technician_locations', 'technician_map_locations', 'technician_decision_emails']);
 
 export function firestoreStore(project: string, token: () => Promise<string>, transport: typeof fetch,
   endpoint = 'https://firestore.googleapis.com/v1') {

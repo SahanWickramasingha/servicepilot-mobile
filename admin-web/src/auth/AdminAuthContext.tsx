@@ -11,6 +11,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -18,13 +19,14 @@ import {
 import { auth, db } from "../firebase/config";
 import { accountSessionDenial } from "../../../functions/src/domain/accountSession";
 import type { UserRecord } from "../types";
+import { assertRequestedPortalRole, type PortalRole } from "./portalAccess";
 
 type AdminAuthState = {
   firebaseUser: User | null;
   profile: UserRecord | null;
   loading: boolean;
   accessDenied: string;
-  signIn: (email: string, password: string) => Promise<UserRecord>;
+  signIn: (email: string, password: string, requestedRole?: PortalRole) => Promise<UserRecord>;
   logout: () => Promise<void>;
 };
 
@@ -42,7 +44,7 @@ export function getPortalHomeForRole(role?: string) {
   return "/login";
 }
 
-async function validateWebPortalProfile(user: User, profile: UserRecord | null) {
+async function validateWebPortalProfile(user: User, profile: UserRecord | null, requestedRole?: PortalRole) {
   // Status is checked before waiting on token metadata, and again with auth_time.
   const immediate = accountSessionDenial(profile, Number.POSITIVE_INFINITY);
   if (immediate) throw new Error(immediate);
@@ -50,6 +52,7 @@ async function validateWebPortalProfile(user: User, profile: UserRecord | null) 
   const denial = accountSessionDenial(profile, token?.claims.auth_time as number | undefined);
   if (denial) throw new Error(denial);
   if (!profile || !["super_admin", "dispatcher"].includes(profile.role ?? "")) throw new Error("Access denied.");
+  assertRequestedPortalRole(profile.role, requestedRole);
   if (auth.currentUser !== user) throw new Error("Your session changed. Please sign in again.");
   if (profile.role === "dispatcher" && profile.invitationStatus === "pending") {
     await updateDoc(doc(db, "users", user.uid), { invitationStatus: "accepted", updatedAt: serverTimestamp() });
@@ -59,9 +62,9 @@ async function validateWebPortalProfile(user: User, profile: UserRecord | null) 
   return profile;
 }
 
-async function loadWebPortalProfile(user: User) {
+async function loadWebPortalProfile(user: User, requestedRole?: PortalRole) {
   const snapshot = await getDoc(doc(db, "users", user.uid));
-  return validateWebPortalProfile(user, snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } as UserRecord : null);
+  return validateWebPortalProfile(user, snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } as UserRecord : null, requestedRole);
 }
 
 export function AdminAuthProvider({
@@ -73,6 +76,8 @@ export function AdminAuthProvider({
   const [profile, setProfile] = useState<UserRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [accessDenied, setAccessDenied] = useState("");
+  const requestedPortal = useRef<PortalRole | undefined>(undefined);
+  const signingIn = useRef(false);
 
   useEffect(() => {
     let mounted = true, generation = 0;
@@ -96,12 +101,15 @@ export function AdminAuthProvider({
         setProfile(null);
         try {
           const next = await validateWebPortalProfile(user,
-            snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } as UserRecord : null);
+            snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } as UserRecord : null, requestedPortal.current);
           if (!current() || event !== revision) return;
+          assertRequestedPortalRole(next.role, requestedPortal.current);
           setProfile(next);
           setAccessDenied("");
         } catch (error) {
           if (!current() || event !== revision) return;
+          stopProfile?.(); stopProfile = undefined; generation++;
+          setProfile(null); setLoading(false);
           setAccessDenied(error instanceof Error ? error.message : "Unable to verify account access.");
           await signOut(auth).catch(() => undefined);
         } finally {
@@ -109,6 +117,7 @@ export function AdminAuthProvider({
         }
       }, () => {
         if (!current()) return;
+        stopProfile?.(); stopProfile = undefined; generation++;
         setProfile(null);
         setLoading(false);
         setAccessDenied("Unable to verify account access. Reconnect and sign in again.");
@@ -124,8 +133,12 @@ export function AdminAuthProvider({
       profile,
       loading,
       accessDenied,
-      async signIn(email: string, password: string) {
+      async signIn(email: string, password: string, requestedRole?: PortalRole) {
+        if (signingIn.current) throw new Error("Sign-in is already in progress.");
+        signingIn.current = true;
+        requestedPortal.current = requestedRole;
         setLoading(true);
+        setProfile(null);
         setAccessDenied("");
 
         try {
@@ -134,14 +147,16 @@ export function AdminAuthProvider({
             email.trim().toLowerCase(),
             password
           );
-          const adminProfile = await loadWebPortalProfile(credential.user);
+          const adminProfile = await loadWebPortalProfile(credential.user, requestedRole);
 
           // Only the live, revision-guarded profile listener opens AdminRoute.
           // A slower one-shot sign-in read must not override a newer denial.
           return adminProfile;
         } catch (error) {
           setProfile(null);
+          setFirebaseUser(null);
           await signOut(auth).catch(() => undefined);
+          requestedPortal.current = undefined;
 
           if (error instanceof Error) {
             setAccessDenied(
@@ -154,11 +169,13 @@ export function AdminAuthProvider({
 
           throw error;
         } finally {
+          signingIn.current = false;
           setLoading(false);
         }
       },
       async logout() {
         await signOut(auth);
+        requestedPortal.current = undefined;
         setFirebaseUser(null);
         setProfile(null);
       },

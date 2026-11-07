@@ -1,5 +1,17 @@
 # ServicePilot separate Admin Worker
 
+For the current Gmail decision-email adapter, configuration and reviewed deployment
+command, see [Gmail technician decision emails](../docs/GMAIL_TECHNICIAN_EMAIL.md).
+The local template selects `TECHNICIAN_EMAIL_PROVIDER=gmail`; dispatcher invitations
+still use `ADMIN_EMAIL_PROVIDER=firebase`. No Gmail credentials are checked in.
+This adapter has been tested with mocks only and has not been deployed.
+
+For the subsequent portal navigation, requested-role login and technician
+decision-email integration, see
+[the focused implementation/release notes](../docs/PORTAL_NAV_LOGIN_DECISION_EMAIL.md).
+That integration reuses Resend for custom decisions while preserving the existing
+Firebase invitation mode; server-only sender/key configuration is required.
+
 Local preparation only, 2026-11-02. No deployment, IAM change, email delivery,
 billing activation, commit or push has been performed. Start with
 [`scripts/ADMIN_WEB_CLOUDFLARE_PLAN.md`](../scripts/ADMIN_WEB_CLOUDFLARE_PLAN.md)

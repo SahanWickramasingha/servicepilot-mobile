@@ -3,7 +3,8 @@ import { configuration, type Env } from './runtime';
 import { services } from './services';
 
 type Services = ReturnType<typeof services>;
-const paths = new Set(['/v1/dispatchers', '/v1/dispatchers/resend-invitation', '/v1/accounts/lifecycle']);
+const paths = new Set(['/v1/dispatchers', '/v1/dispatchers/resend-invitation', '/v1/accounts/lifecycle',
+  '/v1/technicians/decision-email', '/v1/technicians/decision-email/status']);
 export async function handleRequest(request: Request, env: Env, createServices: (env: Env) => Services = services): Promise<Response> {
   const origin = request.headers.get('Origin');
   const headers = new Headers({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
@@ -45,9 +46,11 @@ export async function handleRequest(request: Request, env: Env, createServices: 
     try { body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
     catch { return reply(400, { code: 'invalid-argument' }); }
     configuration(env);
-    const { provisioning, lifecycle } = createServices(env);
+    const { provisioning, lifecycle, decisionEmails } = createServices(env);
     const result = url.pathname === '/v1/dispatchers' ? await provisioning.create(authorization, body) :
-      url.pathname === '/v1/dispatchers/resend-invitation' ? await provisioning.resend(authorization, body) : await lifecycle.change(authorization, body);
+      url.pathname === '/v1/dispatchers/resend-invitation' ? await provisioning.resend(authorization, body) :
+      url.pathname === '/v1/technicians/decision-email' ? await decisionEmails.request(authorization, body) :
+      url.pathname === '/v1/technicians/decision-email/status' ? await decisionEmails.status(authorization, body) : await lifecycle.change(authorization, body);
     return reply(200, result);
   } catch (error) {
     if (error instanceof TrustedRequestError) return reply(error.status, { code: error.code, message: error.message });
@@ -56,4 +59,10 @@ export async function handleRequest(request: Request, env: Env, createServices: 
   }
 }
 
-export default { fetch: (request: Request, env: Env) => handleRequest(request, env) };
+export default { fetch: (request: Request, env: Env, context: ExecutionContext) => {
+  const response = handleRequest(request, env);
+  // Keep the bounded send/receipt work alive if the browser disconnects after
+  // its request arrives. The durable receipt makes subsequent retries safe.
+  if (new URL(request.url).pathname === '/v1/technicians/decision-email') context.waitUntil(response.then(() => undefined, () => undefined));
+  return response;
+} };

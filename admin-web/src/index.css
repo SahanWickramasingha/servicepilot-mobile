@@ -67,6 +67,9 @@ a {
 
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  max-width: 100vw;
 
   z-index: 100;
 
@@ -79,8 +82,17 @@ a {
   width: 82px;
 }
 
+.drawer-close { margin-left: auto; flex-shrink: 0; border: 1px solid #34506d; background: #102338; color: #d6e8ff; border-radius: 8px; width: 32px; height: 32px; display: grid; place-items: center; }
+.sidebar :is(a, button):focus-visible { outline: 2px solid #93c5fd; outline-offset: -2px; }
+@media (max-height: 400px) {
+  .sidebar { padding-block: 12px; }
+  .sidebar .brand-area { min-height: 52px; margin-bottom: 12px; }
+  .sidebar .logout-button { min-height: 36px; margin-top: 10px; }
+}
+
 .brand-area {
   min-height: 60px;
+  flex-shrink: 0;
 
   display: flex;
   align-items: center;
@@ -132,11 +144,17 @@ a {
 
   gap: 5px;
 
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .nav-item {
   height: 46px;
+  flex-shrink: 0;
 
   border-radius: 11px;
 
@@ -205,6 +223,7 @@ a {
 
 .admin-main {
   min-height: 100vh;
+  min-width: 0;
 
   margin-left: 250px;
 
@@ -6022,6 +6041,7 @@ a {
 
 .logout-button {
   width: 100%;
+  flex-shrink: 0;
   margin-top: 14px;
   color: #fca5a5;
   background: rgba(239, 68, 68, 0.06);

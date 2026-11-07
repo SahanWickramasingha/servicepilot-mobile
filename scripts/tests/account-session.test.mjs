@@ -15,6 +15,7 @@ function load(path, deps) {
   return exports;
 }
 const domain = load("functions/src/domain/accountSession.ts", {});
+const portalAccess = load("admin-web/src/auth/portalAccess.ts", {});
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 
 test("session policy preserves legacy profiles, blocks inactive/pending/invalid states and never refreshes an old sign-in into access", () => {
@@ -104,7 +105,7 @@ test("web live status closes AdminRoute profile, signs out with clear denial, pr
     "firebase/firestore": { doc: (_, collection, uid) => ({ collection, uid }), serverTimestamp: () => "server-time",
       updateDoc: async (ref, patch) => { writes.push({ ref, patch }); },
       onSnapshot: (ref, next, error) => { const item = { ref, next, error, stopped: false }; streams.push(item); return () => { item.stopped = true; }; } },
-    "../firebase/config": { auth, db: {} }, "../../../functions/src/domain/accountSession": domain,
+    "../firebase/config": { auth, db: {} }, "../../../functions/src/domain/accountSession": domain, "./portalAccess": portalAccess,
   });
   const { AdminAuthProvider } = h.load("admin-web/src/auth/AdminAuthContext.tsx");
   const state = () => h.render(() => AdminAuthProvider({ children: "routes" })).props.value;
@@ -122,6 +123,61 @@ test("web live status closes AdminRoute profile, signs out with clear denial, pr
   assert.equal(state().profile.role, "super_admin");
   h.unmount(); await streams[1].next(snapshot({ role: "super_admin", accountStatus: "disabled" }));
   assert.equal(h.late(), 0);
+});
+
+test("requested web portal is checked before publishing a profile, even when the live listener wins the sign-in read", async () => {
+  for (const [actual, requested] of [["dispatcher", "super_admin"], ["super_admin", "dispatcher"], ["dispatcher", "dispatcher"], ["super_admin", "super_admin"]]) {
+    let authListener, signOuts = 0;
+    const streams = [], writes = [], once = deferred(), auth = { currentUser: null };
+    const user = { uid: "portal-reviewer", getIdTokenResult: async () => ({ claims: { auth_time: 100 } }) };
+    const profile = { id: user.uid, uid: user.uid, fullName: "Reviewer", role: actual, accountStatus: "active" };
+    const snapshot = { id: user.uid, exists: () => true, data: () => profile };
+    const h = hooks({
+      "firebase/auth": { onAuthStateChanged: (_, next) => { authListener = next; return () => {}; },
+        signInWithEmailAndPassword: async () => { auth.currentUser = user; authListener(user); return { user }; },
+        signOut: async () => { signOuts++; auth.currentUser = null; authListener(null); } },
+      "firebase/firestore": { doc: (_, collection, uid) => ({ collection, uid }), serverTimestamp: () => "server",
+        getDoc: async () => once.promise, updateDoc: async (_, patch) => { writes.push(patch); },
+        onSnapshot: (_, next, error) => { const stream = { next, error, stopped: false }; streams.push(stream); return () => { stream.stopped = true; }; } },
+      "../firebase/config": { auth, db: {} }, "../../../functions/src/domain/accountSession": domain, "./portalAccess": portalAccess,
+    });
+    const { AdminAuthProvider } = h.load("admin-web/src/auth/AdminAuthContext.tsx");
+    const state = () => h.render(() => AdminAuthProvider({ children: "routes" })).props.value;
+    const promise = state().signIn("reviewer@example.test", "test-only-password", requested);
+    // Observe rejection immediately, so the fixture never has an unhandled promise.
+    const outcome = promise.then(value => ({ value }), error => ({ error }));
+    await Promise.resolve(); streams[0].next(snapshot); await Promise.resolve(); await Promise.resolve();
+    if (actual !== requested) {
+      assert.equal(state().profile, null, "wrong portal never opens protected content");
+      assert.equal(streams[0].stopped, true, "mismatch releases the owning profile listener");
+    } else assert.equal(state().profile?.role, actual);
+    once.resolve(snapshot); const result = await outcome;
+    if (actual !== requested) { assert.equal(result.error.code, "auth/portal-mismatch"); assert.ok(signOuts > 0); }
+    else assert.equal(result.value.role, actual);
+    assert.deepEqual(writes, [], "requested portal never assigns a role"); h.unmount();
+  }
+});
+
+test("selected web portals retain disabled and revoked-session denials and safe return destinations", async () => {
+  assert.equal(portalAccess.portalDestination("dispatcher", "/admin/applications"), "/dispatcher/dashboard");
+  assert.equal(portalAccess.portalDestination("super_admin", "https://evil.example.test"), "/admin/dashboard");
+  assert.equal(portalAccess.portalDestination("dispatcher", "/dispatcher/applications"), "/dispatcher/applications");
+  assert.throws(() => portalAccess.assertRequestedPortalRole("dispatcher", "super_admin"), { code: "auth/portal-mismatch" });
+  for (const patch of [{ accountStatus: "disabled" }, { sessionRevokedAt: 100 }]) {
+    let authListener;
+    const auth = { currentUser: null }, user = { uid: "blocked", getIdTokenResult: async () => ({ claims: { auth_time: 100 } }) };
+    const profile = { uid: user.uid, role: "dispatcher", accountStatus: "active", ...patch };
+    const h = hooks({ "firebase/auth": {
+      onAuthStateChanged: (_, next) => { authListener = next; return () => {}; },
+      signInWithEmailAndPassword: async () => { auth.currentUser = user; authListener(user); return { user }; },
+      signOut: async () => { auth.currentUser = null; authListener(null); },
+    }, "firebase/firestore": { doc: () => ({}), getDoc: async () => ({ id: user.uid, exists: () => true, data: () => profile }), onSnapshot: () => () => {} },
+    "../firebase/config": { auth, db: {} }, "../../../functions/src/domain/accountSession": domain, "./portalAccess": portalAccess });
+    const { AdminAuthProvider } = h.load("admin-web/src/auth/AdminAuthContext.tsx");
+    const state = () => h.render(() => AdminAuthProvider({ children: "routes" })).props.value;
+    await assert.rejects(state().signIn("blocked@example.test", "test-only", "dispatcher"));
+    assert.equal(state().profile, null); assert.equal(auth.currentUser, null); h.unmount();
+  }
 });
 
 test("forced revocation stops local GPS and signs out even when ordinary remote cleanup would fail; new account is protected", async () => {

@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { LegalLinks } from "@/src/components/legal/LegalLinks";
-import { useEffect, useState } from "react";
+import { useAccountSession } from "@/src/components/auth/AccountSessionContext";
 import {
   Bell,
   CheckCircle2,
@@ -26,41 +26,12 @@ import {
 
 import { auth } from "@/src/firebase/config";
 import { logoutUser } from "@/src/services/auth.service";
-import {
-  getUserProfile,
-  UserProfile,
-} from "@/src/services/user.service";
 
 export default function ProfileScreen() {
-  const [profile, setProfile] =
-    useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState("");
-
-  useEffect(() => {
-    const currentUser = auth.currentUser;
-
-    if (!currentUser) {
-      setErrorMessage("Please sign in again.");
-      setLoading(false);
-      return;
-    }
-
-    getUserProfile(currentUser.uid)
-      .then((item) => {
-        if (!item) {
-          setErrorMessage("Profile not found.");
-          return;
-        }
-
-        setProfile(item);
-      })
-      .catch((error) => {
-        console.error("Profile load error:", error);
-        setErrorMessage("Unable to load profile.");
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const { state: session } = useAccountSession();
+  const profile = session.phase === "ready" && session.user === auth.currentUser && session.profile?.role === "customer" ? session.profile : null;
+  const loading = session.phase === "checking";
+  const errorMessage = profile ? "" : session.message || "Unable to load profile. Please sign in again.";
 
   const handleLogout = async () => {
     await logoutUser();

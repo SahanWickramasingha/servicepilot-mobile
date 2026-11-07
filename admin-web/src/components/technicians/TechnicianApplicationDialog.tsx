@@ -6,11 +6,12 @@ import { StatusChip } from "../DataState";
 import type { UserRecord } from "../../types";
 import { displayText, formatDateTime, statusLabel } from "../../utils/format";
 import { TechnicianDialog } from "./TechnicianDialog";
+import { DecisionEmailNotice } from "./DecisionEmailNotice";
 import { serviceAreaLabel, type ReviewMode } from "./technicianPresentation";
 
-export function TechnicianApplicationDialog({ technician, mode, onMode, eligible, busy, error, reviewer, onClose, onSubmit }: {
+export function TechnicianApplicationDialog({ technician, mode, onMode, eligible, busy, error, canNotify, reviewer, onClose, onSubmit }: {
   technician: UserRecord; mode: ReviewMode; onMode: (mode: ReviewMode) => void;
-  eligible: boolean; busy: boolean; error: string; reviewer: string; onClose: () => void;
+  eligible: boolean; busy: boolean; error: string; canNotify: boolean; reviewer: string; onClose: () => void;
   onSubmit: (status: "approved" | "rejected", reason: string) => Promise<void>;
 }) {
   const [reason, setReason] = useState("");
@@ -45,6 +46,7 @@ export function TechnicianApplicationDialog({ technician, mode, onMode, eligible
       </dl><details className="tm-audit"><summary>Audit details</summary><dl className="tm-details">
         <Detail label="Technician ID" value={technician.uid ?? technician.id} /><Detail label="Reviewer ID" value={technician.reviewedBy ?? undefined} />
       </dl></details></section>
+      {canNotify && ["approved", "rejected"].includes(technician.technicianApprovalStatus ?? "") && <DecisionEmailNotice technicianUid={technician.uid ?? technician.id} />}
       {error && <div className="tm-notice error" role="alert">{error}</div>}
       {!eligible && technician.technicianApprovalStatus === "pending" && <p className="tm-muted">Review is available only for verified, complete pending applications with an active account.</p>}
     </div>

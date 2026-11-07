@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
+import { useAccountSession } from "@/src/components/auth/AccountSessionContext";
 import {
   Bell,
   CheckCircle2,
@@ -38,11 +38,7 @@ import {
   CustomerNotification,
   subscribeToCustomerNotifications,
 } from "@/src/services/notification.service";
-import {
-  getTechnicianDivision,
-  getUserProfile,
-  UserProfile,
-} from "@/src/services/user.service";
+import { getTechnicianDivision } from "@/src/services/user.service";
 import {
   PublicTechnicianProfile,
   subscribeToApprovedTechnicians,
@@ -50,8 +46,12 @@ import {
 } from "@/src/services/technician.service";
 
 export default function HomeScreen() {
-  const [profile, setProfile] =
-    useState<UserProfile | null>(null);
+  // The root gate already holds the live, server-confirmed own profile.
+  // Do not put every dashboard query behind a second profile read.
+  const { state: session } = useAccountSession();
+  const currentUser = session.phase === "ready" && session.user === auth.currentUser && session.profile?.role === "customer" ? session.user : null;
+  const profile = currentUser ? session.profile : null;
+  const [owner, setOwner] = useState<string | null>(null);
   const [requests, setRequests] = useState<
     ServiceRequest[]
   >([]);
@@ -67,107 +67,45 @@ export default function HomeScreen() {
   const [techniciansLoading, setTechniciansLoading] = useState(true);
 
   useEffect(() => {
-    let generation = 0;
-    let unsubscribeRequests: (() => void) | undefined;
-    let unsubscribeNotifications: (() => void) | undefined;
-    let unsubscribeTechnicians: (() => void) | undefined;
-    const stopListeners = () => { unsubscribeRequests?.(); unsubscribeNotifications?.(); unsubscribeTechnicians?.(); };
-    const stopAuth = onAuthStateChanged(auth, (currentUser) => {
-      stopListeners();
-      const version = ++generation;
-      const isCurrent = () => version === generation && auth.currentUser?.uid === currentUser?.uid;
-      setProfile(null); setRequests([]); setNotifications([]); setTechnicians([]); setErrorMessage(""); setLoading(true);
-      setTechniciansError(""); setTechniciansLoading(true);
+    let active = true;
+    const isCurrent = () => active && !!currentUser && auth.currentUser === currentUser;
+    setOwner(currentUser?.uid ?? null);
+    setRequests([]); setNotifications([]); setTechnicians([]); setErrorMessage(""); setLoading(true);
+    setTechniciansError(""); setTechniciansLoading(true);
+    if (!currentUser) {
+      setLoading(false);
+      setErrorMessage("Please sign in again.");
+      return () => { active = false; };
+    }
 
-      if (!currentUser) {
-        setLoading(false);
-        setErrorMessage("Please sign in again.");
-        return;
-      }
-
-      const customerId = currentUser.uid;
-
-      async function loadCustomer() {
-        try {
-          const userProfile = await getUserProfile(
-            customerId
-          );
-          if (!isCurrent()) return;
-
-          if (!userProfile) {
-            setErrorMessage("Customer profile not found.");
-            setLoading(false);
-            return;
-          }
-
-          setProfile(userProfile);
-
-          unsubscribeRequests =
-            subscribeToCustomerRequests(
-              customerId,
-              (items) => {
-                if (!isCurrent()) return;
-                setRequests(items);
-                setLoading(false);
-              },
-              (error) => {
-                if (!isCurrent()) return;
-                console.error(
-                  "Dashboard requests subscription error:",
-                  error
-                );
-                setErrorMessage(
-                  "Unable to load service requests."
-                );
-                setLoading(false);
-              }
-            );
-
-          unsubscribeNotifications =
-            subscribeToCustomerNotifications(
-              {
-                userId: customerId,
-                role: userProfile.role,
-              },
-              (items) => { if (isCurrent()) setNotifications(items); },
-              (error, context) => {
-                console.error(
-                  "Dashboard notifications subscription error:",
-                  context.queryType,
-                  error
-                );
-              }
-            );
-
-          unsubscribeTechnicians =
-            subscribeToApprovedTechnicians(
-              (items) => { if (isCurrent()) { setTechnicians(items); setTechniciansError(""); setTechniciansLoading(false); } },
-              (error) => {
-                if (!isCurrent()) return;
-                setTechnicians([]);
-                setTechniciansError("Unable to load technicians. Check your connection and account access, then retry.");
-                setTechniciansLoading(false);
-                console.error(
-                  "Dashboard technicians subscription error:",
-                  error
-                );
-              }
-            );
-        } catch (error) {
-          if (!isCurrent()) return;
-          console.error("Dashboard load error:", error);
-          setErrorMessage("Unable to load dashboard.");
-          setLoading(false);
-        }
-      }
-
-      loadCustomer();
+    const unsubscribeRequests = subscribeToCustomerRequests(currentUser.uid, (items) => {
+      if (!isCurrent()) return;
+      setRequests(items); setErrorMessage(""); setLoading(false);
+    }, (error) => {
+      if (!isCurrent()) return;
+      setRequests([]);
+      console.error("Dashboard requests subscription error:", error);
+      setErrorMessage("Unable to load service requests."); setLoading(false);
     });
-
+    const unsubscribeNotifications = subscribeToCustomerNotifications({ userId: currentUser.uid, role: "customer" }, (items) => {
+      if (isCurrent()) setNotifications(items);
+    }, (error, context) => {
+      if (isCurrent()) console.error("Dashboard notifications subscription error:", context.queryType, error);
+    });
+    const unsubscribeTechnicians = subscribeToApprovedTechnicians((items) => {
+      if (!isCurrent()) return;
+      setTechnicians(items); setTechniciansError(""); setTechniciansLoading(false);
+    }, (error) => {
+      if (!isCurrent()) return;
+      setTechnicians([]);
+      setTechniciansError("Unable to load technicians. Check your connection and account access, then retry.");
+      setTechniciansLoading(false);
+      console.error("Dashboard technicians subscription error:", error);
+    });
     return () => {
-      generation++; stopListeners(); stopAuth();
+      active = false; unsubscribeRequests(); unsubscribeNotifications(); unsubscribeTechnicians();
     };
-  }, []);
+  }, [currentUser]);
 
   const counts = useMemo(() => {
     return {
@@ -204,7 +142,7 @@ export default function HomeScreen() {
     )
     .slice(0, 3);
 
-  if (loading) {
+  if (loading || !currentUser || owner !== currentUser.uid) {
     return (
       <View style={styles.centerScreen}>
         <ActivityIndicator color="#3B82F6" />

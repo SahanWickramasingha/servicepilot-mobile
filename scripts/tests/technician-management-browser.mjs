@@ -80,6 +80,11 @@ try {
     await until('!document.querySelector("dialog[open]")');
     assert.equal(await evaluate('window.__technicianUi.submissions.length'), 1, 'duplicate approval is blocked');
     assert.equal(await evaluate('window.__technicianUi.rows[0].availability'), 'offline');
+    await until(`document.querySelector('.tm-email-notice')?.textContent.includes('not configured')`);
+    assert.equal(await evaluate(`window.__technicianUi.decisionEmails.filter(r=>r.uid==='01-amal').length`), 1, 'one automatic notification request after saved approval');
+    await evaluate(`window.__technicianUi.emailStatus='submitted'`); await click('.tm-email-notice button');
+    await until(`document.querySelector('.tm-email-notice')?.textContent.includes('Email submitted')`);
+    assert.equal(await evaluate('window.__technicianUi.submissions.length'), 1, 'email retry does not repeat the approval');
     await filter('Approved'); await until(`!!document.querySelector('[aria-label="View application for Amal Perera"]')`);
     await click('.tm-heading a');
     await until(`location.pathname.endsWith('/technicians') && !!document.querySelector('[aria-label="View application for Amal Perera"]')`);
@@ -112,6 +117,43 @@ try {
     assert.equal(await evaluate('window.__technicianUi.listeners.size'), 1, 'pagination and Retry release old listeners');
     console.log(`PASS ${role}: desktop/narrow, four route layouts, field mapping, focus, eligibility, approval/rejection, duplicate guard, conflict, Retry and paging`);
   }
+  for (const role of ['admin', 'dispatcher']) for (const [width,height] of [[1440,400],[390,400],[720,450],[720,200]]) {
+    await send('Emulation.setDeviceMetricsOverride', {width,height,deviceScaleFactor:1,mobile:false});
+    await send('Page.navigate',{url:origin+'/'+role+'/technicians'}); await until(`!!document.querySelector('.tm-table')`);
+    await evaluate('window.scrollTo(0,120)'); const mainScroll = await evaluate('window.scrollY');
+    if(width<=850){await click('[aria-label="Open navigation"]');await until(`!!document.querySelector('.sidebar.mobile-open') && Math.abs(document.querySelector('.sidebar').getBoundingClientRect().left)<1`);}
+    assert.equal(await evaluate(`(()=>{const n=document.querySelector('.sidebar-nav'),b=n.getBoundingClientRect();return Array.from(n.querySelectorAll('a')).every(a=>{a.focus();const r=a.getBoundingClientRect();return r.top>=b.top-1&&r.bottom<=b.bottom+1;});})()`),true,'every navigation item is reachable');
+    await evaluate(`(()=>{const n=document.querySelector('.sidebar-nav');n.scrollTop=n.scrollHeight;n.querySelector('a:last-child').focus();})()`);
+    const bounds=await evaluate(`(()=>{const n=document.querySelector('.sidebar-nav').getBoundingClientRect(),a=document.querySelector('.sidebar-nav a:last-child').getBoundingClientRect(),l=document.querySelector('.logout-button').getBoundingClientRect(),b=document.querySelector('.brand-area').getBoundingClientRect();return{last:a.top>=n.top-1&&a.bottom<=n.bottom+1,logout:l.top>=0&&l.bottom<=innerHeight,brand:b.top>=0,overflow:document.documentElement.scrollWidth>innerWidth};})()`);
+    assert.deepEqual(bounds,{last:true,logout:true,brand:true,overflow:false},role+' short viewport '+width);
+    assert.equal(await evaluate('window.scrollY'),mainScroll,'navigation scroll is independent of main content');
+    await screenshot(role+'-navigation-'+width+'x'+height);
+    if(width<=850){await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});await until(`!document.querySelector('.sidebar.mobile-open')`);assert.equal(await evaluate(`document.activeElement.getAttribute('aria-label')`),'Open navigation');}
+  }
+  for(const width of [1440,390]){
+    await send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});
+    await send('Page.navigate',{url:origin+'/login'});await until(`!!document.querySelector('.portal-options')`);
+    assert.equal(await evaluate(`document.querySelectorAll('input[type="radio"]').length`),2);
+    assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+    await click('input[value="super_admin"]');
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39});
+    await until(`document.querySelector('input[value="dispatcher"]').checked`);
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37});
+    await until(`document.querySelector('input[value="super_admin"]').checked`);
+    await screenshot('portal-login-'+width);
+    await evaluate(`(()=>{for(const [selector,value] of [['input[type="email"]','reviewer@example.test'],['input[autocomplete="current-password"]','Local-fixture-password']]){const e=document.querySelector(selector);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,value);e.dispatchEvent(new Event('input',{bubbles:true}));}})()`);
+    await click('[aria-label="Show password"]');assert.equal(await evaluate(`document.querySelector('input[autocomplete="current-password"]').type`),'text');await click('[aria-label="Hide password"]');
+    await click('.portal-login button[type="submit"]');await until(`!!document.querySelector('.portal-login [role="alert"]')`);
+    assert.equal(await evaluate('location.pathname'),'/login');assert.equal(await evaluate(`document.querySelector('.admin-shell')===null`),true,'mismatch mounts no protected content');
+    await screenshot('portal-login-mismatch-'+width);
+    await click('.portal-switch');assert.equal(await evaluate(`document.querySelector('input[value="dispatcher"]').checked`),true);
+    await evaluate(`(()=>{const e=document.querySelector('input[autocomplete="current-password"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'Local-fixture-password');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await click('.portal-login button[type="submit"]');await until(`location.pathname==='/dispatcher/dashboard'`);
+    await send('Page.navigate',{url:origin+'/login'});await until(`!!document.querySelector('.portal-options')`);
+    await evaluate(`window.__technicianUi.loginActualRole='super_admin';(()=>{for(const [selector,value] of [['input[type="email"]','reviewer@example.test'],['input[autocomplete="current-password"]','Local-fixture-password']]){const e=document.querySelector(selector);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,value);e.dispatchEvent(new Event('input',{bubbles:true}));}})()`);
+    await click('.portal-login button[type="submit"]');await until(`location.pathname==='/admin/dashboard'`);
+  }
+  console.log('PASS independent short/narrow navigation, role selector/mismatch/switch, and separate decision-email retry UI');
   console.log('PASS browser UI checks; screenshots: ' + artifacts);
 } finally {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: 999999, method: 'Browser.close' }));

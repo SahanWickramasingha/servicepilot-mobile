@@ -22,7 +22,9 @@ test('separate Worker config defaults contain no credentials, paid limits or boo
   const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
   assert.equal(config.name, 'servicepilot-admin'); assert.equal(config.limits, undefined);
   assert.equal(config.ADMIN_SERVICE_ACCOUNT_PRIVATE_KEY, undefined);
-  assert.deepEqual(Object.keys(config.vars).sort(), ['ADMIN_EMAIL_FROM', 'ADMIN_EMAIL_PROVIDER', 'ADMIN_WEB_ORIGIN', 'FIREBASE_PROJECT_ID']);
+  assert.deepEqual(Object.keys(config.vars).sort(), ['ADMIN_EMAIL_FROM', 'ADMIN_EMAIL_PROVIDER', 'ADMIN_WEB_ORIGIN', 'FIREBASE_PROJECT_ID', 'TECHNICIAN_EMAIL_PROVIDER']);
+  assert.equal(config.vars.TECHNICIAN_EMAIL_PROVIDER, 'gmail');
+  assert.equal(config.vars.ADMIN_EMAIL_PROVIDER, 'firebase');
   assert.equal(config.services, undefined); assert.equal(config.r2_buckets, undefined);
   assert.equal(config.observability.enabled, false);
 });

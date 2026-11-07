@@ -1,4 +1,39 @@
 import { ProviderError, type Env } from './runtime';
+import type { DecisionEmailMessage } from '../../functions/src/domain/technicianDecisionEmail';
+import { gmailDecisionEmail } from './gmail';
+
+export function technicianEmailProvider(env: Env): 'gmail' | 'resend' | undefined {
+  const provider = env.TECHNICIAN_EMAIL_PROVIDER ?? 'resend';
+  return provider === 'gmail' || provider === 'resend' ? provider : undefined;
+}
+
+export function decisionEmailConfigured(env: Env): boolean {
+  const provider = technicianEmailProvider(env);
+  const credentials = provider === 'gmail'
+    ? [env.GMAIL_CLIENT_ID, env.GMAIL_CLIENT_SECRET, env.GMAIL_REFRESH_TOKEN].every(value => typeof value === 'string' && value.trim().length > 0)
+    : provider === 'resend' && !!env.RESEND_API_KEY;
+  return !!credentials && /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(env.ADMIN_EMAIL_FROM ?? '');
+}
+
+/** Decision mail is independent of the existing dispatcher invitation provider. */
+export function decisionEmail(env: Env, transport: typeof fetch) {
+  return async (message: DecisionEmailMessage, key: string): Promise<{ id: string }> => {
+    if (!decisionEmailConfigured(env)) throw new ProviderError('email/not-configured');
+    if (technicianEmailProvider(env) === 'gmail') return gmailDecisionEmail(env, transport)(message, key);
+    let response: Response;
+    try {
+      response = await transport('https://api.resend.com/emails', { method: 'POST',
+        headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        // Firestore may reorder map keys. Keep wire serialization identical on
+        // every retry, as well as retaining the same stored values.
+        body: JSON.stringify({ from: message.from, to: message.to, subject: message.subject, text: message.text, html: message.html }) });
+    } catch { throw new ProviderError('email/outcome-unknown'); }
+    const body = await response.json().catch(() => ({})) as { id?: string };
+    if (response.ok && typeof body.id === 'string' && body.id.length > 0 && body.id.length <= 256) return { id: body.id };
+    if (response.ok || response.status >= 500 || response.status === 409) throw new ProviderError('email/outcome-unknown');
+    throw new ProviderError('email/request-failed');
+  };
+}
 
 /** Built-in Firebase template delivery, not Admin generatePasswordResetLink.
  * API key selects the project; Admin authorization remains in the shared engine.

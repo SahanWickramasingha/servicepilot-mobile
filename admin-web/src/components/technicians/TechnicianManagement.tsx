@@ -15,6 +15,7 @@ import { displayText, formatDateTime, initials, statusLabel } from "../../utils/
 import type { UserRecord } from "../../types";
 import { TechnicianApplicationDialog } from "./TechnicianApplicationDialog";
 import { TechnicianDialog } from "./TechnicianDialog";
+import { DecisionEmailNotice } from "./DecisionEmailNotice";
 import { approvalFilters, canReviewApplication, isReviewConflict, reviewerLabel, serviceAreaLabel, type ApprovalFilter, type ReviewMode } from "./technicianPresentation";
 import "./technicians.css";
 
@@ -34,6 +35,7 @@ export function TechnicianManagement({ applications = false }: { applications?: 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
+  const [decisionEmail, setDecisionEmail] = useState<{ uid: string; key: string } | null>(null);
   const submitting = useRef(false);
   const alive = useRef(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -52,6 +54,7 @@ export function TechnicianManagement({ applications = false }: { applications?: 
       await reviewTechnicianApplication({ technicianUid: technician.uid ?? technician.id, dispatcherUid: firebaseUser.uid, status, rejectionReason: reason });
       if (!current()) return;
       setSelection(null); setNotice({ text: `${displayText(technician.fullName)} ${status}. Review saved; the lists will refresh.` });
+      setDecisionEmail({ uid: technician.uid ?? technician.id, key: `${technician.id}:${Date.now()}` });
       query.retry();
     } catch (cause) {
       if (!current()) return;
@@ -80,6 +83,7 @@ export function TechnicianManagement({ applications = false }: { applications?: 
       <ClipboardCheck size={17} aria-hidden="true" />{applications ? "All technicians" : "Review applications"}</Link></div>
 
     {notice && <div className={`tm-notice ${notice.error ? "error" : "success"}`} role={notice.error ? "alert" : "status"}>{notice.text}</div>}
+    {decisionEmail && activeReviewer && <DecisionEmailNotice key={decisionEmail.key} technicianUid={decisionEmail.uid} requestOnMount />}
     <section className="tm-panel" aria-label={applications ? "Technician applications" : "Technician directory"}>
       <div className="tm-toolbar"><div className="tm-filters" role="group" aria-label="Approval status">
         {approvalFilters.map(value => <button key={value} type="button" aria-pressed={filter === value} disabled={saving}
@@ -122,7 +126,7 @@ export function TechnicianManagement({ applications = false }: { applications?: 
     </section>
     {selection && <TechnicianApplicationDialog key={selection.technician.id} technician={selection.technician} mode={selection.mode}
       onMode={mode => { setError(""); setSelection({ ...selection, mode }); }} eligible={activeReviewer && canReviewApplication(selection.technician)}
-      busy={saving} error={error} reviewer={reviewerLabel(selection.technician, profile)} onClose={() => { if (!saving) setSelection(null); }} onSubmit={review} />}
+      busy={saving} error={error} canNotify={activeReviewer} reviewer={reviewerLabel(selection.technician, profile)} onClose={() => { if (!saving) setSelection(null); }} onSubmit={review} />}
     {lifecycle && isSuperAdmin && <TechnicianAccountDialog technician={lifecycle.technician} action={lifecycle.action} busy={saving} error={error}
       onClose={() => { if (!saving) setLifecycle(null); }} onConfirm={async () => {
         if (!activeReviewer || !firebaseUser || submitting.current) return;

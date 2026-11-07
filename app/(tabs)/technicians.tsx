@@ -33,6 +33,7 @@ import {
 } from "@/src/services/technician.service";
 
 type CategoryFilter = ServiceCategoryId | "All";
+const EMPTY_TECHNICIANS: PublicTechnicianProfile[] = [];
 
 export default function TechniciansScreen() {
   const params = useLocalSearchParams<{
@@ -43,9 +44,9 @@ export default function TechniciansScreen() {
 
   const initialCategory = categoryFilterFromParam(params.category);
 
-  const [technicians, setTechnicians] = useState<
-    PublicTechnicianProfile[]
-  >([]);
+  const [directory, setDirectory] = useState<{
+    user: typeof auth.currentUser; category: CategoryFilter; division: string; items: PublicTechnicianProfile[];
+  }>({ user: null, category: "All", division: "All", items: [] });
   const [category, setCategory] =
     useState<CategoryFilter>(initialCategory);
   const [division, setDivision] = useState(
@@ -56,6 +57,8 @@ export default function TechniciansScreen() {
   const [errorMessage, setErrorMessage] = useState("");
   const [pageCount, setPageCount] = useState(1);
   const [hasMore, setHasMore] = useState(false);
+  const currentScope = directory.user === auth.currentUser && directory.category === category && directory.division === division;
+  const technicians = currentScope ? directory.items : EMPTY_TECHNICIANS;
   const renderTechnician = useCallback(({ item }: { item: PublicTechnicianProfile }) => <TechnicianCard technician={item} />, []);
 
   useEffect(() => {
@@ -71,12 +74,17 @@ export default function TechniciansScreen() {
     const stopAuth = onAuthStateChanged(auth, (user) => {
       stop?.();
       const version = ++generation;
-      setTechnicians([]); setErrorMessage(""); setHasMore(false); setLoading(!!user);
+      // Retain display rows only when expanding the same account/filter query.
+      // The new subscription still rechecks current approval; failures clear rows.
+      const identity = { user, category, division };
+      setDirectory(previous => user && previous.user === user && previous.category === category && previous.division === division
+        ? previous : { ...identity, items: [] });
+      setErrorMessage(""); setHasMore(false); setLoading(!!user);
       if (!user) { setErrorMessage("Please sign in to browse technicians."); return; }
       stop = subscribeToApprovedTechnicians(
         (items) => {
           if (version !== generation || auth.currentUser?.uid !== user.uid) return;
-          setTechnicians(items);
+          setDirectory({ ...identity, items });
           setErrorMessage("");
           setLoading(false);
         },
@@ -87,7 +95,7 @@ export default function TechniciansScreen() {
             error
           );
           setErrorMessage("Unable to load technicians.");
-          setTechnicians([]);
+          setDirectory({ ...identity, items: [] });
           setLoading(false);
         },
         {
@@ -125,7 +133,7 @@ export default function TechniciansScreen() {
     );
   }, [search, technicians]);
 
-  if (loading) {
+  if (!currentScope || loading && technicians.length === 0) {
     return (
       <View style={styles.centerScreen}>
         <ActivityIndicator color="#3B82F6" />
@@ -238,7 +246,11 @@ export default function TechniciansScreen() {
           </View> : null
         }
         ListFooterComponent={<>
-        {hasMore && <TouchableOpacity accessibilityRole="button" style={styles.emptyCard} onPress={() => setPageCount((count) => count + 1)}>
+        {loading && <View style={styles.emptyCard} accessibilityLiveRegion="polite">
+          <ActivityIndicator color="#3B82F6" accessibilityLabel="Loading more technicians" />
+          <Text style={styles.emptyText}>Loading more technicians…</Text>
+        </View>}
+        {hasMore && !loading && <TouchableOpacity accessibilityRole="button" style={styles.emptyCard} onPress={() => setPageCount((count) => count + 1)}>
           <Text style={styles.sectionTitle}>Load more Technicians</Text></TouchableOpacity>}
         {pageCount >= 3 && <Text style={styles.emptyText}>Showing up to 24 professionals. Choose a district on the Map to narrow results.</Text>}
         </>}

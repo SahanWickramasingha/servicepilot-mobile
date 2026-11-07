@@ -1,4 +1,5 @@
 import { auth } from "../firebase/config";
+import type { DecisionEmailResult } from "../../../functions/src/domain/technicianDecisionEmailTypes";
 
 export type CreateDispatcherInput = { fullName: string; email: string; requestId: string };
 export type CreateDispatcherResult = {
@@ -9,10 +10,11 @@ export type CreateDispatcherResult = {
 
 const settings = (import.meta as ImportMeta & { env: { VITE_DISPATCHER_API_URL?: string; DEV?: boolean } }).env;
 
-async function callBackend(path: string, input: unknown): Promise<CreateDispatcherResult | { targetUid: string; accountStatus: string; outcome: "complete" }> {
+async function callBackend(path: string, input: unknown): Promise<CreateDispatcherResult | DecisionEmailResult | { targetUid: string; accountStatus: string; outcome: "complete" }> {
   const lifecycle = path === "/v1/accounts/lifecycle";
+  const decisionEmail = path.startsWith("/v1/technicians/decision-email");
   const user = auth.currentUser;
-  if (!user) throw new Error("Please sign in as Super Admin first.");
+  if (!user) throw new Error(decisionEmail ? "Sign in again to manage decision emails." : "Please sign in as Super Admin first.");
   if (!settings.VITE_DISPATCHER_API_URL) {
     throw new Error("Trusted account backend is not configured. Contact the portal administrator.");
   }
@@ -67,8 +69,21 @@ async function callBackend(path: string, input: unknown): Promise<CreateDispatch
         "not-found": "Account profile not found. Refresh the page.",
         "failed-precondition": "The account state cannot be managed automatically. Contact support.",
       };
-      throw Object.assign(new Error((lifecycle ? lifecycleMessages[result?.code] : undefined) ?? messages[result?.code] ??
+      const decisionMessages: Record<string, string> = {
+        "permission-denied": "Only an active Super Admin or Dispatcher can manage decision emails.",
+        "decision-unavailable": "A committed, complete application decision is required before requesting its email.",
+        "decision-changed": "The decision changed. Reopen the application before retrying its email.",
+        "invalid-argument": "The decision email request is invalid. Reopen this application.",
+      };
+      throw Object.assign(new Error((decisionEmail ? decisionMessages[result?.code] : undefined) ?? (lifecycle ? lifecycleMessages[result?.code] : undefined) ?? messages[result?.code] ??
         "The backend outcome is unconfirmed. Retry the same action shortly."), { code: result?.code });
+    }
+    if (decisionEmail) {
+      if (typeof result?.technicianUid !== "string" || !/^[a-f0-9]{64}$/.test(result?.revision ?? "") ||
+        !["not_requested", "pending", "submitted", "failed", "not_configured", "unknown"].includes(result?.status) || typeof result?.retryable !== "boolean") {
+        throw new Error("Decision email status could not be confirmed. Check the email status again; do not repeat the decision.");
+      }
+      return { technicianUid: result.technicianUid, revision: result.revision, status: result.status, retryable: result.retryable };
     }
     if (lifecycle) {
       if (!result || typeof result.targetUid !== "string" || !["active", "disabled", "deleted"].includes(result.accountStatus) || result.outcome !== "complete") {
@@ -102,4 +117,12 @@ export function resendDispatcherInvitation(uid: string) {
 
 export async function callAccountLifecycleBackend(input: { targetUid: string; action: string; requestId: string }): Promise<void> {
   await callBackend("/v1/accounts/lifecycle", input);
+}
+
+export function requestTechnicianDecisionEmail(technicianUid: string, revision?: string): Promise<DecisionEmailResult> {
+  return callBackend("/v1/technicians/decision-email", { technicianUid, ...(revision ? { revision } : {}) }) as Promise<DecisionEmailResult>;
+}
+
+export function getTechnicianDecisionEmailStatus(technicianUid: string): Promise<DecisionEmailResult> {
+  return callBackend("/v1/technicians/decision-email/status", { technicianUid }) as Promise<DecisionEmailResult>;
 }

@@ -11,6 +11,8 @@ function fixture(home = false) {
     'expo-router': { router: { push() {}, setParams() {} }, useLocalSearchParams: () => ({}) },
     'firebase/auth': { onAuthStateChanged: (_, next) => { next(auth.currentUser); return () => {}; } },
     '@/src/firebase/config': { auth },
+    '@/src/components/auth/AccountSessionContext': { useAccountSession: () => ({ state: { phase: 'ready', user: auth.currentUser,
+      profile: { uid: 'customer', role: 'customer', fullName: 'Customer', serviceDivision: 'Kandy' } } }) },
     '@/src/services/technician.service': { subscribeToApprovedTechnicians, retryApprovedTechnicians: filters => retries.push(filters) },
     '@/src/services/user.service': { getUserProfile: async () => ({ uid: 'customer', role: 'customer', fullName: 'Customer', serviceDivision: 'Kandy' }), getTechnicianDivision: () => 'Kandy' },
     '@/src/services/request.service': { subscribeToCustomerRequests: (_, next) => { next([]); return () => {}; }, formatRequestDate: () => '' },

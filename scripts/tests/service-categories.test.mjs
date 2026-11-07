@@ -98,6 +98,8 @@ test('Home category cards navigate with stable IDs; directory combines navigatio
   const home = renderHarness('app/(tabs)/index.tsx', { effects: true, dependencies: {
     'expo-router': { router: { push: route => routes.push(route) } }, 'firebase/auth': authSdk,
     '@/src/firebase/config': { auth }, '@/src/constants/serviceRequests': constants,
+    '@/src/components/auth/AccountSessionContext': { useAccountSession: () => ({ state: { phase: 'ready', user: auth.currentUser,
+      profile: { uid: 'customer', role: 'customer', fullName: 'Customer' } } }) },
     '@/src/components/technicians/AvailabilityBadge': { AvailabilityBadge: 'AvailabilityBadge' }, '@/src/components/technicians/TechnicianRating': { TechnicianRating: 'TechnicianRating' },
     '@/src/services/user.service': { getUserProfile: async () => ({ uid: 'customer', fullName: 'Customer', role: 'customer' }), getTechnicianDivision: () => 'Kandy' },
     '@/src/services/request.service': { subscribeToCustomerRequests: (_, next) => { next([]); return () => {}; } },

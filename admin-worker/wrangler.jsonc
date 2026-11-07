@@ -9,7 +9,8 @@
     "FIREBASE_PROJECT_ID": "servicepilot-756d9",
     "ADMIN_WEB_ORIGIN": "https://servicepilot-admin-web.pages.dev",
     "ADMIN_EMAIL_FROM": "",
-    "ADMIN_EMAIL_PROVIDER": "firebase"
+    "ADMIN_EMAIL_PROVIDER": "firebase",
+    "TECHNICIAN_EMAIL_PROVIDER": "gmail"
   },
   "observability": { "enabled": false }
 }

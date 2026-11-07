@@ -1,0 +1,30 @@
+[33mc29397a[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m docs: update authentication and onboarding documentation
+[33m3040be5[m chore(diagnostics): improve registration diagnostics
+[33ma9c516f[m test(audit): improve functional audit coverage
+[33m5b4fa30[m test(performance): improve performance and subscription tests
+[33m0c52505[m test(registration): add registration and verification tests
+[33m418e051[m test(auth): improve authentication test coverage
+[33m1a79620[m feat(legal): improve policy acceptance workflow
+[33mce15746[m refactor(ui): improve application layout components
+[33mca09088[m feat(technician): improve technician service layer
+[33m168440c[m feat(onboarding): improve account setup and registration
+[33md241829[m feat(session): improve authentication session handling
+[33mc28e319[m feat(dispatcher): improve dispatcher experience
+[33mda3a4c3[m feat(admin): improve admin navigation and layout
+[33m479cb0f[m feat(admin): improve technician approval workflow
+[33m73cdd51[m feat(technician): improve performance and notifications
+[33mf88d96b[m feat(technician): improve dashboard and navigation
+[33m215af25[m feat(technician): improve job management
+[33mcb72996[m feat(notifications): improve customer notifications
+[33mfc7d8bb[m feat(reviews): improve customer review experience
+[33m164e7a9[m feat(maps): improve location and tracking
+[33m41c27c3[m feat(technicians): improve technician discovery
+[33mc115302[m feat(customer): improve dashboard and profile
+[33m4c6a324[m feat(booking): improve customer booking workflows
+[33m586dd3f[m feat(auth): improve authentication screens
+[33m2ca4f69[m fix(firebase): update security rules and indexes
+[33m2102ae0[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m chore: remove accidentally saved git diff output
+[33m67288b9[m docs: remove change password validation document
+[33maa19c03[m chore: remove photo-worker/.dev.vars.example template
+[33ma4369f3[m chore: remove booking-worker/.dev.vars.example template
+[33m41a4ff8[m chore: remove admin-worker/.dev.vars.example template

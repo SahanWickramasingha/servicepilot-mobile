@@ -1,0 +1,28 @@
+.auth-card.portal-login { width: min(520px, 100%); padding: 32px; }
+.portal-login h2 { margin: 23px 0 18px; font-size: 18px; color: #f0f6ff; }
+.portal-login .auth-field { font-size: 14px; }
+.portal-login .auth-field > span { font-size: 13px; color: #c3d5eb; font-weight: 650; }
+.portal-login > p { font-size: 14px; line-height: 1.6; color: #b2c6df; }
+.auth-card.portal-login .primary-action { font-size: 14px; font-weight: 650; }
+.portal-login .auth-field input { font-size: 15px; min-width: 0; width: 100%; }
+.portal-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 24px 0 0; padding: 0; border: 0; min-width: 0; }
+.portal-options legend { font-size: 13px; font-weight: 650; margin-bottom: 10px; color: #bdcfe5; }
+.portal-login .portal-options .portal-option { display: flex; position: relative; flex-direction: column; align-items: flex-start; gap: 7px; padding: 16px; border: 1px solid #34506d; border-radius: 12px; background: #101f30; color: #b6c9e0; cursor: pointer; transition: background-color .16s ease, border-color .16s ease, color .16s ease; }
+.portal-login .portal-options .portal-option:has(input[value="super_admin"]) { --portal-accent: #A78BFA; --portal-selected-bg: #211A38; --portal-hover-bg: #292142; }
+.portal-login .portal-options .portal-option:has(input[value="dispatcher"]) { --portal-accent: #2DD4BF; --portal-selected-bg: #102D30; --portal-hover-bg: #16373A; }
+.portal-login .portal-options .portal-option.selected { background: var(--portal-selected-bg); border-color: var(--portal-accent); box-shadow: none; color: var(--portal-accent); }
+.portal-login .portal-options .portal-option strong { font-size: 15px; color: #fff; }
+.portal-login .portal-options .portal-option span { font-size: 12px; line-height: 1.5; color: #b6c9e0; }
+.portal-login .portal-options .portal-option > svg { transition: color .16s ease; }
+.portal-login .portal-options .portal-option input { position: absolute; right: 12px; top: 13px; accent-color: var(--portal-accent); color-scheme: dark; width: 16px; height: 16px; }
+.portal-login .portal-options .portal-option:has(input:focus-visible) { outline: 3px solid var(--portal-accent); outline-offset: 3px; }
+.portal-login .portal-options .portal-option input:focus-visible { outline: none; }
+.portal-login .portal-options:not(:disabled) .portal-option:not(.selected):hover { background: #142338; border-color: #627891; }
+.portal-login .portal-options:not(:disabled) .portal-option.selected:hover { background: var(--portal-hover-bg); }
+.portal-login .portal-options:disabled .portal-option { opacity: .65; cursor: not-allowed; }
+.portal-login p.portal-selection-note { font-size: 12px; color: #b0c3dc; margin-top: 12px; }
+.portal-login .password-visibility { border: 0; background: transparent; color: #b8cde7; display: grid; place-items: center; min-width: 36px; min-height: 36px; border-radius: 7px; }
+.portal-login .portal-switch { border: 1px solid #4579af; color: #bddbff; background: #11273e; border-radius: 9px; padding: 10px 12px; margin-top: 12px; }
+.portal-login :is(button, input):focus-visible { outline: 3px solid #93c5fd; outline-offset: 3px; }
+@media (max-width: 430px) { .auth-card.portal-login { padding: 23px; } .auth-page:has(.portal-login) { padding: 14px; } .portal-login .portal-options .portal-option { padding: 14px 11px; } .portal-login .portal-options .portal-option strong { font-size: 14px; } }
+@media (prefers-reduced-motion: reduce) { .portal-login .portal-options .portal-option, .portal-login .portal-options .portal-option > svg { transition: none; } }

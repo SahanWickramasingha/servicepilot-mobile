@@ -12,8 +12,9 @@ import {
   ShieldCheck,
   UserCog,
   Users,
+  X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { useAdminAuth } from "../auth/AdminAuthContext";
@@ -50,6 +51,19 @@ export default function AdminLayout({
   portal: "admin" | "dispatcher";
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+  const sidebar = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previous = document.body.style.overflow;
+    const opener = menuButton.current;
+    document.body.style.overflow = "hidden";
+    sidebar.current?.querySelector<HTMLElement>("button, a")?.focus();
+    const wide = window.matchMedia("(min-width: 851px)");
+    const closeWhenWide = () => { if (wide.matches) setMobileOpen(false); };
+    wide.addEventListener("change", closeWhenWide);
+    return () => { document.body.style.overflow = previous; wide.removeEventListener("change", closeWhenWide); opener?.focus(); };
+  }, [mobileOpen]);
   const { profile, logout } = useAdminAuth();
   const navigation =
     portal === "admin" ? adminNavigation : dispatcherNavigation;
@@ -66,7 +80,18 @@ export default function AdminLayout({
         />
       )}
 
-      <aside className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}>
+      <aside id="portal-navigation" ref={sidebar} className={`sidebar ${mobileOpen ? "mobile-open" : ""}`}
+        role={mobileOpen ? "dialog" : undefined} aria-modal={mobileOpen ? true : undefined} aria-label={`${portalLabel} navigation`}
+        onKeyDown={event => {
+          if (!mobileOpen) return;
+          if (event.key === "Escape") { event.preventDefault(); setMobileOpen(false); }
+          if (event.key === "Tab") {
+            const targets = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]"));
+            const first = targets[0], last = targets.at(-1);
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+          }
+        }}>
         <div className="brand-area">
           <div className="brand-logo">
             <img
@@ -79,9 +104,10 @@ export default function AdminLayout({
             <div className="brand-name">ServicePilot</div>
             <div className="brand-subtitle">{portalLabel}</div>
           </div>
+          {mobileOpen && <button className="drawer-close" aria-label="Close navigation" onClick={() => setMobileOpen(false)}><X size={19} /></button>}
         </div>
 
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav" aria-label={`${portalLabel} pages`}>
           {navigation.map((item) => {
             const Icon = item.icon;
 
@@ -108,11 +134,14 @@ export default function AdminLayout({
         </button>
       </aside>
 
-      <div className="admin-main">
+      <div className="admin-main" inert={mobileOpen ? true : undefined}>
         <header className="topbar">
           <button
             className="mobile-menu-button"
+            ref={menuButton}
             aria-label="Open navigation"
+            aria-expanded={mobileOpen}
+            aria-controls="portal-navigation"
             onClick={() => setMobileOpen(true)}
           >
             <Menu size={21} />

@@ -11,6 +11,7 @@ import {
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -172,10 +173,26 @@ export default function TechnicianJobsScreen() {
         backgroundColor="#06101D"
       />
 
-      <ScrollView
+      <FlatList
+        data={filteredJobs}
+        keyExtractor={jobKey}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={7}
+        extraData={updatingId}
+        ItemSeparatorComponent={JobSeparator}
+        renderItem={({ item: job }) => <JobCard
+          job={job}
+          updating={updatingId === job.id}
+          canAccept={canAccept}
+          onAccept={() => handleStatusUpdate(job.id, "accepted")}
+          onReject={() => openReasonModal("reject", job)}
+          onStart={() => handleStatusUpdate(job.id, "in_progress")}
+          onCancel={() => openReasonModal("cancel", job)}
+        />}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
-      >
+        ListHeaderComponent={<>
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Today&apos;s Jobs</Text>
@@ -269,30 +286,8 @@ export default function TechnicianJobsScreen() {
         {!canAccept && <TouchableOpacity accessibilityRole="button" onPress={() => router.push("/technician")}>
           <Text style={styles.viewButtonText}>Set Available on your dashboard to accept requests. Existing jobs remain accessible.</Text>
         </TouchableOpacity>}
-        <View style={styles.jobsList}>
-          {filteredJobs.map((job) => (
-            <JobCard
-              key={job.id}
-              job={job}
-              updating={updatingId === job.id}
-              canAccept={canAccept}
-              onAccept={() =>
-                handleStatusUpdate(job.id, "accepted")
-              }
-              onReject={() =>
-                openReasonModal("reject", job)
-              }
-              onStart={() =>
-                handleStatusUpdate(job.id, "in_progress")
-              }
-              onCancel={() =>
-                openReasonModal("cancel", job)
-              }
-            />
-          ))}
-        </View>
-
-        {filteredJobs.length === 0 && (
+        </>}
+        ListEmptyComponent={
           <View style={styles.emptyCard}>
             <View style={styles.emptyIcon}>
               <CheckCircle2 size={38} color="#22C55E" />
@@ -304,8 +299,8 @@ export default function TechnicianJobsScreen() {
               There are currently no jobs matching this status.
             </Text>
           </View>
-        )}
-      </ScrollView>
+        }
+      />
 
       <ReasonModal
         action={reasonAction}
@@ -323,6 +318,9 @@ export default function TechnicianJobsScreen() {
     </View>
   );
 }
+
+const jobKey = (job: ServiceRequest) => job.id;
+const JobSeparator = () => <View style={{ height: 13 }} />;
 
 function StateScreen({
   title = "Please wait",
@@ -775,7 +773,6 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { color: "#F8FAFC", fontSize: 14, fontWeight: "800" },
   resultCount: { color: "#64748B", fontSize: 9 },
-  jobsList: { gap: 13 },
   jobCard: {
     borderRadius: 18,
     backgroundColor: "#0D1B2A",

@@ -3,6 +3,10 @@ export interface Env {
   ADMIN_WEB_ORIGIN: string;
   ADMIN_EMAIL_FROM?: string;
   ADMIN_EMAIL_PROVIDER: string;
+  TECHNICIAN_EMAIL_PROVIDER?: string;
+  GMAIL_CLIENT_ID?: string;
+  GMAIL_CLIENT_SECRET?: string;
+  GMAIL_REFRESH_TOKEN?: string;
   ADMIN_SERVICE_ACCOUNT_EMAIL: string;
   ADMIN_SERVICE_ACCOUNT_PRIVATE_KEY: string;
   RESEND_API_KEY?: string;

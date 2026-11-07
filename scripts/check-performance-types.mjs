@@ -5,7 +5,7 @@ if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.m
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, '.');
 const roots = [
   'app/(tabs)/index.tsx', 'app/(tabs)/technicians.tsx', 'app/(tabs)/technician-profile.tsx', 'app/(tabs)/map.tsx',
-  'app/(tabs)/bookings.tsx', 'app/(tabs)/request-details.tsx', 'app/(tabs)/notifications.tsx',
+  'app/(tabs)/bookings.tsx', 'app/(tabs)/request-details.tsx', 'app/(tabs)/notifications.tsx', 'app/(tabs)/profile.tsx',
   'app/technician/(tabs)/index.tsx', 'app/technician/(tabs)/jobs.tsx', 'app/technician/(tabs)/history.tsx',
   'app/technician/performance.tsx', 'app/technician/notifications.tsx', 'src/components/auth/AuthSessionGate.tsx',
   'src/components/auth/ProtectedRoute.tsx', 'src/components/maps/TechnicianLocationLifecycle.tsx',
