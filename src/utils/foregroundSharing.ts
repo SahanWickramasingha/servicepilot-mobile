@@ -33,6 +33,7 @@ export class ForegroundSharing {
   private sessionGeneration = 0;
   private active = true;
   private optedIn = false;
+  private pendingPermission?: Promise<boolean>;
   private acquisition?: AbortController;
   private removeWatch?: () => void;
   private removeHeartbeat?: () => void;
@@ -88,6 +89,7 @@ export class ForegroundSharing {
     this.cancelLocal();
     const generation = this.generation;
     this.sessionGeneration++;
+    this.pendingPermission = undefined;
     this.uid = uid;
     this.optedIn = false;
     this.last = undefined;
@@ -160,6 +162,16 @@ export class ForegroundSharing {
     this.tail = operation;
     await operation;
   }
+  private async checkPermission(prompt: boolean): Promise<boolean> {
+    // The permission dialog can pause and resume the app before Android has
+    // reported the user's choice. Reuse that request within the same session.
+    if (this.pendingPermission) return this.pendingPermission;
+    if (!prompt) return this.adapter.permission(false);
+    const pending = this.adapter.permission(true);
+    this.pendingPermission = pending;
+    try { return await pending; }
+    finally { if (this.pendingPermission === pending) this.pendingPermission = undefined; }
+  }
   async enable(prompt = true): Promise<void> {
     if (!this.uid) { this.update({ status: "error", error: "Sign in as an approved Technician to share." }); return; }
     this.cancelLocal();
@@ -170,7 +182,7 @@ export class ForegroundSharing {
     if (!this.active) { this.update({ status: "paused" }); return; }
     let step: LocationStep = "permission";
     try {
-      if (!await this.adapter.permission(prompt)) throw new LocationSharingError(step, "location/permission-refused", "Location permission was refused. Enable it in device Settings, then retry.");
+      if (!await this.checkPermission(prompt)) throw new LocationSharingError(step, "location/permission-refused", "Location permission was refused. Enable it in device Settings, then retry.");
       if (generation !== this.generation) return;
       step = "services";
       if (!await this.adapter.servicesEnabled()) throw new LocationSharingError(step, "location/services-off", "Device location services are off. Enable GPS, then retry.");
@@ -234,7 +246,7 @@ export class ForegroundSharing {
     const stopped = this.stop();
     const generation = this.generation;
     try { await stopped; } finally {
-      if (generation === this.generation) { this.uid = undefined; this.sessionGeneration++; }
+      if (generation === this.generation) { this.uid = undefined; this.sessionGeneration++; this.pendingPermission = undefined; }
     }
   }
 
@@ -243,6 +255,7 @@ export class ForegroundSharing {
   endRevokedSession(): void {
     this.cancelLocal();
     this.sessionGeneration++;
+    this.pendingPermission = undefined;
     this.uid = undefined;
     this.optedIn = false;
     this.update({ enabled: false, status: "off", error: "", revokeFailed: false });
