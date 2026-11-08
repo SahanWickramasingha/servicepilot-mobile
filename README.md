@@ -2,7 +2,7 @@
 
 ## Download Android APK
 
-[**Download ServicePilot Android APK — v1.0.0-preview.3**](https://github.com/SahanWickramasingha/servicepilot-mobile/releases/tag/v1.0.0-preview.3)
+[**Download ServicePilot Android APK — v1.0.0-preview.4**](https://github.com/SahanWickramasingha/servicepilot-mobile/releases/tag/v1.0.0-preview.4)
 
 Open the release page and download the `.apk` file under **Assets**. Install it on your Android phone, allowing installation from your browser if prompted. Internet access is required. This is a pre-release for testing.
 
