@@ -38,7 +38,7 @@ test('already-verified resend offers continuation without a success countdown or
   await h.button('Resend Email').props.onPress(); h.h.render();
   assert.equal(h.sends(), 1); assert.ok(h.labels().includes('Email Verified'));
   assert.ok(h.labels().some(value => value.includes('already verified')));
-  assert.ok(!h.labels().some(value => value.includes('Try again in')));
+  assert.ok(!h.labels().some(value => value.includes('Resend available in')));
   assert.equal(h.button('Resend Email'), undefined);
   await h.button('Continue profile setup').props.onPress();
   assert.equal(h.routes.at(-1).pathname, '/profile-setup'); h.h.cleanup();
@@ -52,7 +52,7 @@ test('resend acceptance and failures show outcome-specific feedback; only accept
       if (code) throw { code }; return { alreadyVerified: false };
     } });
     await h.button('Resend Email').props.onPress(); h.h.render();
-    assert.equal(h.labels().some(value => value.includes('Try again in')), wait > 0);
+    assert.equal(h.labels().some(value => value.includes('Resend available in')), wait > 0);
     assert.equal(h.labels().some(value => value.includes('request accepted')), !code);
     if (!code) assert.ok(h.labels().some(value => value.includes('Inbox delivery is not confirmed')));
     else assert.ok(h.h.elements().some(node => node.props.accessibilityRole === 'alert'));
