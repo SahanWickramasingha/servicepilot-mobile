@@ -119,12 +119,18 @@ test("fresh reset requests are neutral for existing/missing accounts, guard dupl
   }
 });
 
-test("existing verifyEmail mode still uses applyActionCode exclusively and retains its result/error states", async () => {
-  for (const [code, title] of [[null, "Email Verified"], ["auth/expired-action-code", "Verification Link Expired"],
-    ["auth/invalid-action-code", "Email Already Verified"], ["auth/network-request-failed", "Unable to Verify Email"]]) {
+test("verification only reports success after Firebase accepts the code and guides users to check ambiguous outcomes", async () => {
+  for (const [code, title] of [[null, "Email Verified"], ["auth/expired-action-code", "Verification Link Unavailable"],
+    ["auth/invalid-action-code", "Verification Link Unavailable"], ["auth/network-request-failed", "Unable to Verify Email"]]) {
     let calls = 0;
     const h = page({ applyActionCode: async () => { calls++; if (code) failure(code); } }, { mode: "verifyEmail" }); await h.ready;
     assert.equal(calls, 1); assert.deepEqual(h.calls, []); assert.equal(h.node("title").textContent, title);
+    assert.match(h.node("message").textContent, /I've Verified Email/);
+    if (title === "Verification Link Unavailable") {
+      assert.match(h.node("message").textContent, /expired or already been used/);
+      assert.match(h.node("message").textContent, /only if/);
+      assert.equal(h.node("retryAction").hidden, true);
+    }
     assert.equal(h.node("resetFields").disabled, true); assert.equal(h.node("requestFresh").hidden, true); h.dispose();
   }
 });

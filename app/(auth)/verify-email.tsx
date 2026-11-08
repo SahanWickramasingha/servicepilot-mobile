@@ -263,7 +263,7 @@ export default function VerifyEmailScreen() {
 
             {resendTimer > 0 ? (
               <Text style={styles.timerText}>
-                Try again in {resendTimer}s
+                Resend available in {resendTimer}s
               </Text>
             ) : (
               <TouchableOpacity

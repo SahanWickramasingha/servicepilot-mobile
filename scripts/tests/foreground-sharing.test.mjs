@@ -80,6 +80,31 @@ test("OFF during pending permission never starts GPS or republishes", async () =
   assert.ok(state.writes.every((w) => !w.point));
 });
 
+test("resuming while the Android permission dialog is resolving waits for the same answer", async () => {
+  for (const granted of [true, false]) {
+    let resolvePermission;
+    const permission = new Promise((resolve) => { resolvePermission = resolve; });
+    const { sharing, state, adapter } = fixture();
+    adapter.permission = async (prompt) => {
+      state.permissionPrompts.push(prompt);
+      return prompt ? permission : false;
+    };
+    await sharing.setSession("tech-a");
+    const enabling = sharing.enable();
+    await sharing.setActive(false);
+    assert.equal(sharing.getSnapshot().status, "paused");
+    const resuming = sharing.setActive(true);
+    await flush();
+    assert.ok(state.writes.every((w) => !w.point));
+    resolvePermission(granted);
+    await Promise.all([enabling, resuming]);
+    assert.deepEqual(state.permissionPrompts, [true]);
+    assert.equal(sharing.getSnapshot().status, granted ? "sharing" : "error");
+    assert.equal(state.writes.some((w) => w.point), granted);
+    await sharing.cleanup();
+  }
+});
+
 test("OFF waits behind an in-flight write; its removal wins over late GPS callbacks", async () => {
   let release;
   const { sharing, state, point } = fixture();

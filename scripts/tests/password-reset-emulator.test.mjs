@@ -71,7 +71,7 @@ test("invalid reset code never enables form; reset action cannot sign in or repl
   assert.equal(primary.currentUser, originalUser); assert.equal(actionAuth.currentUser, null); await signOut(primary);
 });
 
-test("existing verifyEmail action works against Auth emulator without calling reset APIs", async () => {
+test("a real verification code verifies once; reopening it guides the user to check their verified account", async () => {
   const target = await account(), actionAuth = client(), dom = resetDom();
   const link = await admin.generateEmailVerificationLink(target.email);
   const code = new URL(link).searchParams.get("oobCode");
@@ -79,6 +79,14 @@ test("existing verifyEmail action works against Auth emulator without calling re
   await controller.ready;
   assert.equal(dom.node("title").textContent, "Email Verified"); assert.equal((await admin.getUser(target.uid)).emailVerified, true);
   assert.equal(actionAuth.currentUser, null); assert.equal(dom.node("resetForm").hidden, true); controller.dispose();
+  const reopened = resetDom();
+  const second = resetController.startEmailActionPage({ api, auth: actionAuth, document: reopened.document, mode: "verifyEmail", code });
+  await second.ready;
+  assert.equal(reopened.node("title").textContent, "Verification Link Unavailable");
+  assert.match(reopened.node("message").textContent, /I've Verified Email/);
+  assert.equal((await admin.getUser(target.uid)).emailVerified, true);
+  assert.equal(actionAuth.currentUser, null);
+  second.dispose();
 });
 
 test("local Hosting serves the real handler/modules with no-referrer and no-store; staged config can reach only demo Auth", async () => {
