@@ -10,7 +10,7 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
 
 ## Admin Portal
 
-[Open ServicePilot Admin](https://servicepilot-admin-web.pages.dev/login)
+[Open ServicePilot Admin](https://admin.sahanwickramasingha.space/login)
 
 Sign in with an authorized Admin or Dispatcher account.
 
