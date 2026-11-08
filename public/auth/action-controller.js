@@ -1,6 +1,7 @@
 // Firebase action codes and passwords are held only by this page's closure.
 // Never log provider errors, persist form data, or navigate using URL parameters.
 export const RESET_REQUEST_CONFIRMATION = "If an eligible account exists for this email, a password reset link will be sent. Check your inbox and spam folder.";
+const CHECK_VERIFICATION_IN_APP = "Return to the ServicePilot app and tap ‘I've Verified Email’ to check your account. Request a new link only if the app says your email is still unverified.";
 
 export function passwordResetMessage(error) {
   switch (error?.code) {
@@ -113,8 +114,9 @@ export function startEmailActionPage({ api, auth, document, mode, code, invalidQ
     }
     if (invalidQuery || !actionCode || actionCode.length > 2048 || /\s/.test(actionCode)) {
       invalidate();
-      render(mode === "resetPassword" ? "Invalid Reset Link" : "Invalid Verification Link", "This link is missing valid action information. Request a new email link.");
-      if (mode === "resetPassword") showFresh();
+      if (mode === "resetPassword") {
+        render("Invalid Reset Link", "This link is missing valid action information. Request a new email link."); showFresh();
+      } else render("Invalid Verification Link", `This link is missing verification information. ${CHECK_VERIFICATION_IN_APP}`);
       return;
     }
     busy = true;
@@ -125,7 +127,7 @@ export function startEmailActionPage({ api, auth, document, mode, code, invalidQ
         await api.applyActionCode(auth, actionCode);
         if (!active) return;
         actionCode = "";
-        render("Email Verified", "Your ServicePilot email has been verified successfully. You can now return to the ServicePilot app and sign in.", "success");
+        render("Email Verified", "Your email is verified. Return to the ServicePilot app and tap ‘I've Verified Email’ to continue setup, or sign in if you've already completed setup.", "success");
       } else {
         const email = await api.verifyPasswordResetCode(auth, actionCode);
         if (!active) return;
@@ -140,9 +142,10 @@ export function startEmailActionPage({ api, auth, document, mode, code, invalidQ
     } catch (error) {
       if (!active) return;
       if (mode === "verifyEmail") {
-        if (error?.code === "auth/expired-action-code") render("Verification Link Expired", "This verification link is no longer valid. Return to ServicePilot and request a new verification email.", "warning");
-        else if (error?.code === "auth/invalid-action-code") render("Email Already Verified", "This verification link has already been used or the account is already verified. You can return to ServicePilot and sign in.", "warning");
-        else render("Unable to Verify Email", "We couldn't verify your email right now. Return to ServicePilot and request a new verification email.");
+        if (error?.code === "auth/expired-action-code" || error?.code === "auth/invalid-action-code") {
+          invalidate();
+          render("Verification Link Unavailable", `This link may have expired or already been used. ${CHECK_VERIFICATION_IN_APP}`, "warning");
+        } else render("Unable to Verify Email", `We couldn't confirm verification in this browser. ${CHECK_VERIFICATION_IN_APP}`);
       } else {
         if (terminal(error)) invalidate();
         else retry.hidden = false;
