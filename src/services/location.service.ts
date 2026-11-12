@@ -1,5 +1,5 @@
 import { collection, doc, documentId, getDocFromServer, getDocsFromServer, limit, onSnapshot, orderBy,
-  query, runTransaction, serverTimestamp, setDoc, startAfter, Timestamp, where, writeBatch } from "firebase/firestore";
+  query, runTransaction, serverTimestamp, setDoc, startAfter, Timestamp, where, writeBatch, type DocumentReference } from "firebase/firestore";
 import { auth, db } from "@/src/firebase/config";
 import { createSessionCache } from "./session-subscriptions";
 import { readTechnicianAvailability, TechnicianAvailability } from "@/functions/src/domain/availability";
@@ -30,6 +30,21 @@ function mapProfile(uid: string, data: Record<string, any> | undefined): MapTech
     ...(data.serviceAreasByDistrict !== undefined ? { serviceAreasByDistrict: data.serviceAreasByDistrict } : {}) };
 }
 
+async function readMapDirectoryProfile(ref: DocumentReference, isCurrent: () => boolean): Promise<MapTechnician | null> {
+  try {
+    const snapshot = await getDocFromServer(ref);
+    const data = snapshot.data();
+    return data?.approved === true ? mapProfile(snapshot.id, data) : null;
+  } catch (cause) {
+    if ((cause as { code?: string })?.code !== "permission-denied" || !isCurrent()) throw cause;
+    // A denied profile read could also mean the customer lost access. This
+    // Rules-only path succeeds only for an eligible customer and an ineligible technician.
+    const exclusion = await getDocFromServer(doc(db, "technician_directory_exclusions", ref.id));
+    if (exclusion.exists()) throw cause;
+    return null;
+  }
+}
+
 /** Bounded public projection listener. Every emission rechecks authoritative approval via server gets. */
 export function subscribeToMapTechnicians(districtId: string, category: string | undefined, pageCount: number,
   onNext: (page: MapPage) => void, onError: (error: Error) => void): () => void {
@@ -38,19 +53,22 @@ export function subscribeToMapTechnicians(districtId: string, category: string |
   const directory = query(collection(db, "technician_map_profiles"), where("approved", "==", true),
     where("serviceDistrictIds", "array-contains", districtId), ...(category ? [where("serviceCategory", "in", categoryProjectionLabels(category))] : []),
     orderBy(documentId()), limit(count));
+  const viewer = auth.currentUser;
   let alive = true, generation = 0;
+  const isCurrent = (version: number) => alive && generation === version && auth.currentUser === viewer;
   const fail = async (cause: unknown, version: number) => {
     const error = await classifyMapServiceError(cause);
-    if (alive && generation === version) onError(error);
+    if (isCurrent(version)) onError(error);
   };
   const unsubscribe = onSnapshot(directory, { includeMetadataChanges: true }, (snapshot) => {
     const version = ++generation;
+    const isCurrentSnapshot = () => isCurrent(version);
+    if (!isCurrentSnapshot()) return;
     if (snapshot.metadata.fromCache) { void fail(new MapServiceError("network", "unavailable"), version); return; }
     // Reads are limited to this page (8/16/24), never private users or GPS documents.
-    void Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref))).then((verified) => {
-      if (!alive || generation !== version) return;
-      const items = verified.filter(item => item.data()?.approved === true).map((item) => mapProfile(item.id, item.data()))
-        .filter((item) => item.serviceDistrictIds.includes(districtId) &&
+    void Promise.all(snapshot.docs.map((item) => readMapDirectoryProfile(item.ref, isCurrentSnapshot))).then((verified) => {
+      if (!isCurrentSnapshot()) return;
+      const items = verified.filter((item): item is MapTechnician => item !== null && item.serviceDistrictIds.includes(districtId) &&
           (!category || item.serviceCategoryId === resolveServiceCategory(category)?.id));
       items.sort((a, b) => b.averageRating - a.averageRating || a.fullName.localeCompare(b.fullName));
       onNext({ items, cursor: snapshot.docs.at(-1)?.id, hasMore: snapshot.size === count && count < MAP_MAX_ITEMS });
@@ -61,15 +79,18 @@ export function subscribeToMapTechnicians(districtId: string, category: string |
 
 export async function getMapTechnicianPage(districtId: string, category?: string, cursor?: string): Promise<MapPage> {
   if (!DISTRICTS.some((district) => district.id === districtId)) throw new Error("Select a valid service district.");
+  const viewer = auth.currentUser;
+  const isCurrent = () => auth.currentUser === viewer;
   try {
     const directory = query(collection(db, "technician_map_profiles"), where("approved", "==", true),
       where("serviceDistrictIds", "array-contains", districtId), ...(category ? [where("serviceCategory", "in", categoryProjectionLabels(category))] : []),
       orderBy(documentId()), ...(cursor ? [startAfter(cursor)] : []), limit(MAP_PAGE_SIZE));
     const snapshot = await getDocsFromServer(directory);
-    // Each get independently checks CURRENT authoritative approval. Never swallow denied gets.
-    const verified = await Promise.all(snapshot.docs.map((item) => getDocFromServer(item.ref)));
-    return { items: verified.filter(item => item.data()?.approved === true).map((item) => mapProfile(item.id, item.data()))
-      .filter(item => item.serviceDistrictIds.includes(districtId) && (!category || item.serviceCategoryId === resolveServiceCategory(category)?.id)),
+    if (!isCurrent()) throw new MapServiceError("access", "unauthenticated");
+    const verified = await Promise.all(snapshot.docs.map((item) => readMapDirectoryProfile(item.ref, isCurrent)));
+    if (!isCurrent()) throw new MapServiceError("access", "unauthenticated");
+    return { items: verified.filter((item): item is MapTechnician => item !== null && item.serviceDistrictIds.includes(districtId) &&
+      (!category || item.serviceCategoryId === resolveServiceCategory(category)?.id)),
       cursor: snapshot.docs.at(-1)?.id, hasMore: snapshot.size === MAP_PAGE_SIZE };
   } catch (cause) { throw await classifyMapServiceError(cause); }
 }

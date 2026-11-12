@@ -21,6 +21,7 @@ const app = initializeApp({ projectId: "demo-map-transport", apiKey: "emulator-o
 const db = firestore.getFirestore(app);
 const domain = require("../../functions/lib/domain/map.js"), projection = require("../../functions/lib/domain/mapProjection.js");
 let reply = [], failure, querySeen, verifiedReads = 0, listener, listenerError, stopped = 0;
+let documentRead;
 const service = loadTs("src/services/location.service.ts", {
   "firebase/firestore": { ...firestore,
     onSnapshot: (query, options, next, error) => { querySeen = query._query; assert.equal(options.includeMetadataChanges, true);
@@ -30,7 +31,11 @@ const service = loadTs("src/services/location.service.ts", {
       if (failure) throw failure;
       return { docs: reply.map(([id, data]) => ({ id, ref: firestore.doc(db, "technician_map_profiles", id), data: () => data })), size: reply.length };
     },
-    getDocFromServer: async (ref) => { verifiedReads++; return { id: ref.id, data: () => ({ approved: true, ...reply.find(([id]) => id === ref.id)[1] }) }; },
+    getDocFromServer: async (ref) => {
+      verifiedReads++;
+      if (documentRead) return documentRead(ref);
+      return { id: ref.id, data: () => ({ approved: true, ...reply.find(([id]) => id === ref.id)[1] }) };
+    },
   },
   "@/src/firebase/config": { app, auth: { currentUser: null }, db },
   "@/src/utils/mapServiceError": errors, "@/functions/src/domain/map": domain,
@@ -72,6 +77,43 @@ const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(
 const snapshot = () => ({ metadata: { fromCache: false }, size: reply.length,
   docs: reply.map(([id]) => ({ id, ref: firestore.doc(db, "technician_map_profiles", id) })) });
 
+test("a stale approval projection is skipped only after the server confirms exclusion", async () => {
+  const active = { approved: true, fullName: "Fixture Technician", specialization: "Electrical", serviceDistrictIds: ["kandy"], averageRating: 4 };
+  reply = [["fixture-tech", active], ["stale-tech", { ...active, fullName: "Stale projection" }]];
+  let proofFailure, proofExists = false, proofReads = 0, stop;
+  documentRead = (ref) => {
+    if (ref.path === "technician_map_profiles/fixture-tech") return { id: ref.id, data: () => active };
+    if (ref.path === "technician_map_profiles/stale-tech") throw { code: "permission-denied" };
+    assert.equal(ref.path, "technician_directory_exclusions/stale-tech");
+    proofReads++;
+    if (proofFailure) throw { code: proofFailure };
+    return { exists: () => proofExists };
+  };
+  try {
+    const page = await service.getMapTechnicianPage("kandy");
+    assert.deepEqual(page.items.map(({ uid }) => uid), ["fixture-tech"]);
+    assert.equal(page.cursor, "stale-tech");
+    const pages = [], errorsSeen = [];
+    stop = service.subscribeToMapTechnicians("kandy", undefined, 1, (page) => pages.push(page), (error) => errorsSeen.push(error));
+    listener(snapshot()); await settle();
+    assert.deepEqual(pages[0].items.map(({ uid }) => uid), ["fixture-tech"]);
+    assert.equal(proofReads, 2);
+    proofFailure = "permission-denied";
+    await assert.rejects(service.getMapTechnicians("kandy"), { kind: "access" });
+    listener(snapshot()); await settle();
+    assert.equal(errorsSeen.at(-1).kind, "access");
+    assert.equal(pages.length, 1);
+    proofFailure = "unavailable";
+    await assert.rejects(service.getMapTechnicians("kandy"), { kind: "network" });
+    proofFailure = undefined;
+    proofExists = true;
+    await assert.rejects(service.getMapTechnicians("kandy"));
+  } finally {
+    stop?.();
+    documentRead = undefined;
+  }
+});
+
 test("live map profiles are bounded, use the newest server area and ignore superseded/closed emissions", async () => {
   const pages = [], errorsSeen = [];
   const stop = service.subscribeToMapTechnicians("kandy", "Electrical", 99, (page) => pages.push(page), (error) => errorsSeen.push(error));
@@ -85,7 +127,8 @@ test("live map profiles are bounded, use the newest server area and ignore super
   listener({ ...snapshot(), metadata: { fromCache: true } }); await settle();
   assert.equal(pages.length, 1); assert.equal(errorsSeen.at(-1).kind, "network");
   listenerError({ code: "permission-denied" }); await settle(); assert.equal(errorsSeen.at(-1).kind, "access");
-  listener(snapshot()); stop(); await settle(); assert.equal(pages.length, 1); assert.equal(stopped, 1);
+  const previousStops = stopped;
+  listener(snapshot()); stop(); await settle(); assert.equal(pages.length, 1); assert.equal(stopped, previousStops + 1);
 });
 
 test("explicit location reads return only the selected UID's server-side approximate GPS, including OFF/stale/invalid states", async () => {
