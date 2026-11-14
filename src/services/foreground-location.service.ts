@@ -16,7 +16,7 @@ export const foregroundSharing = new ForegroundSharing({
   },
   servicesEnabled: Location.hasServicesEnabledAsync,
   prepare: syncOwnMapProfile,
-  current: (signal) => acquireDeviceFix({ now: Date.now, watch: async (next, error) => {
+  current: (signal) => acquireDeviceFix({ now: Date.now, notBefore: Date.now(), watch: async (next, error) => {
     // High requests Android GPS; Balanced can wait for a network fix even when
     // Extended Controls has supplied a GPS coordinate. No background subscription.
     const watcher = await Location.watchPositionAsync({ accuracy: Location.Accuracy.High,

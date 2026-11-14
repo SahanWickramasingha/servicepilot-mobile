@@ -60,9 +60,16 @@ test("Expo adapter requests GPS accuracy and a removable subscription, rather th
     "@/src/utils/acquireDeviceFix": { acquireDeviceFix },
     "@/src/services/location.service": { publishTechnicianLocation() {} },
   });
+  const started = Date.now();
   const initial = adapter.current(); await Promise.resolve();
   assert.equal(requests[0].accuracy, native.Accuracy.High); assert.equal(requests[0].distanceInterval, 0);
-  watchers[0]({ coords: kandy, timestamp: Date.now() }); await initial;
+  // Android may lead with a recent fix from before the request, at a different place.
+  watchers[0]({ coords: kandy, timestamp: started - 1000 });
+  const moved = { ...kandy, latitude: 7.4863, longitude: 80.3647 };
+  watchers[0]({ coords: moved, timestamp: Date.now() });
+  const acquired = await initial;
+  assert.equal(acquired.latitude, moved.latitude);
+  assert.equal(acquired.longitude, moved.longitude);
   const stop = await adapter.watch(() => {}, () => {});
   assert.equal(requests[1].accuracy, native.Accuracy.High); assert.equal(requests[1].timeInterval, 30000);
   assert.equal(requests[1].distanceInterval, 100); stop();

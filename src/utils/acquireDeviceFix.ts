@@ -4,6 +4,7 @@ import { LocationSharingError, locationSharingError } from "./locationSharingErr
 
 type FixSource = {
   now: () => number;
+  notBefore?: number;
   watch: (next: (fix: DeviceFix) => void, error: (cause?: unknown) => void) => Promise<() => void>;
 };
 
@@ -26,7 +27,8 @@ export function acquireDeviceFix(source: FixSource, signal?: AbortSignal, timeou
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) { abort(); return; }
     void source.watch((point) => {
-      if (!validCoordinate(point) || !Number.isFinite(point.sampledAt) || source.now() - point.sampledAt > 60000 ||
+      if (!validCoordinate(point) || !Number.isFinite(point.sampledAt) || point.sampledAt < (source.notBefore ?? -Infinity) ||
+          source.now() - point.sampledAt > 60000 ||
           point.sampledAt > source.now() + 5000 || (point.accuracy != null && point.accuracy > 2000)) return;
       finish(point);
     }, (cause) => finish(undefined, locationSharingError(cause, "acquisition"))).then((cleanup) => {
