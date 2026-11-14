@@ -99,9 +99,10 @@ test("a stale approval projection is skipped only after the server confirms excl
     assert.deepEqual(pages[0].items.map(({ uid }) => uid), ["fixture-tech"]);
     assert.equal(proofReads, 2);
     proofFailure = "permission-denied";
-    await assert.rejects(service.getMapTechnicians("kandy"), { kind: "access" });
+    await assert.rejects(service.getMapTechnicians("kandy"), { kind: "directory-approval" });
     listener(snapshot()); await settle();
-    assert.equal(errorsSeen.at(-1).kind, "access");
+    assert.equal(errorsSeen.at(-1).kind, "directory-approval");
+    assert.match(errors.mapServiceErrorMessage(errorsSeen.at(-1)), /confirm technician approval/);
     assert.equal(pages.length, 1);
     proofFailure = "unavailable";
     await assert.rejects(service.getMapTechnicians("kandy"), { kind: "network" });

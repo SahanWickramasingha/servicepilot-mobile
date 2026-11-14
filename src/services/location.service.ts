@@ -39,9 +39,16 @@ async function readMapDirectoryProfile(ref: DocumentReference, isCurrent: () => 
     if ((cause as { code?: string })?.code !== "permission-denied" || !isCurrent()) throw cause;
     // A denied profile read could also mean the customer lost access. This
     // Rules-only path succeeds only for an eligible customer and an ineligible technician.
-    const exclusion = await getDocFromServer(doc(db, "technician_directory_exclusions", ref.id));
-    if (exclusion.exists()) throw cause;
-    return null;
+    try {
+      const exclusion = await getDocFromServer(doc(db, "technician_directory_exclusions", ref.id));
+      if (exclusion.exists()) throw cause;
+      return null;
+    } catch (proofError) {
+      const failure = await classifyMapServiceError(proofError);
+      // A failed proof cannot distinguish a denied row from a lost session.
+      if (failure.kind === "access") throw new MapServiceError("directory-approval", failure.code);
+      throw failure;
+    }
   }
 }
 
