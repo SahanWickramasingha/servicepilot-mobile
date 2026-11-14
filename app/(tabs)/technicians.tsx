@@ -250,8 +250,8 @@ export default function TechniciansScreen() {
           <ActivityIndicator color="#3B82F6" accessibilityLabel="Loading more technicians" />
           <Text style={styles.emptyText}>Loading more technicians…</Text>
         </View>}
-        {hasMore && !loading && <TouchableOpacity accessibilityRole="button" style={styles.emptyCard} onPress={() => setPageCount((count) => count + 1)}>
-          <Text style={styles.sectionTitle}>Load more Technicians</Text></TouchableOpacity>}
+        {hasMore && !loading && <TouchableOpacity accessibilityRole="button" style={styles.loadMoreButton} onPress={() => setPageCount((count) => count + 1)}>
+          <Text style={styles.loadMoreText}>Load more Technicians</Text></TouchableOpacity>}
         {pageCount >= 3 && <Text style={styles.emptyText}>Showing up to 24 professionals. Choose a district on the Map to narrow results.</Text>}
         </>}
       />
@@ -471,6 +471,25 @@ const styles = StyleSheet.create({
     color: "#64748B",
     fontSize: 8,
     marginTop: 2,
+    textAlign: "center",
+  },
+  loadMoreButton: {
+    minHeight: 48,
+    alignSelf: "stretch",
+    marginTop: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: "#0D1B2A",
+    borderWidth: 1,
+    borderColor: "#254263",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadMoreText: {
+    color: "#BFDBFE",
+    fontSize: 14,
+    fontWeight: "700",
     textAlign: "center",
   },
   emptyCard: {

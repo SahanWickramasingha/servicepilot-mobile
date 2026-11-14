@@ -126,10 +126,33 @@ test("live map profiles are bounded, use the newest server area and ignore super
   listener(snapshot()); await settle();
   assert.equal(pages.length, 1); assert.equal(pages[0].items[0].serviceAreasByDistrict.kandy, "lk-postal-20800-katugastota");
   listener({ ...snapshot(), metadata: { fromCache: true } }); await settle();
-  assert.equal(pages.length, 1); assert.equal(errorsSeen.at(-1).kind, "network");
+  assert.equal(pages.length, 1); assert.equal(errorsSeen.length, 0);
   listenerError({ code: "permission-denied" }); await settle(); assert.equal(errorsSeen.at(-1).kind, "access");
   const previousStops = stopped;
   listener(snapshot()); stop(); await settle(); assert.equal(pages.length, 1); assert.equal(stopped, previousStops + 1);
+});
+
+test("map refresh waits for server data, reports a timeout, and recovers", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const subscribe of [
+    (next, error) => service.subscribeToMapTechnicians("colombo", undefined, 1, next, error),
+    (next, error) => service.subscribeToMapLocation("fixture-tech", next, error),
+  ]) {
+    const pages = [], errors = [];
+    const stop = subscribe((value) => pages.push(value), (error) => errors.push(error));
+    const cache = { metadata: { fromCache: true }, docs: [], size: 0, data: () => undefined };
+    listener(cache); await settle();
+    assert.equal(errors.length, 0);
+    assert.equal(pages.length, 0);
+    t.mock.timers.tick(12000); await settle();
+    assert.equal(errors[0]?.kind, "network");
+    listener({ ...cache, metadata: { fromCache: false } }); await settle();
+    assert.equal(pages.length, 1);
+    listener(cache);
+    stop();
+    t.mock.timers.tick(12000); await settle();
+    assert.equal(errors.length, 1);
+  }
 });
 
 test("explicit location reads return only the selected UID's server-side approximate GPS, including OFF/stale/invalid states", async () => {

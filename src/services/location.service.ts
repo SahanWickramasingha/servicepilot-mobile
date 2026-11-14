@@ -52,6 +52,17 @@ async function readMapDirectoryProfile(ref: DocumentReference, isCurrent: () => 
   }
 }
 
+// Firestore can deliver cache metadata before the server responds on refresh.
+const MAP_SERVER_WAIT_MS = 12000;
+function waitForMapServer(onTimeout: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = () => { clearTimeout(timer); timer = undefined; };
+  return {
+    clear,
+    start: () => { timer ??= setTimeout(onTimeout, MAP_SERVER_WAIT_MS); },
+  };
+}
+
 /** Bounded public projection listener. Every emission rechecks authoritative approval via server gets. */
 export function subscribeToMapTechnicians(districtId: string, category: string | undefined, pageCount: number,
   onNext: (page: MapPage) => void, onError: (error: Error) => void): () => void {
@@ -67,11 +78,14 @@ export function subscribeToMapTechnicians(districtId: string, category: string |
     const error = await classifyMapServiceError(cause);
     if (isCurrent(version)) onError(error);
   };
+  const waiting = waitForMapServer(() => { void fail(new MapServiceError("network", "deadline-exceeded"), generation); });
+  waiting.start();
   const unsubscribe = onSnapshot(directory, { includeMetadataChanges: true }, (snapshot) => {
     const version = ++generation;
     const isCurrentSnapshot = () => isCurrent(version);
     if (!isCurrentSnapshot()) return;
-    if (snapshot.metadata.fromCache) { void fail(new MapServiceError("network", "unavailable"), version); return; }
+    if (snapshot.metadata.fromCache) { waiting.start(); return; }
+    waiting.clear();
     // Reads are limited to this page (8/16/24), never private users or GPS documents.
     void Promise.all(snapshot.docs.map((item) => readMapDirectoryProfile(item.ref, isCurrentSnapshot))).then((verified) => {
       if (!isCurrentSnapshot()) return;
@@ -80,8 +94,8 @@ export function subscribeToMapTechnicians(districtId: string, category: string |
       items.sort((a, b) => b.averageRating - a.averageRating || a.fullName.localeCompare(b.fullName));
       onNext({ items, cursor: snapshot.docs.at(-1)?.id, hasMore: snapshot.size === count && count < MAP_MAX_ITEMS });
     }).catch((cause) => { void fail(cause, version); });
-  }, (cause) => { void fail(cause, ++generation); });
-  return () => { alive = false; generation++; unsubscribe(); };
+  }, (cause) => { waiting.clear(); void fail(cause, ++generation); });
+  return () => { alive = false; generation++; waiting.clear(); unsubscribe(); };
 }
 
 export async function getMapTechnicianPage(districtId: string, category?: string, cursor?: string): Promise<MapPage> {
@@ -204,11 +218,24 @@ export async function getLatestMapLocation(uid: string): Promise<PublicMapLocati
 }
 
 export function subscribeToMapLocation(uid: string, onNext: (location: SharedMapLocation | null, updatedAtMs?: number) => void, onError: (error: Error) => void) {
-  return onSnapshot(doc(db, "technician_map_locations", uid), { includeMetadataChanges: true }, (snapshot) => {
-    if (snapshot.metadata.fromCache) { onError(new MapServiceError("network", "unavailable")); return; }
+  const viewer = auth.currentUser;
+  let alive = true;
+  const current = () => alive && auth.currentUser === viewer;
+  const waiting = waitForMapServer(() => {
+    if (current()) onError(new MapServiceError("network", "deadline-exceeded"));
+  });
+  waiting.start();
+  const unsubscribe = onSnapshot(doc(db, "technician_map_locations", uid), { includeMetadataChanges: true }, (snapshot) => {
+    if (!current()) return;
+    if (snapshot.metadata.fromCache) { waiting.start(); return; }
+    waiting.clear();
     const result = readPublicMapLocation(uid, snapshot.data());
     onNext(result.location, result.updatedAtMs);
-  }, (cause) => { void classifyMapServiceError(cause).then(onError); });
+  }, (cause) => {
+    waiting.clear();
+    void classifyMapServiceError(cause).then((error) => { if (current()) onError(error); });
+  });
+  return () => { alive = false; waiting.clear(); unsubscribe(); };
 }
 
 export async function updateServiceDistricts(uid: string, ids: string[]): Promise<void> {
