@@ -1,4 +1,4 @@
-export type MapServiceFailureKind = "access" | "network" | "service";
+export type MapServiceFailureKind = "access" | "network" | "service" | "directory-approval";
 type DataError = { code?: string };
 
 export class MapServiceError extends Error {
@@ -25,6 +25,7 @@ export function mapServiceErrorMessage(error: unknown, scope: "directory" | "job
   if (kind === "access") return scope === "directory"
     ? "Map access requires an active, verified Customer account. Please sign in again."
     : "Shared location requires a verified Customer account and your accepted or in-progress request.";
+  if (kind === "directory-approval") return "Unable to confirm technician approval right now. Please retry.";
   if (kind === "network") return "Unable to connect. Check your connection and retry.";
   return scope === "directory" ? "Unable to load Technicians. Please retry." : "Unable to load shared location. Please retry.";
 }

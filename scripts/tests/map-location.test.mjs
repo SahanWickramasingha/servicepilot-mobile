@@ -122,6 +122,31 @@ test("real Firestore query: district/category filtering returns only approved sa
   for (const uid of ["map-dispatcher", "map-tech", "map-unverified", "map-disabled-customer"]) await denied(accounts.get(uid).service.getMapTechnicians("colombo"));
 });
 
+test("real Firestore rules exclude an orphaned approved projection without blocking eligible technicians", { timeout: 10000 }, async () => {
+  const uid = "map-orphan", path = `technician_map_profiles/${uid}`;
+  const fixture = admin.doc(path);
+  const { db, service } = customer();
+  const activeProfile = (await admin.doc("technician_map_profiles/map-tech").get()).data();
+  await fixture.set({ ...activeProfile, technicianId: uid });
+  let stop;
+  try {
+    await denied(firestore.getDocFromServer(firestore.doc(db, path)));
+    const expected = ["map-legacy", "map-plumber", "map-tech"];
+    assert.deepEqual((await service.getMapTechnicians("colombo")).map(({ uid }) => uid).sort(), expected);
+    const live = await new Promise((resolve, reject) => {
+      stop = service.subscribeToMapTechnicians("colombo", undefined, 1, resolve, (error) => {
+        if (error.kind !== "network") reject(error);
+      });
+    });
+    assert.deepEqual(live.items.map(({ uid }) => uid).sort(), expected);
+    const unverified = accounts.get("map-unverified");
+    await denied(firestore.getDocFromServer(firestore.doc(unverified.db, "technician_directory_exclusions", uid)));
+  } finally {
+    stop?.();
+    await fixture.delete();
+  }
+});
+
 test("sharing ON publishes exact private and coarse public data; OFF removes both coordinates", async () => {
   await tech().service.publishTechnicianLocation("map-tech", point);
   const publicRef = firestore.doc(customer().db, "technician_map_locations", "map-tech");
