@@ -1,3 +1,4 @@
+import "@/src/services/technician-background-task";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { AuthSessionGate } from "@/src/components/auth/AuthSessionGate";

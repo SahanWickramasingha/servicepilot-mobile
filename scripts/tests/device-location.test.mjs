@@ -56,6 +56,7 @@ test("Expo adapter requests GPS accuracy and a removable subscription, rather th
   let adapter;
   load("src/services/foreground-location.service.ts", {
     "expo-location": native,
+    "./technician-background-task": { supportsLockedScreenSharing: false },
     "@/src/utils/foregroundSharing": { ForegroundSharing: class { constructor(value) { adapter = value; } } },
     "@/src/utils/acquireDeviceFix": { acquireDeviceFix },
     "@/src/services/location.service": { publishTechnicianLocation() {} },

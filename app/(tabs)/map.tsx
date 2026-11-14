@@ -149,6 +149,15 @@ export default function CustomerMapScreen() {
     return point ? [{ ...point, id: technician.uid, title: technician.fullName, stale: !locationIsFresh(point.updatedAtMs, now) }] : [];
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Identity keys cover the name/UID and freshness inputs; timestamps still refresh card text.
   }), [markerIdentity, locations, freshnessIdentity, safety.ready, safety.blocked, hiddenProfiles.ready, hiddenProfiles.hidden]);
+  // Keep an explicit Show location selection in sync with subsequent server updates.
+  const focusedPoint = focusLocation && locations[focusLocation.id];
+  const liveFocus: LocationFocus | undefined = focusLocation &&
+    (focusLocation.phase === "checking" || focusLocation.phase === "error" ? focusLocation : {
+      ...focusLocation,
+      phase: !focusedPoint ? "unavailable" : locationIsFresh(focusedPoint.updatedAtMs, now) ? "ready" : "stale",
+      point: focusedPoint,
+      updatedAtMs: focusedPoint?.updatedAtMs,
+    });
   const selected = technicians.find((technician) => technician.uid === selectedId);
   const serviceArea = useMemo(() => {
     const technician = technicians.find((item) => item.uid === serviceAreaSelection?.id);
@@ -225,11 +234,11 @@ export default function CustomerMapScreen() {
         </>}
       {mode === "map" && <>
         <View onLayout={(event) => { mapTop.current = event.nativeEvent.layout.y; }}>
-          <TechnicianMap district={district} points={points} selectedId={selectedId} focusLocation={focusLocation}
-            focusLocationStatus={focusLocation ? `${selected?.fullName ?? "Technician"}: ${focusLocation.phase === "checking" ? "Verifying the latest shared approximate GPS…" :
-              focusLocation.phase === "error" ? "Unable to verify the latest shared GPS. Check your connection and retry." :
-              focusLocation.phase === "stale" ? "Last shared GPS is stale. No fresh location is available; retry Show location." :
-              focusLocation.phase === "unavailable" ? "Location unavailable. Sharing is off or no valid shared GPS is available." : updateLabel(locations[focusLocation.id], now)}` : undefined}
+          <TechnicianMap district={district} points={points} selectedId={selectedId} focusLocation={liveFocus}
+            focusLocationStatus={liveFocus ? `${selected?.fullName ?? "Technician"}: ${liveFocus.phase === "checking" ? "Verifying the latest shared approximate GPS…" :
+              liveFocus.phase === "error" ? "Unable to verify the latest shared GPS. Check your connection and retry." :
+              liveFocus.phase === "stale" ? "Last shared GPS is stale. No fresh location is available; retry Show location." :
+              liveFocus.phase === "unavailable" ? "Location unavailable. Sharing is off or no valid shared GPS is available." : updateLabel(locations[liveFocus.id], now)}` : undefined}
             serviceArea={serviceArea} onClearServiceArea={clearMapFocus} onSelect={selectMarker} />
         </View>
         <Pressable onPress={() => { void Linking.openURL("https://www.geoboundaries.org/"); }}><Text style={styles.attribution}>District boundaries: geoBoundaries / © OpenStreetMap contributors (ODbL)</Text></Pressable>

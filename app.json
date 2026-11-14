@@ -18,7 +18,7 @@
         "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO", "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS",
         "android.permission.READ_SMS", "android.permission.SEND_SMS", "android.permission.READ_CALL_LOG",
-        "android.permission.WRITE_CALL_LOG", "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.WRITE_CALL_LOG",
         "com.google.android.gms.permission.AD_ID"
       ],
       "package": "com.sahanwickramasingha.servicepilot",
@@ -61,9 +61,10 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Share your location while using ServicePilot. Customers see an approximate area; your active job Customer can see your precise location.",
-          "isIosBackgroundLocationEnabled": false,
-          "isAndroidBackgroundLocationEnabled": false,
-          "isAndroidForegroundServiceEnabled": false
+          "locationAlwaysAndWhenInUsePermission": "Allow ServicePilot to share your technician location while your phone is locked, until you turn sharing off or sign out.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       "@react-native-community/datetimepicker"

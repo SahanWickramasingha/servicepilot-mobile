@@ -3,6 +3,9 @@ import { ForegroundSharing, DeviceFix } from "@/src/utils/foregroundSharing";
 import { publishTechnicianLocation, syncOwnMapProfile } from "@/src/services/location.service";
 import { acquireDeviceFix } from "@/src/utils/acquireDeviceFix";
 
+import { startTechnicianBackgroundWatch, stopTechnicianBackgroundWatch, supportsLockedScreenSharing } from "./technician-background-task";
+import { LocationSharingError } from "@/src/utils/locationSharingError";
+
 function fix(point: Location.LocationObject): DeviceFix {
   return { latitude: point.coords.latitude, longitude: point.coords.longitude,
     accuracy: point.coords.accuracy, sampledAt: point.timestamp };
@@ -10,9 +13,16 @@ function fix(point: Location.LocationObject): DeviceFix {
 
 export const foregroundSharing = new ForegroundSharing({
   now: Date.now,
+  background: supportsLockedScreenSharing,
+  stopBackground: stopTechnicianBackgroundWatch,
   permission: async (prompt) => {
     const existing = await Location.getForegroundPermissionsAsync();
-    return existing.granted || (prompt && (await Location.requestForegroundPermissionsAsync()).granted);
+    if (!existing.granted && !(prompt && (await Location.requestForegroundPermissionsAsync()).granted)) return false;
+    if (!supportsLockedScreenSharing) return true;
+    const background = await Location.getBackgroundPermissionsAsync();
+    if (background.granted || (prompt && (await Location.requestBackgroundPermissionsAsync()).granted)) return true;
+    throw new LocationSharingError("permission", "location/background-permission",
+      "To keep sharing when your phone locks, allow location access all the time in device Settings.");
   },
   servicesEnabled: Location.hasServicesEnabledAsync,
   prepare: syncOwnMapProfile,
@@ -24,6 +34,7 @@ export const foregroundSharing = new ForegroundSharing({
     return () => watcher.remove();
   } }, signal),
   watch: async (next, onError) => {
+    if (supportsLockedScreenSharing) return startTechnicianBackgroundWatch((point) => next(fix(point)));
     const watcher = await Location.watchPositionAsync({ accuracy: Location.Accuracy.High,
       timeInterval: 30000, distanceInterval: 100, mayShowUserSettingsDialog: false }, (point) => next(fix(point)), onError);
     return () => watcher.remove();

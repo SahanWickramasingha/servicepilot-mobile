@@ -260,3 +260,29 @@ test("administrative revocation cancels local GPS without a forbidden remote wri
   state.watch(point()); await sharing.setActive(false); await sharing.setActive(true);
   assert.equal(state.writes.length, before); assert.equal(sharing.getSnapshot().enabled, false);
 });
+
+test("screen lock keeps opted-in GPS live, and sign-out revokes before swapping credentials", async () => {
+  let stops = 0;
+  const { state, sharing, point } = fixture({ background: true, stopBackground: async () => { stops++; } });
+  await sharing.setSession("tech-a");
+  await sharing.enable();
+  const initialWrites = state.writes.length;
+  await sharing.setActive(false);
+  assert.equal(sharing.getSnapshot().enabled, true);
+  assert.equal(state.removed, 0);
+  assert.equal(state.writes.length, initialWrites);
+  state.now += 90000;
+  state.watch(point());
+  await flush();
+  assert.equal(state.writes.length, initialWrites + 1);
+  assert.equal(state.writes.at(-1).point.sampledAt, state.now);
+  const priorStops = stops;
+  await sharing.prepareAuthChange("tech-a");
+  assert.equal(stops, priorStops + 1);
+  assert.equal(state.writes.at(-1).point, undefined);
+  state.watch(point());
+  await flush();
+  assert.equal(state.writes.at(-1).point, undefined);
+  await sharing.setSession("tech-b");
+  assert.equal(sharing.getSnapshot().enabled, false);
+});

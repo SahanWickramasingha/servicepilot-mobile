@@ -13,13 +13,14 @@ export function TechnicianSharingPanel({ profile: _profile }: { profile: UserPro
     <Text style={styles.text}>Service districts and towns are saved in Personal Information, separately from current GPS.</Text>
     <Pressable accessibilityRole="button" style={styles.button} onPress={() => router.push("/technician/personal-information")}>
       <Text style={styles.buttonText}>Edit Service Area</Text></Pressable>
+    <Text style={styles.text}>If you turn this on, ServicePilot can use GPS while the app is in the background or your phone is locked. Turn sharing off or sign out to stop.</Text>
     <View style={styles.toggleRow}><View style={{ flex: 1 }}>
       <Text style={styles.title}>Share current location</Text>
-      <Text style={styles.text}>{sharing.status === "sharing" ? "Sharing while the app is active" :
+      <Text style={styles.text}>{sharing.status === "sharing" ? "Sharing is on" :
         sharing.status === "paused" ? "Paused while the app is inactive" : busy ? "Updating sharing…" : "Location sharing is off"}</Text>
     </View><Switch accessibilityLabel="Share Technician location" value={sharing.enabled} disabled={busy}
       onValueChange={toggle} trackColor={{ false: "#334155", true: "#2563EB" }} thumbColor="#FFFFFF" /></View>
-    <Text style={styles.text}>Customers browsing the map see an approximate area (about 1 km). Only your accepted or in-progress job Customer can view your precise shared location. No background tracking.</Text>
+    <Text style={styles.text}>Customers browsing the map see an approximate area (about 1 km). Only your accepted or in-progress job Customer can view your precise shared location.</Text>
     {!!sharing.error && <>
       <Text accessibilityRole="alert" style={styles.error}>{sharing.error}</Text>
       <View style={styles.actions}><Pressable disabled={busy} style={styles.button} onPress={() => {

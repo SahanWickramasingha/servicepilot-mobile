@@ -7,11 +7,13 @@ export const LOCATION_HEARTBEAT_MS = 90000;
 export const LOCATION_MOVEMENT_METRES = 100;
 export type SharingState = { enabled: boolean; status: "off" | "starting" | "sharing" | "paused" | "stopping" | "error"; error: string; revokeFailed: boolean };
 export type SharingAdapter = {
+  background?: boolean;
+  stopBackground?: () => Promise<void>;
   permission: (prompt: boolean) => Promise<boolean>;
   servicesEnabled: () => Promise<boolean>;
   prepare?: (uid: string) => Promise<void>;
   current: (signal?: AbortSignal) => Promise<DeviceFix>;
-  watch: (next: (point: DeviceFix) => void, error: (cause?: unknown) => void) => Promise<() => void>;
+  watch: (next: (point: DeviceFix) => void | Promise<void>, error: (cause?: unknown) => void) => Promise<() => void>;
   publish: (uid: string, point?: DeviceFix) => Promise<void>;
   every: (callback: () => void, interval: number) => () => void;
   after?: (callback: () => void, delay: number) => () => void;
@@ -24,7 +26,7 @@ function metres(a: Coordinate, b: Coordinate): number {
   return Math.hypot(a.latitude - b.latitude, x) * 111320;
 }
 
-/** One foreground session; serial writes prevent a queued GPS fix undoing OFF. */
+/** One opted-in session; serial writes prevent a queued GPS fix undoing OFF. */
 export class ForegroundSharing {
   private state: SharingState = { enabled: false, status: "off", error: "", revokeFailed: false };
   private listeners = new Set<() => void>();
@@ -87,6 +89,7 @@ export class ForegroundSharing {
     const unconfirmed = this.uid && !this.remoteCleared;
     const residual = unconfirmed ? "Previous account tracking stopped. Remote removal was not confirmed; a stale grey approximate marker may remain. Sign back into that account online to clear it." : this.state.error.startsWith("Previous account tracking stopped") ? this.state.error : "";
     this.cancelLocal();
+    void this.adapter.stopBackground?.().catch(() => undefined);
     const generation = this.generation;
     this.sessionGeneration++;
     this.pendingPermission = undefined;
@@ -118,18 +121,19 @@ export class ForegroundSharing {
     }
   }
   private async offer(point: DeviceFix, generation: number): Promise<void> {
-    if (generation !== this.generation || !this.active || !this.optedIn || !this.uid) return;
+    if (generation !== this.generation || (!this.active && !this.adapter.background) || !this.optedIn || !this.uid) return;
     if (this.latest && Number.isFinite(point.sampledAt) && point.sampledAt < this.latest.sampledAt) return;
     if (!validCoordinate(point) || !Number.isFinite(point.sampledAt) ||
         this.adapter.now() - point.sampledAt > 60000 || point.sampledAt > this.adapter.now() + 5000 ||
         (point.accuracy != null && point.accuracy > 2000)) {
+      if (this.adapter.background && this.state.enabled) return;
       throw new LocationSharingError("acquisition", "location/invalid-fix", "A recent, usable GPS fix is unavailable. Check location services and retry.");
     }
     // Android can deliver an older fused/cached callback after a newer GPS fix.
     this.latest = point;
     const uid = this.uid;
     const operation = this.tail.catch(() => undefined).then(async () => {
-      if (generation !== this.generation || !this.active || !this.optedIn) return;
+      if (generation !== this.generation || (!this.active && !this.adapter.background) || !this.optedIn) return;
       const candidate = this.latest!;
       const elapsed = this.adapter.now() - this.lastWrite;
       const moved = !this.last || metres(this.last, candidate) >= LOCATION_MOVEMENT_METRES;
@@ -179,7 +183,7 @@ export class ForegroundSharing {
     const generation = this.generation;
     this.lastWrite = -Infinity;
     this.update({ enabled: false, status: "starting", error: "", revokeFailed: false });
-    if (!this.active) { this.update({ status: "paused" }); return; }
+    if (!this.active && !this.adapter.background) { this.update({ status: "paused" }); return; }
     let step: LocationStep = "permission";
     try {
       if (!await this.checkPermission(prompt)) throw new LocationSharingError(step, "location/permission-refused", "Location permission was refused. Enable it in device Settings, then retry.");
@@ -198,14 +202,18 @@ export class ForegroundSharing {
       step = "watch";
       const remove = await this.adapter.watch((point) => {
         if (!["starting", "sharing"].includes(this.state.status)) return;
-        void this.offer(point, generation).catch((error) => this.fail(error, generation, "publish"));
+        return this.offer(point, generation).catch((error) => {
+          if (this.adapter.background && this.state.enabled && generation === this.generation) {
+            this.update({ error: "Could not update your shared location. Retrying with the next GPS fix." });
+          } else return this.fail(error, generation, "publish");
+        });
       }, (cause) => { void this.fail(cause, generation, "watch"); });
       if (generation !== this.generation) { remove(); return; }
       this.removeWatch = remove;
       step = "publish";
       await this.offer(this.latest ?? point, generation);
       if (generation !== this.generation) return;
-      this.removeHeartbeat = this.adapter.every(() => {
+      if (!this.adapter.background) this.removeHeartbeat = this.adapter.every(() => {
         void this.adapter.current(this.acquisition?.signal).then((point) => this.offer(point, generation))
           .catch((cause) => this.fail(cause, generation, "acquisition"));
       }, LOCATION_HEARTBEAT_MS);
@@ -220,7 +228,8 @@ export class ForegroundSharing {
     const generation = this.generation;
     this.update({ enabled: false, status: "stopping", error: "", revokeFailed: false });
     try {
-      if (uid) await this.revoke(uid);
+      // Disable the callback immediately; revoke the remote marker even if native cleanup fails.
+      await Promise.all([this.adapter.stopBackground?.().catch(() => undefined), uid && this.revoke(uid)]);
       if (generation === this.generation) this.update({ status: "off" });
     } catch {
       if (generation === this.generation) this.update({ status: "error", revokeFailed: true, error: "Sharing stopped on this device, but server removal failed. Retry online. After two minutes precise access and distance expire; a grey approximate marker may remain." });
@@ -230,6 +239,7 @@ export class ForegroundSharing {
   async setActive(active: boolean): Promise<void> {
     if (active === this.active) return;
     this.active = active;
+    if (this.adapter.background) return;
     if (!active) {
       this.cancelLocal();
       const generation = this.generation;
@@ -254,6 +264,7 @@ export class ForegroundSharing {
   // already removed both coordinate documents. Normal logout still awaits stop().
   endRevokedSession(): void {
     this.cancelLocal();
+    void this.adapter.stopBackground?.().catch(() => undefined);
     this.sessionGeneration++;
     this.pendingPermission = undefined;
     this.uid = undefined;
